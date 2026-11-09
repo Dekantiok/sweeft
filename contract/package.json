@@ -1,0 +1,12 @@
+{
+  "name": "sweeft-escrow",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "near-sdk-js build src/index.js --out build/escrow.wasm",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "near-sdk-js": "^0.7.0"
+  }
+}
