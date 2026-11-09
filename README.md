@@ -17,7 +17,7 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 2. `docker compose up --build` — see web on http://localhost:3000, api on http://localhost:4000/health
 3. Do: open web, connect wallet (testnet) — see: wallet address in header
 4. Do: type "pay 50 USDC to alice.testnet for logo by Friday" in AI box — see: form pre-filled
-5. Do: create escrow with fixed seller — see: escrow code + explorer link
+5. Do: create escrow with fixed seller — see: escrow code `SWFT-XXXX` (random 4-digit) + explorer link
 6. Do: join as counterparty, buyer deposits — see: status `funded`
 7. Do: submit delivery, payer releases — see: status `released`
 8. Do: create with 10-min deadline, wait, call Settle with no dispute — see: status `settled`
@@ -30,8 +30,9 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 Deployed testnet account: `steepdata3968.testnet` — live, code hash set 2026-11-09.
 Explorer: https://explorer.testnet.near.org/accounts/steepdata3968.testnet
 Verified on-chain: `SWFT-1` released (create→join→deposit→deliver→release),
-`SWFT-2` resolved (dispute→ai_recommend 70→resolve), `SWFT-3` settled (timeout, no dispute).
-Query: `near contract call-function as-read-only steepdata3968.testnet get '{"id":"SWFT-1"}' network-config testnet now`.
+`SWFT-2` resolved (dispute→ai_recommend 70→resolve), `SWFT-3` settled (timeout, no dispute),
+`SWFT-2049` created with random 4-digit code path.
+Query: `near contract call-function as-read-only steepdata3968.testnet get '{"id":"SWFT-2049"}' network-config testnet now`.
 
 ## API
 

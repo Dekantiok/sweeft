@@ -9,6 +9,8 @@ export default function Home() {
   const [form, setForm] = useState({ counterparty: 'alice.testnet', amount: '50', deadlineDays: '7', terms: 'logo delivery' });
   const [account, setAccount] = useState(null);
   const [escrowId, setEscrowId] = useState('');
+  const [evidence, setEvidence] = useState('Seller delivered logo at https://example.com/logo.png, buyer claims colors wrong.');
+  const [aiRec, setAiRec] = useState(null);
   const [status, setStatus] = useState(null);
   const [listening, setListening] = useState(false);
   const [msg, setMsg] = useState('');
@@ -47,6 +49,16 @@ export default function Home() {
     rec.onerror = () => { setListening(false); setMsg('Mic error — type instead.'); };
     rec.onend = () => setListening(false);
     rec.start();
+  }
+
+  async function askAI() {
+    setMsg('AI arbiter reviewing...');
+    try {
+      const r = await fetch(`${API}/recommend`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ evidence, terms: form.terms }) });
+      const j = await r.json();
+      setAiRec(j);
+      setMsg(`AI recommends ${j.pct}% to seller (${j.source}) — human must confirm on-chain.`);
+    } catch (e) { setMsg(`AI error: ${e.message}`); }
   }
 
   async function doTx(label, fn) {
@@ -95,7 +107,7 @@ export default function Home() {
           deadline_ms: String(Date.now() + Number(form.deadlineDays) * 864e5),
           terms_hash: form.terms.slice(0, 200), foreign_asset: null,
         }))}>Create (I am buyer)</button>
-        <input placeholder="SWFT-N code" value={escrowId} onChange={e => setEscrowId(e.target.value)} style={{ width: 140 }} />
+        <input placeholder="SWFT-XXXX code" value={escrowId} onChange={e => setEscrowId(e.target.value)} style={{ width: 140 }} />
         <button onClick={() => doTx('Join', () => escrowCall.join(escrowId.trim()))}>Join</button>
         <button onClick={() => doTx('Deposit', () => escrowCall.deposit(escrowId.trim(), form.amount))}>Deposit</button>
         <button onClick={() => doTx('Submit delivery', () => escrowCall.submitDelivery(escrowId.trim()))}>Deliver</button>
@@ -106,6 +118,16 @@ export default function Home() {
       </div>
       <p><i>{msg}</i></p>
       {status && <pre style={{ background: '#f4f4f4', padding: 12 }}>{JSON.stringify(status, null, 2)}</pre>}
+      <h3>4. AI arbiter (dispute only, human confirms)</h3>
+      <textarea value={evidence} onChange={e => setEvidence(e.target.value)} rows={2} style={{ width: '100%' }} />
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <button onClick={askAI}>Ask AI arbiter</button>
+        {aiRec && <>
+          <button onClick={() => doTx('Submit AI recommendation', () => escrowCall.aiRecommend(escrowId.trim(), aiRec.pct, aiRec.reason || ''))}>Submit {aiRec.pct}% on-chain</button>
+          <button onClick={() => doTx(`Resolve ${aiRec.pct}%`, () => escrowCall.resolve(escrowId.trim(), aiRec.pct))}>Resolve {aiRec.pct}% (payer)</button>
+        </>}
+      </div>
+      {aiRec && <pre style={{ background: '#eef6ee', padding: 12 }}>{JSON.stringify(aiRec, null, 2)}</pre>}
       <p>API: <code>{API}/health</code> · For judges without mic: paste the sample sentence above, it takes the same path as voice.</p>
     </main>
   );
