@@ -29,6 +29,7 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 
 Deployed testnet account: `steepdata3968.testnet` — live, code hash set 2026-11-09.
 Explorer: https://explorer.testnet.near.org/accounts/steepdata3968.testnet
+Deploy tx: https://explorer.testnet.near.org/transactions/BXPNrrHY23jQUj8cRUqNJaM4cUdgxBDfuVxUAZRiK9n5
 Verified on-chain: `SWFT-1` released (create→join→deposit→deliver→release),
 `SWFT-2` resolved (dispute→ai_recommend 70→resolve), `SWFT-3` settled (timeout, no dispute),
 `SWFT-2049` created with random 4-digit code path.

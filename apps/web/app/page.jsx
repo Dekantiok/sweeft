@@ -63,8 +63,11 @@ export default function Home() {
 
   async function doTx(label, fn) {
     setMsg(`${label}...`);
-    try { await fn(); setMsg(`${label} sent — confirm in wallet, then Lookup status.`); }
-    catch (e) { setMsg(`${label} failed: ${e.message}`); }
+    try { await fn(); }
+    catch (e) { setMsg(`${label} failed: ${e.message}`); return; }
+    if (label === 'Create') { setMsg('Created — copy the SWFT-XXXX code from your wallet receipt, paste it above, then Lookup.'); return; }
+    if (escrowId.trim()) { setMsg(`${label} sent — refreshing status...`); setTimeout(lookup, 2500); }
+    else setMsg(`${label} sent — confirm in wallet.`);
   }
 
   async function lookup() {
@@ -76,7 +79,7 @@ export default function Home() {
   return (
     <main style={{ maxWidth: 760, margin: '32px auto', fontFamily: 'system-ui', padding: 16 }}>
       <h1>SWEeft — NEAR escrow (testnet v1)</h1>
-      <p>Form input or AI-assistant input. Same contract path. Human confirms. Contract: <code>{CONTRACT}</code></p>
+      <p>Form input or AI-assistant input. Same contract path. Human confirms. Contract: <code>{CONTRACT}</code> (<a href={`https://explorer.testnet.near.org/accounts/${CONTRACT}`} target="_blank" rel="noreferrer">explorer</a>)</p>
 
       <div style={{ border: '1px solid #ccc', padding: 12, marginBottom: 12 }}>
         {account
@@ -92,7 +95,7 @@ export default function Home() {
       </div>
 
       <h3>2. Form input (fixed parties)</h3>
-      {Object.entries({ counterparty: 'seller/buyer wallet', amount: 'USDC amount', deadlineDays: 'deadline (days)', terms: 'terms' }).map(([k, label]) => (
+      {Object.entries({ counterparty: 'counterparty wallet (*.testnet)', amount: 'NEAR amount (testnet)', deadlineDays: 'deadline (days)', terms: 'terms' }).map(([k, label]) => (
         <div key={k} style={{ margin: '8px 0' }}>
           <label>{label}: </label>
           <input value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })} style={{ width: 340 }} />
@@ -117,7 +120,10 @@ export default function Home() {
         <button onClick={lookup}>Lookup status</button>
       </div>
       <p><i>{msg}</i></p>
-      {status && <pre style={{ background: '#f4f4f4', padding: 12 }}>{JSON.stringify(status, null, 2)}</pre>}
+      {status && <>
+        {status.ai_recommendation && <p style={{ background: '#fff7e6', padding: 8 }}>⛳ On-chain AI recommendation: <b>{status.ai_recommendation.pct}% to seller</b> — {status.ai_recommendation.reason}</p>}
+        <pre style={{ background: '#f4f4f4', padding: 12 }}>{JSON.stringify(status, null, 2)}</pre>
+      </>}
       <h3>4. AI arbiter (dispute only, human confirms)</h3>
       <textarea value={evidence} onChange={e => setEvidence(e.target.value)} rows={2} style={{ width: '100%' }} />
       <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
