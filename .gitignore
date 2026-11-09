@@ -1,0 +1,10 @@
+node_modules/
+.next/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.near-credentials/
+neardev/
+*.tgz

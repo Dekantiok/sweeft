@@ -1,0 +1,24 @@
+services:
+  api:
+    build: ./apps/api
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    environment:
+      - PORT=4000
+    restart: unless-stopped
+
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:4000
+      - NEXT_PUBLIC_CONTRACT=${ESCROW_CONTRACT}
+      - NEXT_PUBLIC_NETWORK=${NETWORK:-testnet}
+    depends_on:
+      - api
+    restart: unless-stopped
