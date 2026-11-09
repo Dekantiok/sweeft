@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "near-sdk-js build src/index.js --out build/escrow.wasm",
+    "build": "near-sdk-js build src/index.js build/escrow.wasm",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
