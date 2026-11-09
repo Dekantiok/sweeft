@@ -19,17 +19,19 @@ app.post('/parse', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_KEY}` },
         body: JSON.stringify({
-          model: process.env.NEAR_AI_MODEL || 'llama-3.1-70b-instruct',
+          model: process.env.NEAR_AI_MODEL || 'deepseek/deepseek-v4.1-flash',
           messages: [
             { role: 'system', content: 'Extract escrow JSON: {amount, token, beneficiary, deadlineDays, terms}. Reply JSON only.' },
             { role: 'user', content: text }
           ],
-          max_tokens: 300
+          max_tokens: 800
         })
       });
       const j = await r.json();
-      const content = j.choices?.[0]?.message?.content || '{}';
-      return res.json({ source: 'near-ai', parsed: JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}'), raw: text });
+      const content = (j.choices?.[0]?.message?.content || '{}').replace(/```json|```/g, '');
+      let parsed = {};
+      try { parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}'); } catch { parsed = {}; }
+      return res.json({ source: 'near-ai', parsed, raw: text });
     } catch (e) { /* fall through to regex */ }
   }
   const amount = text.match(/(\d+(?:\.\d+)?)\s*(usdc|usdt|near)/i)?.[1] || '';
@@ -47,17 +49,19 @@ app.post('/recommend', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_KEY}` },
         body: JSON.stringify({
-          model: process.env.NEAR_AI_MODEL || 'llama-3.1-70b-instruct',
+          model: process.env.NEAR_AI_MODEL || 'deepseek/deepseek-v4.1-flash',
           messages: [
             { role: 'system', content: 'You are an escrow arbiter. Reply JSON {pct: 0-100 release to seller, reason: string}.' },
             { role: 'user', content: `Terms: ${terms}\nEvidence: ${evidence}` }
           ],
-          max_tokens: 300
+          max_tokens: 800
         })
       });
       const j = await r.json();
-      const content = j.choices?.[0]?.message?.content || '{}';
-      return res.json({ source: 'near-ai', ...(JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}')) });
+      const content = (j.choices?.[0]?.message?.content || '{}').replace(/```json|```/g, '');
+      let rec = {};
+      try { rec = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}'); } catch { rec = {}; }
+      return res.json({ source: 'near-ai', pct: Number(rec.pct ?? 50), reason: String(rec.reason || 'AI gave no reason; human must decide.') });
     } catch (e) { /* fallback */ }
   }
   res.json({ source: 'fallback', pct: 50, reason: 'No AI key: default 50/50, human must decide.' });
