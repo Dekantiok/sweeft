@@ -8,6 +8,16 @@ function loadEscrows(self) {
   return Object.assign(new LookupMap('e'), self.escrows);
 }
 
+function newEscrowId(escrows) {
+  const seed = near.randomSeed();
+  for (let i = 0; i < 10; i++) {
+    const n = 1000 + ((seed[i % seed.length] * 256 + seed[(i + 1) % seed.length]) % 9000);
+    const id = `SWFT-${n}`;
+    if (!escrows.containsKey(id)) return id;
+  }
+  throw new Error('id collision, retry');
+}
+
 @NearBindgen({})
 class EscrowContract {
   constructor() {
@@ -31,8 +41,8 @@ class EscrowContract {
     if (!seller || !buyer) throw new Error('buyer and seller required');
     if (seller === buyer) throw new Error('parties must differ');
     const escrows = loadEscrows(this);
+    const id = newEscrowId(escrows);
     this.count += 1;
-    const id = `SWFT-${this.count}`;
     const me = near.predecessorAccountId();
     const buyerJoined = me === buyer;
     const sellerJoined = me === seller;
