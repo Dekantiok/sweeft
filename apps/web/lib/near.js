@@ -3,7 +3,7 @@ import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
 import { setupModal } from '@near-wallet-selector/modal-ui';
 import * as nearAPI from 'near-api-js';
 
-export const CONTRACT = process.env.NEXT_PUBLIC_CONTRACT || 'sweeft-tbd.testnet';
+export const CONTRACT = process.env.NEXT_PUBLIC_CONTRACT || 'steepdata3968.testnet';
 export const NETWORK = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
 
 let selector = null;

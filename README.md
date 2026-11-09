@@ -27,7 +27,7 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 `contract/` — `near-sdk-js`. States: `created -> joined -> funded -> delivered -> released | disputed -> resolved | settled`.
 `settle(id)` callable by anyone after deadline iff `!disputed`. AI key is recommend-only.
 
-Deployed testnet account: `TBD.testnet` (update after deploy).
+Deployed testnet account: `steepdata3968.testnet` (deploy with `ESCROW_CONTRACT=steepdata3968.testnet bash contract/deploy.sh`).
 
 ## API
 
