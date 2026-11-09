@@ -1,0 +1,15 @@
+{
+  "name": "sweeft-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "dev": "next dev", "build": "next build", "start": "next start -p 3000" },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "near-api-js": "^2.1.4",
+    "@near-wallet-selector/core": "^8.9.0",
+    "@near-wallet-selector/my-near-wallet": "^8.9.0",
+    "@near-wallet-selector/modal-ui": "^8.9.0"
+  }
+}
