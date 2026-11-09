@@ -27,7 +27,11 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 `contract/` — `near-sdk-js`. States: `created -> joined -> funded -> delivered -> released | disputed -> resolved | settled`.
 `settle(id)` callable by anyone after deadline iff `!disputed`. AI key is recommend-only.
 
-Deployed testnet account: `steepdata3968.testnet` (deploy with `ESCROW_CONTRACT=steepdata3968.testnet bash contract/deploy.sh`).
+Deployed testnet account: `steepdata3968.testnet` — live, code hash set 2026-11-09.
+Explorer: https://explorer.testnet.near.org/accounts/steepdata3968.testnet
+Verified on-chain: `SWFT-1` released (create→join→deposit→deliver→release),
+`SWFT-2` resolved (dispute→ai_recommend 70→resolve), `SWFT-3` settled (timeout, no dispute).
+Query: `near contract call-function as-read-only steepdata3968.testnet get '{"id":"SWFT-1"}' network-config testnet now`.
 
 ## API
 

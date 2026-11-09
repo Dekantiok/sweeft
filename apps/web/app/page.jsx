@@ -91,13 +91,13 @@ export default function Home() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button onClick={() => doTx('Create', () => escrowCall.create({
           seller: form.counterparty, buyer: account,
-          amount: form.amount, ft: 'usdc.tbd.testnet',
-          deadlineMs: String(Date.now() + Number(form.deadlineDays) * 864e5),
-          termsHash: form.terms.slice(0, 200), foreignAsset: null,
+          amount: form.amount, ft: 'near',
+          deadline_ms: String(Date.now() + Number(form.deadlineDays) * 864e5),
+          terms_hash: form.terms.slice(0, 200), foreign_asset: null,
         }))}>Create (I am buyer)</button>
         <input placeholder="SWFT-N code" value={escrowId} onChange={e => setEscrowId(e.target.value)} style={{ width: 140 }} />
         <button onClick={() => doTx('Join', () => escrowCall.join(escrowId.trim()))}>Join</button>
-        <button onClick={() => doTx('Deposit', () => escrowCall.deposit(escrowId.trim(), '0'))}>Deposit</button>
+        <button onClick={() => doTx('Deposit', () => escrowCall.deposit(escrowId.trim(), form.amount))}>Deposit</button>
         <button onClick={() => doTx('Submit delivery', () => escrowCall.submitDelivery(escrowId.trim()))}>Deliver</button>
         <button onClick={() => doTx('Release', () => escrowCall.release(escrowId.trim()))}>Release (payer)</button>
         <button onClick={() => doTx('Dispute', () => escrowCall.dispute(escrowId.trim()))}>Dispute</button>

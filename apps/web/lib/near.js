@@ -45,9 +45,9 @@ async function callMethod(method, args, deposit = '0') {
 }
 
 export const escrowCall = {
-  create: (a) => callMethod('create', a),
+  create: (a) => callMethod('create', { ...a, amount: nearAPI.utils.format.parseNearAmount(String(a.amount)) || a.amount, ft: a.ft || 'near' }),
   join: (id) => callMethod('join', { id }),
-  deposit: (id, amountYocto) => callMethod('deposit', { id }, amountYocto),
+  deposit: (id, amountNear) => callMethod('deposit', { id }, nearAPI.utils.format.parseNearAmount(String(amountNear)) || '0'),
   submitDelivery: (id) => callMethod('submit_delivery', { id }),
   release: (id) => callMethod('release', { id }),
   dispute: (id) => callMethod('dispute', { id }),
