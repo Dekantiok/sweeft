@@ -1,4 +1,4 @@
-import { NearBindgen, near, call, view, initialize, LookupMap } from 'near-sdk-js';
+import { NearBindgen, near, call, view, initialize, LookupMap, NearPromise } from 'near-sdk-js';
 
 // States: created -> joined -> funded -> delivered -> released
 //                                  \-> disputed -> resolved
@@ -143,7 +143,8 @@ class EscrowContract {
     if (esc.status !== 'funded' && esc.status !== 'delivered') throw new Error('wrong state');
     esc.status = 'released';
     escrows.set(id, esc);
-    return esc.amount;
+    // Payout: the deposit held by this contract goes to the seller.
+    return NearPromise.new(esc.seller).transfer(BigInt(esc.amount));
   }
 
   @call({})
@@ -170,7 +171,7 @@ class EscrowContract {
     escrows.set(id, esc);
   }
 
-  // Human resolves after dispute; payer confirms split.
+  // Human resolves after dispute; payer confirms split. Pays both sides.
   @call({})
   resolve({ id, release_pct }) {
     const escrows = new LookupMap(ESCROW_PREFIX);
@@ -178,10 +179,17 @@ class EscrowContract {
     if (!esc) throw new Error('unknown escrow');
     if (!esc.disputed) throw new Error('not disputed');
     if (near.predecessorAccountId() !== esc.buyer) throw new Error('only payer resolves');
+    const pct = Math.max(0, Math.min(100, Number(release_pct)));
+    const total = BigInt(esc.amount);
+    const toSeller = (total * BigInt(pct)) / 100n;
+    const toBuyer = total - toSeller;
     esc.status = 'resolved';
     esc.disputed = false;
     escrows.set(id, esc);
-    return { release_pct: Number(release_pct) };
+    const paySeller = NearPromise.new(esc.seller).transfer(toSeller);
+    // Chain the refund after the seller payout (parallel joint promises are
+    // prohibited as a contract return value, chained ones are allowed).
+    return toBuyer > 0n ? paySeller.then(NearPromise.new(esc.buyer).transfer(toBuyer)) : paySeller;
   }
 
   // Timeout settle: anyone may call after deadline iff !disputed.
@@ -192,10 +200,11 @@ class EscrowContract {
     if (!esc) throw new Error('unknown escrow');
     if (esc.disputed) throw new Error('disputed: resolve first');
     if (near.blockTimestamp() < BigInt(esc.deadline) * 1000000n) throw new Error('deadline not passed');
-    if (esc.status !== 'funded' && esc.status !== 'delivered' && esc.status !== 'joined') throw new Error('wrong state');
+    if (esc.status !== 'funded' && esc.status !== 'delivered') throw new Error('wrong state');
     esc.status = 'settled';
     escrows.set(id, esc);
-    return esc.amount;
+    // Timeout default: seller is paid, since funds were already deposited.
+    return NearPromise.new(esc.seller).transfer(BigInt(esc.amount));
   }
 
   @view({})
