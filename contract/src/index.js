@@ -8,6 +8,12 @@ function loadEscrows(self) {
   return Object.assign(new LookupMap('e'), self.escrows);
 }
 
+// Index of "<account>|<escrowId>" strings so a wallet can list its escrows.
+// Vector has only primitive fields, so it rehydrates via Object.assign.
+function loadIndex(self) {
+  return Object.assign(new Vector('i'), self.index || { prefix: 'i', length: 0 });
+}
+
 function newEscrowId(escrows) {
   const seed = near.randomSeed();
   for (let i = 0; i < 10; i++) {
@@ -22,16 +28,20 @@ function newEscrowId(escrows) {
 class EscrowContract {
   constructor() {
     this.escrows = new LookupMap('e');
+    // Plain array of "<account>|<escrowId>" strings; array fields migrate safely.
+    this.index = [];
     this.count = 0;
   }
 
   deserialize() {
     this.escrows = Object.assign(new LookupMap('e'), this.escrows);
+    if (!Array.isArray(this.index)) this.index = [];
   }
 
   @initialize({})
   init() {
     this.escrows = new LookupMap('e');
+    this.index = [];
     this.count = 0;
   }
 
@@ -55,6 +65,8 @@ class EscrowContract {
       disputed: false, ai_recommendation: null,
     };
     escrows.set(id, esc);
+    if (!Array.isArray(this.index)) this.index = [];
+    this.index.push(`${buyer}|${id}`, `${seller}|${id}`);
     return id;
   }
 
@@ -167,5 +179,14 @@ class EscrowContract {
   get({ id }) {
     const escrows = loadEscrows(this);
     return escrows.get(id);
+  }
+
+  // All escrow ids where account is buyer or seller (oldest first).
+  @view({})
+  my_escrows({ account_id }) {
+    const prefix = `${account_id}|`;
+    return (this.index || [])
+      .filter((entry) => entry.startsWith(prefix))
+      .map((entry) => entry.slice(prefix.length));
   }
 }
