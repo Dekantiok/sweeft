@@ -3,7 +3,6 @@ import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
 import { setupHereWallet } from '@near-wallet-selector/here-wallet';
 import { setupNightly } from '@near-wallet-selector/nightly';
 import { setupModal } from '@near-wallet-selector/modal-ui';
-import * as nearAPI from 'near-api-js';
 
 export const CONTRACT = process.env.NEXT_PUBLIC_CONTRACT || 'steepdata3968.testnet';
 export const NETWORK = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
@@ -46,12 +45,51 @@ export async function signOut() {
   await wallet.signOut();
 }
 
+// Turn every wallet/RPC error shape into one readable line.
+export function errorText(e) {
+  if (!e) return 'unknown error';
+  if (typeof e === 'string') return e;
+  const bits = [];
+  const seen = new Set();
+  const push = (v) => {
+    if (typeof v !== 'string') return;
+    const s = v.trim();
+    if (!s || seen.has(s)) return;
+    seen.add(s);
+    bits.push(s);
+  };
+  push(e.message);
+  if (e.type && e.type !== 'Error' && !bits.some((b) => b.includes(e.type))) push(e.type);
+  if (e.kind && e.kind !== 'Error' && !bits.some((b) => b.includes(e.kind))) push(e.kind);
+  const cause = e.cause || e.error;
+  if (cause && cause !== e) {
+    push(cause.message);
+    push(cause.name && cause.name !== 'Error' ? cause.name : '');
+    push(cause.info?.error_message);
+    push(cause.data?.error_message);
+  }
+  push(e.info?.error_message);
+  push(e.data?.error_message);
+  if (!bits.length) {
+    try {
+      const json = JSON.stringify(e);
+      if (json && json !== '{}') bits.push(json);
+    } catch { /* ignore */ }
+  }
+  return bits.join(' · ') || 'unknown error';
+}
+
 async function callMethod(method, args, deposit = '0') {
   const s = await getSelector();
   const wallet = await s.wallet();
+  // Uint8Array args are understood by Meteor, HERE and Nightly alike.
+  const encodedArgs = new TextEncoder().encode(JSON.stringify(args));
   return wallet.signAndSendTransaction({
     receiverId: CONTRACT,
-    actions: [{ type: 'FunctionCall', params: { methodName: method, args, gas: '100000000000000', deposit } }],
+    actions: [{
+      type: 'FunctionCall',
+      params: { methodName: method, args: encodedArgs, gas: '100000000000000', deposit },
+    }],
   });
 }
 
@@ -67,9 +105,28 @@ function successValue(res) {
   }
 }
 
+// NEAR <-> yocto helpers, kept local so the UI has no near-api-js version coupling.
+export function parseNearAmount(amount) {
+  const s = String(amount ?? '').trim();
+  if (!/^\d*(\.\d*)?$/.test(s) || s === '' || s === '.') return null;
+  const [whole = '0', frac = ''] = s.split('.');
+  if (frac.length > 24) return null;
+  const yocto = `${whole || '0'}${frac.padEnd(24, '0')}`.replace(/^0+(?=\d)/, '');
+  return yocto === '' ? '0' : yocto;
+}
+
+export function formatNear(yocto) {
+  const s = String(yocto ?? '0');
+  if (!/^\d+$/.test(s)) return s;
+  const padded = s.padStart(25, '0');
+  const whole = padded.slice(0, -24);
+  const frac = padded.slice(-24).replace(/0+$/, '').slice(0, 5).replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : whole;
+}
+
 export const escrowCall = {
   create: async (a) => {
-    const amount = nearAPI.utils.format.parseNearAmount(String(a.amount));
+    const amount = parseNearAmount(a.amount);
     if (!amount) throw new Error('invalid amount');
     const res = await callMethod('create', { ...a, amount, ft: 'near' });
     return successValue(res);
@@ -95,7 +152,7 @@ export async function view(methodName, args) {
     }),
   });
   const j = await r.json();
-  if (j.error) throw new Error(j.error.cause?.name || j.error.message || 'view call failed');
+  if (j.error) throw new Error(errorText(j.error));
   const bytes = j.result?.result || [];
   const text = new TextDecoder().decode(Uint8Array.from(bytes));
   return text ? JSON.parse(text) : null;
@@ -103,7 +160,3 @@ export async function view(methodName, args) {
 
 export const getEscrow = (id) => view('get', { id });
 export const myEscrows = (accountId) => view('my_escrows', { account_id: accountId });
-
-export function formatNear(yocto) {
-  try { return nearAPI.utils.format.formatNearAmount(String(yocto)); } catch { return String(yocto); }
-}
