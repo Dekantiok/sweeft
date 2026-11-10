@@ -3,15 +3,28 @@ import { NearBindgen, near, call, view, initialize, LookupMap } from 'near-sdk-j
 // States: created -> joined -> funded -> delivered -> released
 //                                  \-> disputed -> resolved
 //                        \-> settled (anyone may call after deadline iff !disputed)
+//
+// Visibility model (v3):
+//   - At create, only the creator is added to the my_escrows index.
+//   - The counterparty is added only when they call join() with the escrow code.
+//   - So nobody except the creator sees an escrow until the code is shared and used.
+//   - join() still rejects anyone who is not the fixed buyer/seller.
 
-function loadEscrows(self) {
-  return Object.assign(new LookupMap('e'), self.escrows);
-}
+// v3 storage namespace. Old v1/v2 escrows live under prefix "e" and are ignored,
+// which gives us the clean test state approved for the v3 redeploy without
+// needing to delete account storage keys.
+const VERSION = 3;
+const ESCROW_PREFIX = 'e3';
 
-// Index of "<account>|<escrowId>" strings so a wallet can list its escrows.
-// Vector has only primitive fields, so it rehydrates via Object.assign.
-function loadIndex(self) {
-  return Object.assign(new Vector('i'), self.index || { prefix: 'i', length: 0 });
+// near-sdk-js reconstructs state by copying fields onto a fresh instance and does
+// not call a custom deserialize(), so enforce the v3 shape on first use.
+function normalizeIndex(self) {
+  if (self.version !== VERSION) {
+    self.version = VERSION;
+    self.index = [];
+    self.count = 0;
+  }
+  if (!Array.isArray(self.index)) self.index = [];
 }
 
 function newEscrowId(escrows) {
@@ -27,20 +40,25 @@ function newEscrowId(escrows) {
 @NearBindgen({})
 class EscrowContract {
   constructor() {
-    this.escrows = new LookupMap('e');
+    this.version = VERSION;
+    this.escrows = new LookupMap(ESCROW_PREFIX);
     // Plain array of "<account>|<escrowId>" strings; array fields migrate safely.
     this.index = [];
     this.count = 0;
   }
 
   deserialize() {
-    this.escrows = Object.assign(new LookupMap('e'), this.escrows);
-    if (!Array.isArray(this.index)) this.index = [];
+    // Kept for explicitness; near-sdk-js reconstructs fields directly.
+    this.version = VERSION;
+    this.escrows = new LookupMap(ESCROW_PREFIX);
+    this.index = [];
+    this.count = 0;
   }
 
   @initialize({})
   init() {
-    this.escrows = new LookupMap('e');
+    this.version = VERSION;
+    this.escrows = new LookupMap(ESCROW_PREFIX);
     this.index = [];
     this.count = 0;
   }
@@ -50,14 +68,15 @@ class EscrowContract {
   create({ seller, buyer, amount, ft, deadline_ms, terms_hash, foreign_asset }) {
     if (!seller || !buyer) throw new Error('buyer and seller required');
     if (seller === buyer) throw new Error('parties must differ');
-    const escrows = loadEscrows(this);
+    normalizeIndex(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const id = newEscrowId(escrows);
     this.count += 1;
-    const me = near.predecessorAccountId();
-    const buyerJoined = me === buyer;
-    const sellerJoined = me === seller;
+    const creator = near.predecessorAccountId();
+    const buyerJoined = creator === buyer;
+    const sellerJoined = creator === seller;
     const esc = {
-      id, buyer, seller, amount: String(amount), ft: ft || 'near',
+      id, creator, buyer, seller, amount: String(amount), ft: ft || 'near',
       deadline: Number(deadline_ms), terms_hash: terms_hash || '',
       foreign_asset: foreign_asset || null,
       status: buyerJoined && sellerJoined ? 'joined' : 'created',
@@ -65,15 +84,16 @@ class EscrowContract {
       disputed: false, ai_recommendation: null,
     };
     escrows.set(id, esc);
-    if (!Array.isArray(this.index)) this.index = [];
-    this.index.push(`${buyer}|${id}`, `${seller}|${id}`);
+    // Only the creator gets the escrow in their list up front.
+    this.index.push(`${creator}|${id}`);
     return id;
   }
 
   // Only a fixed party may join via escrow code (id). Closes the escrow to strangers.
   @call({})
   join({ id }) {
-    const escrows = loadEscrows(this);
+    normalizeIndex(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     const me = near.predecessorAccountId();
@@ -82,12 +102,15 @@ class EscrowContract {
     if (me === esc.seller) esc.seller_joined = true;
     if (esc.buyer_joined && esc.seller_joined && esc.status === 'created') esc.status = 'joined';
     escrows.set(id, esc);
+    // The counterparty becomes visible to themselves only after joining.
+    const key = `${me}|${id}`;
+    if (!this.index.includes(key)) this.index.push(key);
   }
 
   // Buyer funds after both joined. Payable: exact amount in yoctoNEAR for v1 (FT path next).
   @call({ payableFunction: true })
   deposit({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (!(esc.buyer_joined && esc.seller_joined)) throw new Error('both must join first');
@@ -100,7 +123,7 @@ class EscrowContract {
 
   @call({})
   submit_delivery({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (near.predecessorAccountId() !== esc.seller) throw new Error('only seller delivers');
@@ -112,7 +135,7 @@ class EscrowContract {
   // Payer (buyer) releases. Seller cannot self-release. Returns amount for transfer by caller flow.
   @call({})
   release({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (esc.disputed) throw new Error('disputed: resolve first');
@@ -125,7 +148,7 @@ class EscrowContract {
 
   @call({})
   dispute({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     const me = near.predecessorAccountId();
@@ -139,7 +162,7 @@ class EscrowContract {
   // AI recommend-only: stored, never moves funds.
   @call({})
   ai_recommend({ id, pct, reason }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (esc.status !== 'disputed') throw new Error('no dispute');
@@ -150,7 +173,7 @@ class EscrowContract {
   // Human resolves after dispute; payer confirms split.
   @call({})
   resolve({ id, release_pct }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (!esc.disputed) throw new Error('not disputed');
@@ -164,7 +187,7 @@ class EscrowContract {
   // Timeout settle: anyone may call after deadline iff !disputed.
   @call({})
   settle({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     const esc = escrows.get(id);
     if (!esc) throw new Error('unknown escrow');
     if (esc.disputed) throw new Error('disputed: resolve first');
@@ -177,16 +200,18 @@ class EscrowContract {
 
   @view({})
   get({ id }) {
-    const escrows = loadEscrows(this);
+    const escrows = new LookupMap(ESCROW_PREFIX);
     return escrows.get(id);
   }
 
-  // All escrow ids where account is buyer or seller (oldest first).
+  // All escrow ids where account is buyer or seller (oldest first, no duplicates).
   @view({})
   my_escrows({ account_id }) {
+    normalizeIndex(this);
     const prefix = `${account_id}|`;
-    return (this.index || [])
+    const ids = (this.index || [])
       .filter((entry) => entry.startsWith(prefix))
       .map((entry) => entry.slice(prefix.length));
+    return [...new Set(ids)];
   }
 }
