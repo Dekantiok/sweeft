@@ -57,6 +57,10 @@ v3 visibility: `SWFT-9297` is listed for creator `steepdata3968.testnet` and NOT
 counterparty `fewcap2636.testnet`, `SWFT-6257` is listed for the creator before join and
 for `seller.steepdata3968.testnet` only after that wallet joined; a third account calling
 `join` on `SWFT-9297` panics with `not a party`.
+Real payouts verified on testnet: `SWFT-1764` release moved the full 0.01 NEAR deposit to the
+seller (+10000000000000000000000 yocto exactly), `SWFT-5496` settle moved 0.002 NEAR to the
+seller, and `SWFT-2229` resolve at 70% paid the seller +0.007 and refunded the buyer +0.003.
+(Resolve uses a chained promise — returning parallel joint promises is prohibited on-chain.)
 Query: `near contract call-function as-read-only steepdata3968.testnet my_escrows '{"account_id":"steepdata3968.testnet"}' network-config testnet now`.
 
 ## API
