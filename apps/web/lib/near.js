@@ -1,5 +1,7 @@
 import { setupWalletSelector } from '@near-wallet-selector/core';
-import { setupMyNearWallet } from '@near-wallet-selector/my-near-wallet';
+import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
+import { setupHereWallet } from '@near-wallet-selector/here-wallet';
+import { setupNightly } from '@near-wallet-selector/nightly';
 import { setupModal } from '@near-wallet-selector/modal-ui';
 import * as nearAPI from 'near-api-js';
 
@@ -13,7 +15,10 @@ let modal = null;
 
 export async function getSelector() {
   if (selector) return selector;
-  selector = await setupWalletSelector({ network: NETWORK, modules: [setupMyNearWallet()] });
+  selector = await setupWalletSelector({
+    network: NETWORK,
+    modules: [setupMeteorWallet(), setupHereWallet(), setupNightly()],
+  });
   modal = setupModal(selector, { contractId: CONTRACT });
   return selector;
 }
