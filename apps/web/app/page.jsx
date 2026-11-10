@@ -1,11 +1,13 @@
 'use client';
 import { useEffect, useState } from 'react';
+import '@near-wallet-selector/modal-ui/styles.css';
 import {
   showWalletModal, subscribeAccount, signOut, escrowCall, getEscrow, myEscrows,
-  formatNear, CONTRACT, EXPLORER,
+  formatNear, CONTRACT, EXPLORER, getAccount,
 } from '../lib/near';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const BUILD = 'v2-tabs-2026-11-10';
 
 const S = {
   page: { maxWidth: 860, margin: '0 auto', padding: '28px 16px 64px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', color: '#111' },
@@ -62,9 +64,26 @@ export default function Home() {
 
   useEffect(() => {
     let unsub;
-    subscribeAccount((addr) => setAccount(addr)).then((u) => { unsub = u; setReady(true); });
+    (async () => {
+      try {
+        unsub = await subscribeAccount((addr) => setAccount(addr));
+      } catch (e) {
+        flash(`Wallet init failed: ${e.message}. Click Connect to retry.`, 'err');
+      } finally {
+        setReady(true);
+      }
+    })();
     return () => { if (typeof unsub === 'function') unsub(); };
-  }, []);
+  }, []); // eslint-disable-line
+
+  async function connect() {
+    showWalletModal();
+    // Some wallets update the store without firing an event; poll once as fallback.
+    setTimeout(async () => {
+      const addr = await getAccount().catch(() => null);
+      if (addr) setAccount(addr);
+    }, 1800);
+  }
 
   async function disconnect() {
     await signOut();
@@ -224,10 +243,11 @@ export default function Home() {
           a human always confirms.
         </p>
         {ready
-          ? <button style={{ ...S.btn, padding: '13px 22px', fontSize: 16 }} onClick={showWalletModal}>Connect wallet (testnet)</button>
+          ? <button style={{ ...S.btn, padding: '13px 22px', fontSize: 16 }} onClick={connect}>Connect wallet (testnet)</button>
           : <p style={{ color: '#888' }}>Loading wallet...</p>}
         <p style={{ marginTop: 30, fontSize: 12, color: '#999' }}>
           Contract <code>{CONTRACT}</code> · <a href={`${EXPLORER}/accounts/${CONTRACT}`} target="_blank" rel="noreferrer">explorer</a>
+          {' · '}build <code>{BUILD}</code>
         </p>
       </main>
     );
@@ -238,6 +258,7 @@ export default function Home() {
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
         <h1 style={{ fontSize: 24, margin: 0 }}>SWEeft</h1>
         <span style={{ fontSize: 12, color: '#777' }}>testnet v1</span>
+        <span style={{ fontSize: 11, color: '#999' }}>build {BUILD}</span>
         <div style={{ flex: 1 }} />
         <code style={{ fontSize: 12, background: '#f3f4f6', padding: '5px 8px', borderRadius: 6 }}>{account}</code>
         <button style={S.btnSmall} onClick={disconnect}>Disconnect</button>

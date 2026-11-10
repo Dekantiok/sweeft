@@ -1,3 +1,5 @@
+name: sweeft
+
 services:
   api:
     build: ./apps/api
