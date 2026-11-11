@@ -135,7 +135,6 @@ export const escrowCall = {
   },
   join: (id) => callMethod('join', { id }),
   reject: (id) => callMethod('reject', { id }),
-  linkEmail: (email) => callMethod('link_email', { email }),
   deposit: (id, amountYocto) => callMethod('deposit', { id }, String(amountYocto)),
   submitDelivery: (id) => callMethod('submit_delivery', { id }),
   release: (id) => callMethod('release', { id }),
@@ -165,5 +164,3 @@ export async function view(methodName, args) {
 export const getEscrow = (id) => view('get', { id });
 export const myEscrows = (accountId) => view('my_escrows', { account_id: accountId });
 export const incomingRequests = (accountId) => view('incoming', { account_id: accountId });
-export const emailAccount = (email) => view('email_account', { email });
-export const accountEmail = (accountId) => view('account_email', { account_id: accountId });

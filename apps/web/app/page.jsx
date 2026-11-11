@@ -3,12 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import '@near-wallet-selector/modal-ui/styles.css';
 import {
   showWalletModal, subscribeAccount, signOut, escrowCall, getEscrow, myEscrows,
-  incomingRequests, emailAccount, accountEmail,
+  incomingRequests,
   formatNear, errorText, CONTRACT, EXPLORER, getAccount,
 } from '../lib/near';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const BUILD = 'v8-requests-inbox-2026-11-11';
+const BUILD = 'v9-no-email-2026-11-11';
 
 const S = {
   page: { maxWidth: 860, margin: '0 auto', padding: '28px 16px 64px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', color: '#111' },
@@ -71,11 +71,6 @@ export default function Home() {
   const [requests, setRequests] = useState([]);
   const [requestsBusy, setRequestsBusy] = useState(false);
 
-  // linked email for this wallet
-  const [myEmail, setMyEmail] = useState('');
-  const [emailInput, setEmailInput] = useState('');
-  const [showEmailForm, setShowEmailForm] = useState(false);
-
   useEffect(() => {
     let unsub;
     (async () => {
@@ -108,9 +103,6 @@ export default function Home() {
     setCreated('');
     setCodeInput('');
     setAiRec(null);
-    setMyEmail('');
-    setEmailInput('');
-    setShowEmailForm(false);
     setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
     setNl('');
     setTab('create');
@@ -151,17 +143,13 @@ export default function Home() {
   }
 
   // ---------- create ----------
-  // Counterparty may be a *.testnet wallet or a linked email (resolved on-chain).
+  // Counterparty is a NEAR wallet (*.testnet / *.near) — the only identity the
+  // contract knows. No Web2 identifiers anywhere in the flow.
   async function resolveCounterparty(raw) {
     const cp = (raw || '').trim().toLowerCase();
-    if (!cp) throw new Error('Counterparty is required — a wallet like alice.testnet or a linked email.');
-    if (cp.includes('@')) {
-      const addr = await emailAccount(cp);
-      if (!addr) throw new Error(`No wallet linked to ${cp} yet — ask them to connect and add their email first.`);
-      return addr;
-    }
+    if (!cp) throw new Error('Counterparty is required — a wallet like alice.testnet.');
     if (!/^[a-z0-9._-]+\.testnet$/.test(cp) && !/^[a-z0-9_-]{2,64}\.near$/.test(cp)) {
-      throw new Error('Counterparty must be a wallet (*.testnet) or a linked email.');
+      throw new Error('Counterparty must be a NEAR wallet (*.testnet).');
     }
     return cp;
   }
@@ -331,29 +319,6 @@ export default function Home() {
     finally { setBusy(''); }
   }
 
-  // ---------- linked email ----------
-  async function loadMyEmail(addr) {
-    if (!addr) { setMyEmail(''); return; }
-    try { setMyEmail(await accountEmail(addr).catch(() => null) || ''); }
-    catch { setMyEmail(''); }
-  }
-
-  async function saveEmail() {
-    const clean = (emailInput || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean)) return flash('Enter a valid email address.', 'err');
-    setBusy('email');
-    try {
-      await escrowCall.linkEmail(clean);
-      flash(`Wallet linked to ${clean} — confirming on-chain...`, 'ok');
-      await sleep(2000);
-      await loadMyEmail(account);
-      setShowEmailForm(false);
-      setEmailInput('');
-      flash(`Done: anyone can now invite ${clean} as a counterparty.`, 'ok');
-    } catch (e) { flash(`Link email failed: ${errorText(e)}`, 'err'); }
-    finally { setBusy(''); }
-  }
-
   // ---------- mine ----------
   async function loadMine() {
     if (!account) return;
@@ -376,7 +341,6 @@ export default function Home() {
 
   useEffect(() => { if (tab === 'mine' && account) loadMine(); }, [tab, account]); // eslint-disable-line
   useEffect(() => { if (tab === 'requests' && account) loadRequests(); }, [tab, account]); // eslint-disable-line
-  useEffect(() => { loadMyEmail(account); }, [account]); // eslint-disable-line
 
   // Wallet switched (e.g. creator disconnects, joiner connects in the same browser):
   // drop the previous wallet's escrow state so nobody sees what they didn't do.
@@ -391,9 +355,6 @@ export default function Home() {
       setCreated('');
       setCodeInput('');
       setAiRec(null);
-      setMyEmail('');
-      setEmailInput('');
-      setShowEmailForm(false);
       setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
       setNl('');
       setTab('create');
@@ -440,28 +401,9 @@ export default function Home() {
         <span style={{ fontSize: 12, color: '#777' }}>testnet v1</span>
         <span style={{ fontSize: 11, color: '#999' }}>build {BUILD}</span>
         <div style={{ flex: 1 }} />
-        {myEmail
-          ? <code title="Linked email" style={{ fontSize: 12, background: '#eaf7ec', padding: '5px 8px', borderRadius: 6 }}>✉ {myEmail}</code>
-          : <button style={S.btnSmall} onClick={() => setShowEmailForm((v) => !v)}>+ Add email</button>}
         <code style={{ fontSize: 12, background: '#f3f4f6', padding: '5px 8px', borderRadius: 6 }}>{account}</code>
         <button style={S.btnSmall} onClick={disconnect}>Disconnect</button>
       </header>
-
-      {showEmailForm && !myEmail && (
-        <div style={S.card}>
-          <h3 style={{ margin: '0 0 8px' }}>Link an email to this wallet</h3>
-          <p style={{ fontSize: 13, color: '#666', margin: '0 0 10px' }}>
-            Anyone can then invite you as a counterparty using just your email — new requests appear under Requests.
-          </p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input style={{ ...S.input, maxWidth: 280 }} placeholder="you@example.com" value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)} />
-            <button style={S.btn} onClick={saveEmail} disabled={busy === 'email'}>
-              {busy === 'email' ? 'Linking...' : 'Link email'}
-            </button>
-          </div>
-        </div>
-      )}
 
       <nav style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
         <button style={S.tab(tab === 'create')} onClick={() => setTab('create')}>Create</button>
@@ -513,7 +455,7 @@ export default function Home() {
             <h3 style={{ margin: '0 0 12px' }}>Escrow details</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={S.label}>Counterparty — wallet (*.testnet) or linked email</label>
+                <label style={S.label}>Counterparty wallet (*.testnet)</label>
                 <input style={S.input} value={form.counterparty}
                   placeholder="seller.testnet or seller@example.com"
                   onChange={(e) => setForm({ ...form, counterparty: e.target.value })} />
@@ -572,9 +514,8 @@ export default function Home() {
               <button style={S.btnSmall} onClick={loadRequests} disabled={requestsBusy}>{requestsBusy ? 'Loading...' : 'Refresh'}</button>
             </div>
             <p style={{ fontSize: 13, color: '#666', margin: '8px 0 0' }}>
-              Escrows naming you as buyer or seller that you have not accepted yet. Accept to join,
-              or reject to decline — the creator sees it was declined.
-              {!myEmail && <> Tip: <button style={{ ...S.btnSmall, padding: '2px 8px' }} onClick={() => setShowEmailForm(true)}>link an email</button> so anyone can invite you without knowing your wallet address.</>}
+              Escrows naming this wallet as buyer or seller that you have not accepted yet.
+              Accept to join, or reject to decline — the creator sees it was declined.
             </p>
           </div>
 

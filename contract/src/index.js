@@ -5,55 +5,31 @@ import { NearBindgen, near, call, view, initialize, LookupMap, NearPromise } fro
 //                        \-> rejected (counterparty declines, or creator cancels pre-funding)
 //                        \-> settled (anyone may call after deadline iff !disputed)
 //
-// Discovery model (v4): no shared codes.
-//   - Wallets link an email via link_email(). The creator types the counterparty's
-//     email (or a *.testnet account directly); the UI resolves it to an account.
+// Discovery model (v5): no codes to share, no Web2 identifiers.
+//   - Identity is the NEAR account ID only. The creator types the counterparty's
+//     *.testnet (or *.near) wallet; the counterparty finds the escrow under
+//     incoming() as a request they can accept (join) or reject.
 //   - At create, only the creator is added to the my_escrows index. The counterparty
-//     gets a pending entry instead, listed by the incoming() view as a request they
-//     can accept (join) or reject.
+//     gets a pending entry instead, listed by the incoming() view.
 //   - join() accepts the request: counterparty is indexed, pending entry removed.
 //   - reject() declines it: status -> rejected, pending entry removed. The creator
 //     still sees it in their list so they know it was declined.
 //   - join()/reject() still reject anyone who is not the fixed buyer/seller.
-//   - get(id) by escrow code still works: codes remain the on-chain IDs.
+//   - get(id) by escrow ID still works: IDs remain the on-chain reference.
 //
 // Money movement is unchanged: release() pays the seller instantly once funded
 // (no deadline wait — the deadline only gates settle()), resolve() splits.
 
-const VERSION = 4;
+const VERSION = 5;
 const ESCROW_PREFIX = 'e4';
-const EMAIL_TO_ACCOUNT_PREFIX = 'm';
-const ACCOUNT_TO_EMAIL_PREFIX = 'a';
-
-// Email directory maps are always built fresh per call (never stored as instance
-// fields): near-sdk-js reconstructs collection fields from stored state, and any
-// collection field missing from older state panics the whole contract.
-function emailToAccountMap() {
-  return new LookupMap(EMAIL_TO_ACCOUNT_PREFIX);
-}
-
-function accountToEmailMap() {
-  return new LookupMap(ACCOUNT_TO_EMAIL_PREFIX);
-}
 
 // near-sdk-js reconstructs state by copying fields onto a fresh instance and does
 // not call a custom deserialize(), so enforce the shape on first use.
+// v5 preserves existing index/pending arrays (no wipe); missing ones are created.
 function normalizeState(self) {
-  if (self.version !== VERSION) {
-    self.version = VERSION;
-    self.index = [];
-    self.pending = [];
-    self.count = 0;
-  }
+  if (self.version !== VERSION) self.version = VERSION;
   if (!Array.isArray(self.index)) self.index = [];
   if (!Array.isArray(self.pending)) self.pending = [];
-}
-
-function cleanEmail(email) {
-  const e = String(email || '').trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) throw new Error('invalid email');
-  if (e.length > 120) throw new Error('email too long');
-  return e;
 }
 
 function removePending(self, accountId, id) {
@@ -99,34 +75,6 @@ class EscrowContract {
     this.index = [];
     this.pending = [];
     this.count = 0;
-  }
-
-  // Link the caller's wallet to an email so others can invite them by email.
-  // Re-linking moves the email (old links on both sides are cleared).
-  @call({})
-  link_email({ email }) {
-    const clean = cleanEmail(email);
-    const me = near.predecessorAccountId();
-    const emailToAccount = emailToAccountMap();
-    const accountToEmail = accountToEmailMap();
-    const prevAccount = emailToAccount.get(clean);
-    if (prevAccount && prevAccount !== me) accountToEmail.remove(prevAccount);
-    const prevEmail = accountToEmail.get(me);
-    if (prevEmail && prevEmail !== clean) emailToAccount.remove(prevEmail);
-    emailToAccount.set(clean, me);
-    accountToEmail.set(me, clean);
-    return clean;
-  }
-
-  @view({})
-  email_account({ email }) {
-    const clean = String(email || '').trim().toLowerCase();
-    return emailToAccountMap().get(clean);
-  }
-
-  @view({})
-  account_email({ account_id }) {
-    return accountToEmailMap().get(account_id);
   }
 
   // Anyone creates with FIXED parties. Creator auto-joins if they are a party.
