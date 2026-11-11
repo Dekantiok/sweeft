@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import '@near-wallet-selector/modal-ui/styles.css';
 import {
   showWalletModal, subscribeAccount, signOut, escrowCall, getEscrow, myEscrows,
@@ -7,7 +7,7 @@ import {
 } from '../lib/near';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const BUILD = 'v6-view-call-function-2026-11-11';
+const BUILD = 'v7-scoped-sessions-2026-11-11';
 
 const S = {
   page: { maxWidth: 860, margin: '0 auto', padding: '28px 16px 64px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', color: '#111' },
@@ -93,6 +93,11 @@ export default function Home() {
     setAccount(null);
     setEscrow(null);
     setMine([]);
+    setCreated('');
+    setCodeInput('');
+    setAiRec(null);
+    setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
+    setNl('');
     setTab('create');
   }
 
@@ -164,6 +169,9 @@ export default function Home() {
       setCreated(id);
       setCodeInput(id);
       setEscrow(await getEscrow(id));
+      // Clear the form for the next escrow; the code panel below keeps this one's code.
+      setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
+      setNl('');
       flash(`Escrow ${id} is live. Only you see it in My escrows until ${cp} joins with the code.`, 'ok');
       loadMine();
     } catch (e) { flash(`Create failed: ${errorText(e)}`, 'err'); }
@@ -270,6 +278,25 @@ export default function Home() {
   }
 
   useEffect(() => { if (tab === 'mine' && account) loadMine(); }, [tab, account]); // eslint-disable-line
+
+  // Wallet switched (e.g. creator disconnects, joiner connects in the same browser):
+  // drop the previous wallet's escrow state so nobody sees what they didn't do.
+  const seenAccount = useRef(null);
+  useEffect(() => {
+    if (seenAccount.current === null) { seenAccount.current = account; return; }
+    if (seenAccount.current !== account) {
+      seenAccount.current = account;
+      setEscrow(null);
+      setMine([]);
+      setCreated('');
+      setCodeInput('');
+      setAiRec(null);
+      setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
+      setNl('');
+      setTab('create');
+      setNote({ text: '', kind: '' });
+    }
+  }, [account]);
 
   // ---------- landing ----------
   if (!ready || !account) {
@@ -396,6 +423,7 @@ export default function Home() {
                 <code style={{ fontSize: 26, fontWeight: 700, letterSpacing: 1 }}>{created}</code>
                 <button style={S.btnSmall} onClick={() => { navigator.clipboard?.writeText(created); flash('Code copied.', 'ok'); }}>Copy</button>
                 <button style={S.btnSmall} onClick={() => { setTab('join'); loadEscrow(created); }}>Open in Join</button>
+                <button style={S.btnSmall} onClick={() => { setCreated(''); flash('Ready for the next escrow — fill the form above.', ''); }}>Create another</button>
               </div>
               <p style={{ fontSize: 12, color: '#555', margin: '10px 0 0' }}>
                 Only your wallet sees this escrow in My escrows until the counterparty joins with this code.
