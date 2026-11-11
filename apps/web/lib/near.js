@@ -150,7 +150,7 @@ export async function view(methodName, args) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jsonrpc: '2.0', id: '1', method: 'query',
-      params: { request_type: 'call', finality: 'final', account_id: CONTRACT, method_name: methodName, args_base64: btoa(JSON.stringify(args)) },
+      params: { request_type: 'call_function', finality: 'final', account_id: CONTRACT, method_name: methodName, args_base64: btoa(JSON.stringify(args)) },
     }),
   });
   const j = await r.json();
