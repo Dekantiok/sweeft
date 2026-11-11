@@ -10,10 +10,10 @@ UI: landing page is only "Connect wallet"; after connecting there are three tabs
 Create (role toggle buyer/seller + AI pre-fill), Requests (incoming accept/reject inbox + ID lookup),
 and My escrows (wallet-indexed list).
 Wallets: Meteor, HERE and Nightly (MyNearWallet is discontinued and not offered).
-Link an email to your wallet from the header so others can invite you by email.
-After connecting, the landing footer shows the running build tag, e.g. `v8-requests-inbox-2026-11-11`.
+Identity is the NEAR account only — no emails, no Web2 identifiers anywhere in the flow.
+After connecting, the landing footer shows the running build tag, e.g. `v9-no-email-2026-11-11`.
 
-Discovery model: no codes to share. The creator types the counterparty's wallet or linked email;
+Discovery model: no codes to share. The creator types the counterparty's wallet address;
 the counterparty finds the escrow under Requests and accepts (join) or rejects. Accepting lists it
 in their My escrows; rejecting marks it `rejected`, visible to both sides. `SWFT-XXXX` IDs remain
 as the on-chain reference and stay look-up-able. The contract rejects anyone who is not the
@@ -31,15 +31,14 @@ Prereqs: Docker, testnet accounts, `NEAR_AI_KEY` in `.env` (see `.env.example`).
 3. Do: open web — see: only a "Connect wallet (testnet)" button
 4. Do: connect wallet — see: Create / Join / My escrows tabs
 5. Do: in Create, type "pay 50 USDC to alice.testnet for logo by Friday" and press AI pre-fill — see: form filled
-6. Do: set counterparty (wallet or linked email) + amount, choose role, press Create — see: request `SWFT-XXXX` sent
+6. Do: set counterparty wallet + amount, choose role, press Create — see: request `SWFT-XXXX` sent
 7. Do: open My escrows as the creator — see: the new escrow is listed there already
 8. Do: connect the counterparty wallet and open Requests — see: the pending request with Accept / Reject
-9. Do: link an email in the header (+ Add email) — see: chip with the address; others can now invite this email
-10. Do: press Accept as the counterparty — see: status `joined`; the escrow now appears in their My escrows too
-11. Do: buyer presses Deposit — see: status `funded`
-12. Do: buyer presses Release immediately (no delivery, no deadline wait) — see: status `released`, seller paid
-13. Do: raise dispute, ask AI arbiter, record + confirm payout — see: status `resolved`
-14. Do: create with 1-day deadline, press Settle after deadline — see: error before deadline; status `settled` after; or press Reject on a fresh request — see: status `rejected`, visible to both sides
+9. Do: press Accept as the counterparty — see: status `joined`; the escrow now appears in their My escrows too
+10. Do: buyer presses Deposit — see: status `funded`
+11. Do: buyer presses Release immediately (no delivery, no deadline wait) — see: status `released`, seller paid
+12. Do: raise dispute, ask AI arbiter, record + confirm payout — see: status `resolved`
+13. Do: create with 1-day deadline, press Settle after deadline — see: error before deadline; status `settled` after; or press Reject on a fresh request — see: status `rejected`, visible to both sides
 
 You need two testnet wallets to try both sides (buyer + seller), or use
 `seller.steepdata3968.testnet` as counterparty and play the buyer only.
@@ -49,13 +48,15 @@ You need two testnet wallets to try both sides (buyer + seller), or use
 `contract/` — `near-sdk-js`. States: `created -> joined -> funded -> delivered -> released | disputed -> resolved | settled`, plus `rejected` (declined pre-funding).
 `settle(id)` callable by anyone after deadline iff `!disputed`. AI key is recommend-only.
 `release(id)` is instant for the buyer once funded — no delivery step and no deadline wait required.
-Views: `get(id)`, `my_escrows(account_id)`, `incoming(account_id)` (pending requests),
-`email_account(email)` and `account_email(account_id)` (wallet↔email directory).
+Views: `get(id)`, `my_escrows(account_id)` and `incoming(account_id)` (pending requests).
+No emails, no off-chain directory: identity is the NEAR account ID, and every view is
+keyed by it. (An on-chain email alias map was tried in v4 and removed in v5 — emails are
+a centralized namespace and don't belong in contract state.)
 
-Contract v4 (2026-11-11) added the request flow: `link_email` links a wallet to an email,
+Contract v5 (2026-11-11) removed the email directory; the request flow is unchanged:
 `create` puts a pending entry in `incoming` instead of indexing the counterparty, `join`
-accepts, `reject` declines pre-funding (creator can also cancel). Storage moved to a fresh
-namespace (`e4`), wiping earlier test escrows.
+accepts, `reject` declines pre-funding (creator can also cancel). Escrow records kept the
+`e4` namespace, so existing test escrows and lists survived the upgrade.
 
 Deployed testnet account: `steepdata3968.testnet` — live.
 Explorer: https://explorer.testnet.near.org/accounts/steepdata3968.testnet
@@ -64,9 +65,11 @@ v3 visibility `SWFT-9297` creator-only, `SWFT-6257` listed after join, stranger 
 Real payouts: `SWFT-1764` release moved the full 0.01 NEAR deposit to the seller,
 `SWFT-5496` settle moved 0.002 NEAR, `SWFT-2229` resolve at 70% paid the seller +0.007 and refunded the buyer +0.003.
 (Resolve uses a chained promise — returning parallel joint promises is prohibited on-chain.)
-v4 requests: `seller@sweeft.test` linked to `seller.steepdata3968.testnet`; `SWFT-3940`
+v4 requests: `SWFT-3940`
 appeared in `incoming` but not in `my_escrows`, reject cleared it to `rejected`;
 `SWFT-2372` accepted, funded, and released instantly with the deadline 24h away (seller +0.001 exact).
+v5 email removal: `email_account` now resolves `MethodNotFound`, existing `my_escrows` lists
+(`SWFT-3940`, `SWFT-2372`) and all escrow records survived the upgrade untouched.
 Query: `near contract call-function as-read-only steepdata3968.testnet incoming '{"account_id":"seller.steepdata3968.testnet"}' network-config testnet now`.
 
 ## API
