@@ -3,6 +3,7 @@ import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
 import { setupHereWallet } from '@near-wallet-selector/here-wallet';
 import { setupNightly } from '@near-wallet-selector/nightly';
 import { setupModal } from '@near-wallet-selector/modal-ui';
+import { transactions } from 'near-api-js';
 
 export const CONTRACT = process.env.NEXT_PUBLIC_CONTRACT || 'steepdata3968.testnet';
 export const NETWORK = process.env.NEXT_PUBLIC_NETWORK || 'testnet';
@@ -82,15 +83,16 @@ export function errorText(e) {
 async function callMethod(method, args, deposit = '0') {
   const s = await getSelector();
   const wallet = await s.wallet();
-  // Uint8Array args are understood by Meteor, HERE and Nightly alike.
-  const encodedArgs = new TextEncoder().encode(JSON.stringify(args));
-  return wallet.signAndSendTransaction({
-    receiverId: CONTRACT,
-    actions: [{
-      type: 'FunctionCall',
-      params: { methodName: method, args: encodedArgs, gas: '100000000000000', deposit },
-    }],
-  });
+  // wallet-selector 10.x wallets expect NAJ actions ({ functionCall: ... }) and
+  // convert them internally. The { type, params } shape throws
+  // "Unsupported NAJ action" in najActionToInternal — do not use it.
+  const action = transactions.functionCall(
+    method,
+    new TextEncoder().encode(JSON.stringify(args)),
+    100000000000000n,
+    BigInt(deposit),
+  );
+  return wallet.signAndSendTransaction({ receiverId: CONTRACT, actions: [action] });
 }
 
 // Wallets return FinalExecutionOutcome; contract return value is base64 in status.SuccessValue.

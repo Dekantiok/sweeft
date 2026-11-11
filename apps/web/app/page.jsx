@@ -7,7 +7,7 @@ import {
 } from '../lib/near';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const BUILD = 'v4-visibility-2026-11-10';
+const BUILD = 'v5-naj-actions-2026-11-11';
 
 const S = {
   page: { maxWidth: 860, margin: '0 auto', padding: '28px 16px 64px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', color: '#111' },
