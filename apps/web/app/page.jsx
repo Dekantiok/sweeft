@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 import '@near-wallet-selector/modal-ui/styles.css';
 import {
   showWalletModal, subscribeAccount, signOut, escrowCall, getEscrow, myEscrows,
+  incomingRequests, emailAccount, accountEmail,
   formatNear, errorText, CONTRACT, EXPLORER, getAccount,
 } from '../lib/near';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const BUILD = 'v7-scoped-sessions-2026-11-11';
+const BUILD = 'v8-requests-inbox-2026-11-11';
 
 const S = {
   page: { maxWidth: 860, margin: '0 auto', padding: '28px 16px 64px', fontFamily: 'ui-sans-serif, system-ui, sans-serif', color: '#111' },
@@ -36,6 +37,7 @@ const STATUS_COLORS = {
   disputed: { bg: '#fee2e2', fg: '#991b1b' },
   resolved: { bg: '#d1fae5', fg: '#065f46' },
   settled: { bg: '#e5e7eb', fg: '#374151' },
+  rejected: { bg: '#f3f4f6', fg: '#6b7280' },
   missing: { bg: '#f3f4f6', fg: '#6b7280' },
 };
 
@@ -65,6 +67,15 @@ export default function Home() {
   const [mine, setMine] = useState([]);
   const [mineBusy, setMineBusy] = useState(false);
 
+  // requests inbox
+  const [requests, setRequests] = useState([]);
+  const [requestsBusy, setRequestsBusy] = useState(false);
+
+  // linked email for this wallet
+  const [myEmail, setMyEmail] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const [showEmailForm, setShowEmailForm] = useState(false);
+
   useEffect(() => {
     let unsub;
     (async () => {
@@ -93,9 +104,13 @@ export default function Home() {
     setAccount(null);
     setEscrow(null);
     setMine([]);
+    setRequests([]);
     setCreated('');
     setCodeInput('');
     setAiRec(null);
+    setMyEmail('');
+    setEmailInput('');
+    setShowEmailForm(false);
     setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
     setNl('');
     setTab('create');
@@ -136,15 +151,29 @@ export default function Home() {
   }
 
   // ---------- create ----------
+  // Counterparty may be a *.testnet wallet or a linked email (resolved on-chain).
+  async function resolveCounterparty(raw) {
+    const cp = (raw || '').trim().toLowerCase();
+    if (!cp) throw new Error('Counterparty is required — a wallet like alice.testnet or a linked email.');
+    if (cp.includes('@')) {
+      const addr = await emailAccount(cp);
+      if (!addr) throw new Error(`No wallet linked to ${cp} yet — ask them to connect and add their email first.`);
+      return addr;
+    }
+    if (!/^[a-z0-9._-]+\.testnet$/.test(cp) && !/^[a-z0-9_-]{2,64}\.near$/.test(cp)) {
+      throw new Error('Counterparty must be a wallet (*.testnet) or a linked email.');
+    }
+    return cp;
+  }
+
   async function createEscrow() {
     if (!account) return flash('Connect a wallet first.', 'err');
-    const cp = form.counterparty.trim().toLowerCase();
-    if (!cp) return flash('Counterparty wallet is required.', 'err');
-    if (cp === account) return flash('Counterparty must be a different wallet.', 'err');
     if (!form.amount || Number(form.amount) <= 0) return flash('Amount must be greater than zero.', 'err');
     setBusy('create');
     setCreated('');
     try {
+      const cp = await resolveCounterparty(form.counterparty);
+      if (cp === account) return flash('Counterparty must be a different wallet.', 'err');
       const before = await myEscrows(account).catch(() => []);
       const parties = role === 'buyer'
         ? { buyer: account, seller: cp }
@@ -167,12 +196,11 @@ export default function Home() {
       }
       if (!id) throw new Error('transaction sent, but the code could not be read — open My escrows');
       setCreated(id);
-      setCodeInput(id);
       setEscrow(await getEscrow(id));
-      // Clear the form for the next escrow; the code panel below keeps this one's code.
+      // Clear the form for the next escrow; the panel below keeps this one's ID.
       setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
       setNl('');
-      flash(`Escrow ${id} is live. Only you see it in My escrows until ${cp} joins with the code.`, 'ok');
+      flash(`Request ${id} sent to ${cp}. They will see it under Requests and can accept or reject.`, 'ok');
       loadMine();
     } catch (e) { flash(`Create failed: ${errorText(e)}`, 'err'); }
     finally { setBusy(''); }
@@ -237,6 +265,7 @@ export default function Home() {
       if (updated) flash(`${label} confirmed — status: ${updated.status}.`, 'ok');
       else flash(`${label} sent, but the status has not updated yet. Press Refresh.`, '');
       loadMine();
+      loadRequests();
     } catch (e) { flash(`${label} failed: ${errorText(e)}`, 'err'); }
     finally { setBusy(''); }
   }
@@ -257,6 +286,74 @@ export default function Home() {
     finally { setBusy(''); }
   }
 
+  // ---------- requests inbox ----------
+  async function loadRequests() {
+    if (!account) return;
+    setRequestsBusy(true);
+    try {
+      const ids = await incomingRequests(account);
+      const items = await Promise.all((ids || []).map(async (id) => {
+        try {
+          const e = await getEscrow(id);
+          return e || null;
+        } catch { return null; }
+      }));
+      setRequests(items.filter(Boolean));
+    } catch (e) { flash(`Could not load requests: ${errorText(e)}`, 'err'); }
+    finally { setRequestsBusy(false); }
+  }
+
+  // Accept = join; afterwards the escrow appears in My escrows.
+  async function acceptRequest(id) {
+    setBusy(`accept-${id}`);
+    try {
+      await escrowCall.join(id);
+      flash(`Request ${id} accepted — confirming on-chain...`, 'ok');
+      await sleep(2500);
+      setEscrow(await getEscrow(id).catch(() => null));
+      loadRequests();
+      loadMine();
+      flash(`Request ${id} accepted. It is now in your My escrows.`, 'ok');
+    } catch (e) { flash(`Accept failed: ${errorText(e)}`, 'err'); }
+    finally { setBusy(''); }
+  }
+
+  async function rejectRequest(id) {
+    setBusy(`reject-${id}`);
+    try {
+      await escrowCall.reject(id);
+      flash(`Request ${id} rejected — confirming on-chain...`, 'ok');
+      await sleep(2500);
+      loadRequests();
+      loadMine();
+      flash(`Request ${id} rejected. The creator can see it was declined.`, 'ok');
+    } catch (e) { flash(`Reject failed: ${errorText(e)}`, 'err'); }
+    finally { setBusy(''); }
+  }
+
+  // ---------- linked email ----------
+  async function loadMyEmail(addr) {
+    if (!addr) { setMyEmail(''); return; }
+    try { setMyEmail(await accountEmail(addr).catch(() => null) || ''); }
+    catch { setMyEmail(''); }
+  }
+
+  async function saveEmail() {
+    const clean = (emailInput || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clean)) return flash('Enter a valid email address.', 'err');
+    setBusy('email');
+    try {
+      await escrowCall.linkEmail(clean);
+      flash(`Wallet linked to ${clean} — confirming on-chain...`, 'ok');
+      await sleep(2000);
+      await loadMyEmail(account);
+      setShowEmailForm(false);
+      setEmailInput('');
+      flash(`Done: anyone can now invite ${clean} as a counterparty.`, 'ok');
+    } catch (e) { flash(`Link email failed: ${errorText(e)}`, 'err'); }
+    finally { setBusy(''); }
+  }
+
   // ---------- mine ----------
   async function loadMine() {
     if (!account) return;
@@ -272,12 +369,14 @@ export default function Home() {
         }
       }));
       setMine(items.slice(0, 30));
-      if (!ids || !ids.length) flash('No escrows for this wallet yet. Create one, or join one with a code.');
+      if (!ids || !ids.length) flash('No escrows here yet. Create one, or accept a request under Requests.');
     } catch (e) { flash(`Could not load your escrows: ${errorText(e)}`, 'err'); }
     finally { setMineBusy(false); }
   }
 
   useEffect(() => { if (tab === 'mine' && account) loadMine(); }, [tab, account]); // eslint-disable-line
+  useEffect(() => { if (tab === 'requests' && account) loadRequests(); }, [tab, account]); // eslint-disable-line
+  useEffect(() => { loadMyEmail(account); }, [account]); // eslint-disable-line
 
   // Wallet switched (e.g. creator disconnects, joiner connects in the same browser):
   // drop the previous wallet's escrow state so nobody sees what they didn't do.
@@ -288,9 +387,13 @@ export default function Home() {
       seenAccount.current = account;
       setEscrow(null);
       setMine([]);
+      setRequests([]);
       setCreated('');
       setCodeInput('');
       setAiRec(null);
+      setMyEmail('');
+      setEmailInput('');
+      setShowEmailForm(false);
       setForm({ counterparty: '', amount: '', deadlineDays: '7', terms: '' });
       setNl('');
       setTab('create');
@@ -307,7 +410,8 @@ export default function Home() {
           Escrow for freelancers and digital-goods sellers.
         </p>
         <p style={{ color: '#666', margin: '0 0 28px' }}>
-          Buyer and seller are fixed at creation. Funds sit in a NEAR contract and release when the payer
+          Buyer and seller are fixed at creation. The counterparty gets a request they can
+          accept or reject — no codes to share. Funds sit in a NEAR contract and release when the payer
           approves, or after the deadline if nobody disputes. AI pre-fills the deal and advises disputes —
           a human always confirms.
         </p>
@@ -336,13 +440,34 @@ export default function Home() {
         <span style={{ fontSize: 12, color: '#777' }}>testnet v1</span>
         <span style={{ fontSize: 11, color: '#999' }}>build {BUILD}</span>
         <div style={{ flex: 1 }} />
+        {myEmail
+          ? <code title="Linked email" style={{ fontSize: 12, background: '#eaf7ec', padding: '5px 8px', borderRadius: 6 }}>✉ {myEmail}</code>
+          : <button style={S.btnSmall} onClick={() => setShowEmailForm((v) => !v)}>+ Add email</button>}
         <code style={{ fontSize: 12, background: '#f3f4f6', padding: '5px 8px', borderRadius: 6 }}>{account}</code>
         <button style={S.btnSmall} onClick={disconnect}>Disconnect</button>
       </header>
 
+      {showEmailForm && !myEmail && (
+        <div style={S.card}>
+          <h3 style={{ margin: '0 0 8px' }}>Link an email to this wallet</h3>
+          <p style={{ fontSize: 13, color: '#666', margin: '0 0 10px' }}>
+            Anyone can then invite you as a counterparty using just your email — new requests appear under Requests.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input style={{ ...S.input, maxWidth: 280 }} placeholder="you@example.com" value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)} />
+            <button style={S.btn} onClick={saveEmail} disabled={busy === 'email'}>
+              {busy === 'email' ? 'Linking...' : 'Link email'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <nav style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
         <button style={S.tab(tab === 'create')} onClick={() => setTab('create')}>Create</button>
-        <button style={S.tab(tab === 'join')} onClick={() => setTab('join')}>Join</button>
+        <button style={S.tab(tab === 'requests')} onClick={() => { setTab('requests'); loadRequests(); }}>
+          Requests{requests.length > 0 ? ` (${requests.length})` : ''}
+        </button>
         <button style={S.tab(tab === 'mine')} onClick={() => setTab('mine')}>My escrows</button>
       </nav>
 
@@ -388,8 +513,9 @@ export default function Home() {
             <h3 style={{ margin: '0 0 12px' }}>Escrow details</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label style={S.label}>Counterparty wallet (*.testnet)</label>
+                <label style={S.label}>Counterparty — wallet (*.testnet) or linked email</label>
                 <input style={S.input} value={form.counterparty}
+                  placeholder="seller.testnet or seller@example.com"
                   onChange={(e) => setForm({ ...form, counterparty: e.target.value })} />
               </div>
               <div>
@@ -417,16 +543,18 @@ export default function Home() {
 
           {created && (
             <div style={{ ...S.card, borderColor: '#86efac', background: '#f0fdf4' }}>
-              <h3 style={{ margin: '0 0 6px' }}>Escrow created</h3>
-              <p style={{ margin: '0 0 10px', fontSize: 14 }}>Share this code with the counterparty:</p>
+              <h3 style={{ margin: '0 0 6px' }}>Request sent</h3>
+              <p style={{ margin: '0 0 10px', fontSize: 14 }}>
+                The counterparty will see this under their Requests tab and can accept or reject.
+                ID <code>{created}</code> stays as the on-chain reference.
+              </p>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                 <code style={{ fontSize: 26, fontWeight: 700, letterSpacing: 1 }}>{created}</code>
-                <button style={S.btnSmall} onClick={() => { navigator.clipboard?.writeText(created); flash('Code copied.', 'ok'); }}>Copy</button>
-                <button style={S.btnSmall} onClick={() => { setTab('join'); loadEscrow(created); }}>Open in Join</button>
+                <button style={S.btnSmall} onClick={() => { navigator.clipboard?.writeText(created); flash('ID copied.', 'ok'); }}>Copy</button>
                 <button style={S.btnSmall} onClick={() => { setCreated(''); flash('Ready for the next escrow — fill the form above.', ''); }}>Create another</button>
               </div>
               <p style={{ fontSize: 12, color: '#555', margin: '10px 0 0' }}>
-                Only your wallet sees this escrow in My escrows until the counterparty joins with this code.
+                Only your wallet lists this escrow until the counterparty accepts.
                 {' '}<a href={`${EXPLORER}/accounts/${CONTRACT}`} target="_blank" rel="noreferrer">View contract on explorer</a>
               </p>
             </div>
@@ -434,11 +562,52 @@ export default function Home() {
         </section>
       )}
 
-      {/* ---------------- JOIN ---------------- */}
-      {tab === 'join' && (
+      {/* ---------------- REQUESTS ---------------- */}
+      {tab === 'requests' && (
         <section>
           <div style={S.card}>
-            <h3 style={{ margin: '0 0 10px' }}>Join an escrow</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h3 style={{ margin: 0 }}>Incoming requests</h3>
+              <div style={{ flex: 1 }} />
+              <button style={S.btnSmall} onClick={loadRequests} disabled={requestsBusy}>{requestsBusy ? 'Loading...' : 'Refresh'}</button>
+            </div>
+            <p style={{ fontSize: 13, color: '#666', margin: '8px 0 0' }}>
+              Escrows naming you as buyer or seller that you have not accepted yet. Accept to join,
+              or reject to decline — the creator sees it was declined.
+              {!myEmail && <> Tip: <button style={{ ...S.btnSmall, padding: '2px 8px' }} onClick={() => setShowEmailForm(true)}>link an email</button> so anyone can invite you without knowing your wallet address.</>}
+            </p>
+          </div>
+
+          {requests.length === 0 && !requestsBusy && (
+            <div style={S.card}><p style={{ margin: 0, color: '#666', fontSize: 14 }}>No pending requests for this wallet.</p></div>
+          )}
+
+          {requests.map((r) => (
+            <div key={r.id} style={{ ...S.card, borderColor: '#bfdbfe', background: '#f8fbff' }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <code style={{ fontSize: 16, fontWeight: 600 }}>{r.id}</code>
+                <span style={S.badge(STATUS_COLORS[r.status] || STATUS_COLORS.created)}>{r.status}</span>
+                <span style={{ fontSize: 13, color: '#555' }}>
+                  {r.buyer === account ? `you pay · from ${r.creator || r.seller}` : `you receive · from ${r.creator || r.buyer}`} ·{' '}
+                  {formatNear(r.amount)} NEAR
+                </span>
+                <div style={{ flex: 1 }} />
+                <button style={S.btnSmall} onClick={() => acceptRequest(r.id)} disabled={busy === `accept-${r.id}`}>
+                  {busy === `accept-${r.id}` ? 'Accepting...' : 'Accept'}
+                </button>
+                <button style={S.btnSmall} onClick={() => rejectRequest(r.id)} disabled={busy === `reject-${r.id}`}>
+                  {busy === `reject-${r.id}` ? 'Rejecting...' : 'Reject'}
+                </button>
+                <button style={S.btnSmall} onClick={() => loadEscrow(r.id)}>Details</button>
+              </div>
+              <p style={{ fontSize: 13, color: '#444', margin: '8px 0 0' }}>
+                {r.terms_hash || 'No terms given.'} · deadline {r.deadline ? new Date(Number(r.deadline)).toLocaleString() : '—'}
+              </p>
+            </div>
+          ))}
+
+          <div style={S.card}>
+            <h3 style={{ margin: '0 0 10px' }}>Or look up by ID</h3>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <input style={{ ...S.input, maxWidth: 220 }} placeholder="SWFT-1234" value={codeInput}
                 onChange={(e) => setCodeInput(e.target.value.toUpperCase())} />
@@ -447,7 +616,7 @@ export default function Home() {
               </button>
             </div>
             <p style={{ fontSize: 12, color: '#888', margin: '8px 0 0' }}>
-              The code alone does not grant access. Only the buyer and seller named at creation can join;
+              IDs alone grant nothing. Only the buyer and seller named at creation can accept;
               everyone else is rejected by the contract.
             </p>
           </div>
@@ -472,18 +641,24 @@ export default function Home() {
                 </div>
               )}
 
-              {isParty && escrow.creator === account && !bothJoined && (
+              {isParty && escrow.creator === account && !bothJoined && escrow.status === 'created' && (
                 <div style={{ ...S.note(''), background: '#f8fafc' }}>
-                  <b>Waiting for {otherParty} to join.</b> Only you see this escrow right now.
-                  Share code <code>{escrow.id}</code>; they must connect as <code>{otherParty}</code>,
-                  open Join, paste the code and press <b>Join escrow</b>.
+                  <b>Waiting for {otherParty} to accept.</b> Only you see this escrow right now.
+                  They will find it under their Requests tab and can accept or reject.
                 </div>
               )}
 
-              {isParty && !myJoined && !bothJoined && escrow.creator !== account && (
+              {isParty && !myJoined && !bothJoined && escrow.creator !== account && escrow.status === 'created' && (
                 <div style={{ ...S.note(''), background: '#eff6ff', color: '#1e3a8a', borderColor: '#bfdbfe' }}>
-                  <b>You have been invited.</b> Press <b>Join escrow</b> below to accept and make this
-                  escrow visible in your My escrows list.
+                  <b>You have been invited.</b> Press <b>Accept</b> below to join and make this
+                  escrow visible in your My escrows list — or <b>Reject</b> to decline.
+                </div>
+              )}
+
+              {escrow.status === 'rejected' && (
+                <div style={{ ...S.note(''), background: '#f3f4f6', color: '#4b5563', borderColor: '#d1d5db' }}>
+                  <b>This request was declined.</b> No funds ever moved. The record stays here so both
+                  sides can see the outcome.
                 </div>
               )}
 
@@ -500,7 +675,14 @@ export default function Home() {
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
                 {isParty && !myJoined && escrow.status === 'created' && (
-                  <button style={S.btn} onClick={() => act('Join', () => escrowCall.join(escrow.id))}>Join escrow</button>
+                  <>
+                    <button style={S.btn} onClick={() => act('Accept', () => escrowCall.join(escrow.id))}>Accept</button>
+                    <button style={S.btnGhost} onClick={() => act('Reject', () => escrowCall.reject(escrow.id))}>Reject</button>
+                  </>
+                )}
+
+                {isParty && escrow.creator === account && escrow.status === 'created' && (
+                  <button style={S.btnGhost} onClick={() => act('Cancel request', () => escrowCall.reject(escrow.id))}>Cancel request</button>
                 )}
 
                 {escrow.buyer === account && escrow.status === 'joined' && bothJoined && (
@@ -595,7 +777,7 @@ export default function Home() {
           </div>
 
           {mine.length === 0 && !mineBusy && (
-            <div style={S.card}><p style={{ margin: 0, color: '#666', fontSize: 14 }}>Nothing here yet. Create an escrow or join one with a code.</p></div>
+            <div style={S.card}><p style={{ margin: 0, color: '#666', fontSize: 14 }}>Nothing here yet. Create a request, or accept one under Requests.</p></div>
           )}
 
           {mine.map((e) => {
@@ -615,7 +797,7 @@ export default function Home() {
                 )}
                 <div style={{ flex: 1 }} />
                 {e.status !== 'missing' && (
-                  <button style={S.btnSmall} onClick={() => { setTab('join'); loadEscrow(e.id); }}>Open</button>
+                  <button style={S.btnSmall} onClick={() => { setTab('requests'); loadEscrow(e.id); }}>Open</button>
                 )}
               </div>
             );
