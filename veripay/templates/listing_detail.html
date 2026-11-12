@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ listing.title }} — VeriPay Marketplace{% endblock %}
+{% block content %}
+<div class="grid lg:grid-cols-3 gap-5">
+  <section class="lg:col-span-2">
+    <div class="flex items-center gap-2 text-xs">
+      <span class="rounded-full px-2 py-0.5 {% if listing.kind == 'service' %}bg-violet-100 text-violet-800{% else %}bg-sky-100 text-sky-800{% endif %}">{{ listing.get_kind_display }}</span>
+      {% if listing.category %}<span class="text-slate-500">{{ listing.category }}</span>{% endif %}
+      <span class="rounded-full px-2 py-0.5 {% if listing.status == 'active' %}bg-emerald-100 text-emerald-800{% else %}bg-slate-100 text-slate-600{% endif %}">{{ listing.get_status_display }}</span>
+    </div>
+    <h1 class="text-3xl font-semibold mt-2">{{ listing.title }}</h1>
+    <p class="text-2xl font-semibold text-emerald-700 mt-2">{{ listing.price_display }} <span class="text-base font-normal text-slate-500">tUSD</span></p>
+    {% if listing.location %}<p class="text-sm text-slate-500 mt-1">📍 {{ listing.location }}</p>{% endif %}
+    <div class="prose prose-sm max-w-none mt-5 whitespace-pre-line text-slate-700">{{ listing.description }}</div>
+    {% if listing.photos %}
+      <div class="grid grid-cols-2 gap-3 mt-5">
+        {% for p in listing.photos %}<img src="{{ p }}" class="rounded-lg border border-slate-200" alt="">{% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="bg-white border border-slate-200 rounded-xl p-4 mt-6 text-sm">
+      <h2 class="font-semibold">Trade terms (prefilled into the escrow)</h2>
+      <ul class="mt-2 text-slate-600 space-y-1 list-disc list-inside">
+        <li>Dispatch within {{ listing.dispatch_days }} day(s) of funding</li>
+        <li>Buyer inspection window: {{ listing.inspection_days }} day(s) after verified delivery</li>
+        {% if listing.logistics_note %}<li>Logistics: {{ listing.logistics_note }}</li>{% endif %}
+        <li>Payment is released only after TEE-verified delivery and your explicit confirmation</li>
+      </ul>
+    </div>
+  </section>
+
+  <aside class="space-y-4">
+    <div class="bg-white border border-slate-200 rounded-xl p-4">
+      <h2 class="font-semibold text-sm">Seller trust record <span class="text-xs text-slate-400">(source: contract)</span></h2>
+      <a href="/u/{{ listing.seller_account }}/" class="block mt-2 font-medium text-emerald-700"><code>{{ listing.seller_account }}</code></a>
+      <div class="grid grid-cols-2 gap-2 mt-3 text-center">
+        <div class="bg-slate-50 rounded-lg p-2"><div class="text-lg font-semibold">{{ seller_rep.completed_as_seller|default:0 }}</div><div class="text-xs text-slate-500">deals as seller</div></div>
+        <div class="bg-slate-50 rounded-lg p-2"><div class="text-lg font-semibold">{{ seller_rep.completed_as_buyer|default:0 }}</div><div class="text-xs text-slate-500">deals as buyer</div></div>
+        <div class="bg-slate-50 rounded-lg p-2"><div class="text-lg font-semibold">{{ seller_rep.disputes_opened|default:0 }}</div><div class="text-xs text-slate-500">disputes</div></div>
+        <div class="bg-slate-50 rounded-lg p-2"><div class="text-lg font-semibold">{{ seller_rep.requests_rejected|default:0 }}</div><div class="text-xs text-slate-500">rejected requests</div></div>
+      </div>
+      <a class="mt-3 inline-block text-xs text-emerald-700" href="/u/{{ listing.seller_account }}/">Full profile →</a>
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl p-4">
+      {% if not wallet_account %}
+        <button onclick="VPApp.connect()" class="w-full bg-slate-900 text-white rounded-lg px-3 py-2 text-sm">Connect wallet to trade</button>
+      {% elif is_owner %}
+        <a href="/market/{{ listing.slug }}/escrow/" class="block text-center w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Create escrow from this listing</a>
+        <p class="text-xs text-slate-500 mt-2">You are the seller — this prefills your agreement. You can add the buyer's wallet on the next screen.</p>
+      {% elif my_request %}
+        <div class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+          Request sent — the seller will create the escrow and you'll accept + fund it.
+        </div>
+      {% else %}
+        <button onclick="requestPurchase()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Request to buy via escrow</button>
+        <textarea id="req-message" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mt-2" placeholder="Optional message to the seller (delivery details…)"></textarea>
+        <p class="text-xs text-slate-500 mt-2">The seller issues the escrow (the contract fixes the seller as creator). You accept and fund it — your money stays in the contract until delivery is verified and you confirm.</p>
+      {% endif %}
+      <p id="req-status" class="text-xs text-slate-500 mt-2"></p>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  async function requestPurchase() {
+    const status = document.getElementById('req-status');
+    try {
+      status.textContent = 'Sending request…';
+      const res = await VPApp.jsonPost('/market/{{ listing.slug }}/request/', {
+        message: document.getElementById('req-message').value,
+      });
+      if (!res.ok) throw new Error(res.error);
+      status.textContent = 'Request sent to the seller.';
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e) { status.textContent = ''; alert('Failed: ' + e.message); }
+  }
+</script>
+{% endblock %}

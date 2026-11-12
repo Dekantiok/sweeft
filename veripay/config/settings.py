@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "apps.wallets",
     "apps.escrow",
     "apps.logistics",
+    "apps.market",
 ]
 
 MIDDLEWARE = [

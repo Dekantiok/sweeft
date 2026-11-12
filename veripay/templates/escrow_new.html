@@ -5,10 +5,16 @@
   <h1 class="text-2xl font-semibold">Create an escrow agreement</h1>
   <p class="text-sm text-slate-500 mt-1">You are the seller. The buyer accepts and funds exactly this total. Fees are disclosed before funding and enforced by the contract.</p>
 
+  {% if prefill.listing_title %}
+    <div class="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm px-4 py-2">
+      Trading marketplace listing “{{ prefill.listing_title }}”. Terms are prefilled — review, then create.
+    </div>
+  {% endif %}
+
   <div class="bg-white border border-slate-200 rounded-xl p-5 mt-5 space-y-4">
     <div>
       <label class="block text-sm font-medium mb-1">Product name</label>
-      <input id="f-product" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="e.g. 200 units of cotton fabric">
+      <input id="f-product" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.product }}" placeholder="e.g. 200 units of cotton fabric">
     </div>
     <div>
       <label class="block text-sm font-medium mb-1">Description (stored off-chain; keeps a hash on-chain)</label>
@@ -17,7 +23,7 @@
     <div class="grid sm:grid-cols-2 gap-4">
       <div>
         <label class="block text-sm font-medium mb-1">Seller amount (tUSD)</label>
-        <input id="f-seller" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="850.00">
+        <input id="f-seller" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.amount }}" placeholder="850.00">
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Logistics fee (tUSD)</label>
@@ -29,16 +35,16 @@
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Buyer inspection period after delivery (days)</label>
-        <input id="f-inspection" type="number" min="0" value="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        <input id="f-inspection" type="number" min="0" value="{{ prefill.inspection_days }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
       </div>
     </div>
     <div>
       <label class="block text-sm font-medium mb-1">Buyer wallet (leave empty to invite by link)</label>
-      <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="buyer.testnet — or empty for a shareable invitation">
+      <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.counterparty }}" placeholder="buyer.testnet — or empty for a shareable invitation">
     </div>
     <div>
       <label class="block text-sm font-medium mb-1">Terms (short, hashed on-chain)</label>
-      <input id="f-terms" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Delivery to Abuja within 7 days; inspection 48h.">
+      <input id="f-terms" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.terms }}" placeholder="Delivery to Abuja within 7 days; inspection 48h.">
     </div>
 
     <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" id="fee-summary">
@@ -132,6 +138,7 @@
         product_name: document.getElementById('f-product').value.trim(),
         product_description: desc,
         invitation_token: invitationToken,
+        listing_slug: "{{ prefill.listing_slug|escapejs }}",
         tx_hash: res.txHash,
       });
       if (!saved.ok) throw new Error(saved.error || 'failed to save metadata');

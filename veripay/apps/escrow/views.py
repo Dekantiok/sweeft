@@ -78,7 +78,24 @@ def escrow_new(request):
     wallet = current_wallet(request)
     if not wallet:
         return redirect("/?connect=1")
-    return render(request, "escrow_new.html", {"wallet_account": wallet})
+    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "2", "terms": "", "product": "", "listing_slug": "", "listing_title": ""}
+    listing_id = request.GET.get("listing")
+    if listing_id:
+        from apps.market.models import Listing  # local import avoids app-loading cycle
+
+        listing = Listing.objects.filter(pk=listing_id, seller_account=wallet).first()
+        if listing:
+            prefill = {
+                "counterparty": (request.GET.get("buyer") or "").strip(),
+                "amount": listing.price_display.replace(",", ""),
+                "deadline_days": str(listing.dispatch_days),
+                "inspection_days": str(listing.inspection_days),
+                "terms": f"{listing.title} — listed on the VeriPay marketplace",
+                "product": listing.title,
+                "listing_slug": listing.slug,
+                "listing_title": listing.title,
+            }
+    return render(request, "escrow_new.html", {"wallet_account": wallet, "prefill": prefill})
 
 
 def escrow_detail(request, escrow_id: str):
@@ -234,6 +251,22 @@ def api_register_agreement(request):
         tx_hash=body.get("tx_hash", ""),
         payload={"seller": chain["seller"], "total": chain["total_amount"]},
     )
+
+    # Marketplace loop: if this escrow came from a listing, mark the listing
+    # sold and close any pending purchase request from the named buyer.
+    listing_slug = (body.get("listing_slug") or "").strip()
+    if listing_slug:
+        from apps.market.models import Listing, PurchaseRequest
+
+        listing = Listing.objects.filter(slug=listing_slug, seller_account=chain["seller"]).first()
+        if listing:
+            listing.status = "sold"
+            listing.sold_escrow_id = escrow_id
+            listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+            if chain.get("buyer"):
+                PurchaseRequest.objects.filter(
+                    listing=listing, buyer_account=chain["buyer"], status="pending"
+                ).update(status="escrowed", escrow_id=escrow_id)
     return JsonResponse({"ok": True, "escrow_id": escrow_id})
 
 
