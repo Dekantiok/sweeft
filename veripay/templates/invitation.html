@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Invitation — VeriPay{% endblock %}
+{% block content %}
+<div class="max-w-2xl">
+  <h1 class="text-2xl font-semibold">You have been invited to an escrow agreement</h1>
+  <p class="text-sm text-slate-500 mt-1">Review the exact terms before accepting. Acceptance is a wallet-signed on-chain transaction; the invitation link alone authorizes nothing.</p>
+
+  <div class="bg-white border border-slate-200 rounded-xl p-5 mt-5">
+    <div class="flex items-center gap-3">
+      <span class="text-xs rounded-full px-3 py-1 bg-slate-900 text-white">{{ chain.state|default:agreement.state }}</span>
+      <span class="text-sm text-slate-500">Agreement <code>{{ agreement.escrow_id }}</code></span>
+    </div>
+    <table class="w-full text-sm mt-4">
+      <tbody class="divide-y divide-slate-100">
+        <tr><td class="py-1.5 text-slate-500">Product</td><td class="py-1.5">{{ agreement.product_name }}</td></tr>
+        {% if agreement.product_description %}<tr><td class="py-1.5 text-slate-500">Description</td><td class="py-1.5">{{ agreement.product_description }}</td></tr>{% endif %}
+        <tr><td class="py-1.5 text-slate-500">Seller</td><td class="py-1.5"><code>{{ agreement.seller_account }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Seller amount</td><td class="py-1.5">{{ chain.seller_amount|default:agreement.seller_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount|default:agreement.logistics_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee|default:agreement.platform_fee }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500 font-medium">Total you will fund</td><td class="py-1.5 font-semibold">{{ chain.total_amount|default:agreement.total_amount }}</td></tr>
+      </tbody>
+    </table>
+
+    <div class="mt-5">
+      {% if not wallet_account %}
+        <button onclick="VPApp.connect()" class="bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Connect wallet to accept</button>
+      {% elif invitation.status == 'accepted' %}
+        <div class="text-emerald-700 text-sm font-medium">Already accepted by <code>{{ invitation.accepted_by }}</code>.</div>
+      {% else %}
+        <button id="btn-accept" onclick="acceptInvitation()" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Accept agreement</button>
+        <button onclick="rejectInvitation()" class="ml-2 border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Decline</button>
+        <span id="accept-status" class="ml-3 text-sm text-slate-500"></span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const TOKEN = "{{ invitation.token }}";
+  const ESCROW_ID = "{{ agreement.escrow_id }}";
+  async function acceptInvitation() {
+    const status = document.getElementById('accept-status');
+    try {
+      status.textContent = 'Confirm in your wallet (accept_escrow)…';
+      await VPApp.callContract('accept_escrow', { escrow_id: ESCROW_ID, invite_secret: TOKEN });
+      status.textContent = 'Saving…';
+      const res = await VPApp.jsonPost(`/api/v1/invitations/${TOKEN}/accept/`, {});
+      if (!res.ok) throw new Error(res.error);
+      window.location.href = '/escrow/' + ESCROW_ID + '/';
+    } catch (e) { status.textContent = ''; alert('Accept failed: ' + (e.message || e)); }
+  }
+  async function rejectInvitation() {
+    if (!confirm('Decline this agreement?')) return;
+    try {
+      await VPApp.callContract('reject_escrow', { escrow_id: ESCROW_ID });
+      window.location.href = '/dashboard/';
+    } catch (e) { alert('Decline failed: ' + (e.message || e)); }
+  }
+</script>
+{% endblock %}

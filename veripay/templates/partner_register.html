@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Become a logistics partner — VeriPay{% endblock %}
+{% block content %}
+<div class="max-w-3xl">
+  <h1 class="text-2xl font-semibold">Logistics partner application</h1>
+  <p class="text-sm text-slate-500 mt-1">Approved and ACTIVE providers can be selected for funded agreements and receive the logistics allocation when carrier pickup is verified.</p>
+
+  <form method="post" class="bg-white border border-slate-200 rounded-xl p-5 mt-5 grid sm:grid-cols-2 gap-4">
+    {% csrf_token %}
+    <div class="sm:col-span-2">
+      <label class="block text-sm font-medium mb-1">Company name *</label>
+      <input name="company_name" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Business registration number</label>
+      <input name="registration_number" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Official email *</label>
+      <input name="email" type="email" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Website</label>
+      <input name="website" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Contact person / phone</label>
+      <input name="contact_person" placeholder="Name" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-2">
+      <input name="phone" placeholder="Phone" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div class="sm:col-span-2">
+      <label class="block text-sm font-medium mb-1">Business address</label>
+      <textarea name="business_address" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"></textarea>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Operating locations / coverage</label>
+      <input name="operating_locations" placeholder="e.g. Lagos, Abuja, Port Harcourt" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Tracking API endpoint (if any)</label>
+      <input name="tracking_api_endpoint" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div class="sm:col-span-2">
+      <label class="block text-sm font-medium mb-1">Services (one per line: name — description — base price)</label>
+      <textarea name="services" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Same-day delivery — within Lagos — 5 tUSD"></textarea>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Settlement wallet (NEAR) *</label>
+      <input name="settlement_wallet" value="{{ wallet_account }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Pricing note</label>
+      <input name="pricing_note" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+    <div class="sm:col-span-2">
+      <button class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Submit application</button>
+      <span class="text-xs text-slate-500 ml-3">Applications are reviewed by an admin before the provider becomes selectable.</span>
+    </div>
+  </form>
+</div>
+{% endblock %}

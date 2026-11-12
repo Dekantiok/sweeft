@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}{{ agreement.escrow_id|default:escrow_id }} — VeriPay{% endblock %}
+{% block content %}
+{% with chain_state=chain.state|default:agreement.state %}
+<div class="flex items-center gap-3 flex-wrap">
+  <h1 class="text-2xl font-semibold">{{ agreement.escrow_id|default:escrow_id }}</h1>
+  <span class="text-xs rounded-full px-3 py-1 bg-slate-900 text-white">{{ chain_state }}</span>
+  {% if chain.problem_reported %}<span class="text-xs rounded-full px-3 py-1 bg-rose-100 text-rose-800">problem reported</span>{% endif %}
+  <div class="flex-1"></div>
+  <button onclick="syncFromChain()" class="text-xs border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-100">Refresh from chain</button>
+</div>
+<p class="text-sm text-slate-500 mt-1">{{ agreement.product_name }}{% if agreement.product_description %} — {{ agreement.product_description }}{% endif %}</p>
+
+{% if chain_error %}
+  <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-900 text-sm px-4 py-2">Chain read error: {{ chain_error }}</div>
+{% endif %}
+
+<div class="grid lg:grid-cols-3 gap-4 mt-5">
+  <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
+    <h2 class="font-semibold">Agreement</h2>
+    <table class="w-full text-sm mt-3">
+      <tbody class="divide-y divide-slate-100">
+        <tr><td class="py-1.5 text-slate-500">Seller</td><td class="py-1.5"><code>{{ chain.seller|default:agreement.seller_account }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Buyer</td><td class="py-1.5"><code>{{ chain.buyer|default:agreement.buyer_account|default:"— awaiting acceptance" }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Seller amount</td><td class="py-1.5">{{ fmt|default:"" }}{{ chain.seller_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Total to fund</td><td class="py-1.5 font-semibold">{{ chain.total_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Token</td><td class="py-1.5"><code>{{ chain.token|default:agreement.token_contract }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Logistics provider</td><td class="py-1.5"><code>{{ chain.logistics_provider|default:"—" }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Tracking</td><td class="py-1.5">{{ chain.tracking_number|default:"—" }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Dispatch deadline</td><td class="py-1.5" id="dispatch-deadline" data-ms="{{ chain.dispatch_deadline_ms|default:agreement.dispatch_deadline_ms }}"></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Pickup verified</td><td class="py-1.5">{% if chain.pickup_verified %}yes — logistics payable{% else %}not yet{% endif %}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Delivery verified</td><td class="py-1.5">{% if chain.delivered_verified %}yes{% else %}not yet{% endif %}</td></tr>
+      </tbody>
+    </table>
+
+    {% if invitation_link %}
+      <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
+        <div class="font-medium text-blue-900">Invitation link (seller)</div>
+        <div class="mt-1 break-all"><code>{{ invitation_link }}</code></div>
+        <button class="mt-2 text-xs border border-blue-300 rounded px-2 py-1 hover:bg-blue-100" onclick="navigator.clipboard.writeText('{{ invitation_link }}')">Copy</button>
+        <p class="text-xs text-blue-800 mt-1">The link is only a locator: its hash is committed on-chain and the buyer must still sign the acceptance.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-xl p-4">
+    <h2 class="font-semibold">Actions</h2>
+    <div id="actions" class="mt-3 space-y-3"></div>
+    <p class="text-xs text-slate-500 mt-3">All financial actions are wallet-signed; the backend cannot move funds.</p>
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
+    <h2 class="font-semibold">Delivery verification</h2>
+    {% if chain.last_verification %}
+      <div class="mt-2 text-sm">
+        <div>Status reported: <b>{{ chain.last_verification.reported_status }}</b> — verified: <b>{{ chain.last_verification.verified }}</b></div>
+        <div class="text-slate-500">{{ chain.last_verification.reason }}</div>
+        <div class="text-xs text-slate-400 mt-1">Attested by OutLayer TEE for code hash pinned in the published project; carrier data is simulated.</div>
+      </div>
+    {% else %}
+      <p class="text-sm text-slate-500 mt-2">No verification recorded yet. After the shipment is registered, any party can request TEE verification of the carrier report.</p>
+    {% endif %}
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-xl p-4">
+    <h2 class="font-semibold">Settlement records</h2>
+    {% if settlements %}
+      <ul class="mt-2 text-sm space-y-1">
+        {% for s in settlements %}<li>{{ s.party }} → <code>{{ s.account_id }}</code> · {{ s.amount }} ({{ s.status }})</li>{% endfor %}
+      </ul>
+    {% else %}<p class="text-sm text-slate-500 mt-2">Nothing settled yet.</p>{% endif %}
+  </section>
+</div>
+
+<div id="shipment-box" class="mt-4"></div>
+{% endwith %}
+{% endblock %}
+{% block scripts %}
+<script>
+  const CHAIN = {{ chain|safe|default:"null" }};
+  const AGREEMENT = {
+    escrow_id: "{{ agreement.escrow_id|default:escrow_id }}",
+    seller: "{{ chain.seller|default:agreement.seller_account|escapejs }}",
+    buyer: "{{ chain.buyer|default:agreement.buyer_account|escapejs }}",
+  };
+  const WALLET = "{{ wallet_account|default:'' }}";
+  let SHIPMENT_ID = {{ chain.shipment_id|default:0 }};
+
+  function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+  function addButton(label, fn, style='primary') {
+    const cls = style === 'primary'
+      ? 'w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium'
+      : 'w-full border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm';
+    const b = el(`<button class="${cls}">${label}</button>`);
+    b.onclick = fn;
+    document.getElementById('actions').appendChild(b);
+    return b;
+  }
+  function status(text) {
+    let s = document.getElementById('action-status');
+    if (!s) { s = el('<div id="action-status" class="text-xs text-slate-500"></div>'); document.getElementById('actions').appendChild(s); }
+    s.textContent = text;
+  }
+
+  function renderActions() {
+    const state = CHAIN ? CHAIN.state : null;
+    if (!WALLET) { status('Connect your wallet to act on this agreement.'); return; }
+    const isSeller = WALLET === AGREEMENT.seller;
+    const isBuyer = WALLET === AGREEMENT.buyer;
+    const isProvider = CHAIN && CHAIN.logistics_provider === WALLET;
+
+    if (state === 'PendingAcceptance' && isBuyer) {
+      addButton('Accept agreement', () => doAccept(null));
+    }
+    if (state === 'Approved' && isBuyer) {
+      addButton('Fund {{ chain.total_amount }} (tUSD)', doFund);
+    }
+    if (state === 'Funded' && isSeller) {
+      const input = el('<input class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Provider wallet (e.g. log.testnet)">');
+      const box = el('<div class="space-y-2"></div>');
+      box.appendChild(input);
+      const b = el('<button class="w-full border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm">Assign logistics provider</button>');
+      b.onclick = async () => {
+        try {
+          status('Assigning…');
+          await VPApp.callContract('assign_logistics_provider', { escrow_id: AGREEMENT.escrow_id, provider: input.value.trim() });
+          status('Assigned — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+        } catch (e) { status(''); alert('Failed: ' + e.message); }
+      };
+      box.appendChild(b);
+      document.getElementById('actions').appendChild(box);
+    }
+    if (state === 'ShipmentPending' && (isSeller || isProvider)) {
+      addButton('Create Demo Carrier shipment + register on-chain', doRegisterShipment);
+    }
+    if (state === 'Shipped' && (isSeller || isBuyer || isProvider)) {
+      addButton('Request TEE delivery verification', doVerify);
+    }
+    if ((state === 'Shipped' || state === 'AwaitingBuyerConfirmation') && (isSeller || isProvider) && CHAIN && CHAIN.pickup_verified && !CHAIN.logistics_paid) {
+      addButton('Settle logistics fee', () => simpleCall('settle_logistics', 'Logistics settled', '150000000000000'));
+    }
+    if (state === 'AwaitingBuyerConfirmation' && isBuyer) {
+      addButton('Confirm receipt — release seller payment', () => simpleCall('confirm_receipt', 'Receipt confirmed', '150000000000000'));
+      addButton('Report a problem', doReportProblem, 'ghost');
+    }
+    if ((state === 'Funded' || state === 'ShipmentPending') && isBuyer && deadlinePassed()) {
+      addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
+    }
+    if (ns(state) && !CHAIN.problem_reported && !CHAIN.seller_paid) {
+      addButton('Open Demo shipment controls', () => window.location.href = '/partners/portal/', 'ghost');
+    }
+  }
+  function ns(s) { return ['ShipmentPending','Shipped','AwaitingBuyerConfirmation','Funded'].includes(s); }
+  function deadlinePassed() {
+    const el = document.getElementById('dispatch-deadline');
+    return el && Number(el.dataset.ms) <= Date.now();
+  }
+
+  async function doAccept(inviteSecret) {
+    try {
+      status('Accepting (wallet signature)…');
+      await VPApp.callContract('accept_escrow', { escrow_id: AGREEMENT.escrow_id, invite_secret: inviteSecret });
+      status('Accepted — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { status(''); alert('Failed: ' + e.message); }
+  }
+
+  async function doFund() {
+    try {
+      status('Funding escrow with tUSD…');
+      const c = await VPApp.cfg();
+      await VPApp.callToken('ft_transfer_call', {
+        receiver_id: c.veripay_contract,
+        amount: CHAIN.total_amount,
+        msg: AGREEMENT.escrow_id,
+        memo: null,
+      }, '1');
+      status('Funded — refreshing…'); setTimeout(() => window.location.reload(), 3000);
+    } catch (e) { status(''); alert('Funding failed: ' + e.message); }
+  }
+
+  async function doRegisterShipment() {
+    try {
+      status('Creating simulated tracking number…');
+      const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id });
+      if (!created.ok) throw new Error(created.error);
+      SHIPMENT_ID = created.shipment_id;
+      status('Registering ' + created.tracking_number + ' on-chain…');
+      await VPApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: created.tracking_number });
+      status('Registered — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { status(''); alert('Failed: ' + e.message); }
+  }
+
+  async function doVerify() {
+    try {
+      status('Building carrier payload…');
+      const payload = await VPApp.jsonPost('/api/v1/verification/payload/', { escrow_id: AGREEMENT.escrow_id });
+      if (!payload.ok) throw new Error(payload.error);
+      status('Requesting OutLayer TEE execution (attach 0.05 NEAR)…');
+      const res = await VPApp.callContract('request_delivery_verification', {
+        escrow_id: AGREEMENT.escrow_id,
+        carrier_payload: payload.carrier_payload,
+      }, '50000000000000000000000');
+      status('Recording result…');
+      await new Promise((r) => setTimeout(r, 4000));
+      await VPApp.jsonPost('/api/v1/verification/sync/', { escrow_id: AGREEMENT.escrow_id, tx_hash: res.txHash });
+      status('Verified — refreshing…'); setTimeout(() => window.location.reload(), 2000);
+    } catch (e) { status(''); alert('Verification failed: ' + e.message); }
+  }
+
+  async function doReportProblem() {
+    const reason = prompt('Describe the problem (stored as a hash on-chain):');
+    if (!reason) return;
+    try {
+      const hash = await VPApp.cryptoHash ? VPApp.cryptoHash(reason) : null;
+      status('Reporting problem…');
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(reason));
+      const hex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      await VPApp.callContract('report_problem', { escrow_id: AGREEMENT.escrow_id, reason_hash: hex });
+      status('Reported — funds stay locked pending review.'); setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { status(''); alert('Failed: ' + e.message); }
+  }
+
+  async function simpleCall(method, label, gas) {
+    try {
+      status(label + '…');
+      await VPApp.callContract(method, { escrow_id: AGREEMENT.escrow_id }, '0', gas);
+      status(label + ' — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { status(''); alert('Failed: ' + e.message); }
+  }
+
+  async function syncFromChain() {
+    await VPApp.jsonPost('/api/v1/agreements/{{ agreement.escrow_id|default:escrow_id }}/sync/', {});
+    window.location.reload();
+  }
+
+  // Format deadline timestamp
+  (function () {
+    const el = document.getElementById('dispatch-deadline');
+    if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
+  })();
+
+  renderActions();
+</script>
+{% endblock %}
