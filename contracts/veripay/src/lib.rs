@@ -463,7 +463,8 @@ impl VeriPay {
     // ------------------------------------------------------------------
 
     /// Pays the logistics allocation once carrier pickup is TEE-verified.
-    /// Callable by seller or provider. Payment is idempotent.
+    /// Callable by seller or provider. A failed FT transfer rolls the flag
+    /// back (see `on_payout_result`) so the payout can be retried.
     pub fn settle_logistics(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         let caller = env::predecessor_account_id();
@@ -476,12 +477,17 @@ impl VeriPay {
         let provider = escrow.logistics_provider.clone().expect("provider not assigned");
         escrow.logistics_paid = true;
         let amount = escrow.logistics_amount;
-        self.escrows.insert(escrow_id, escrow);
-        Promise::new(provider).transfer(NearToken::from_yoctonear(amount.0))
+        let token = escrow.token.clone();
+        self.escrows.insert(escrow_id.clone(), escrow);
+        ft_transfer(token, provider, amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "logistics".to_string()),
+        )
     }
 
     /// Buyer confirms receipt after TEE-verified delivery. Pays the seller
-    /// allocation; the platform fee is collected in the chained callback.
+    /// allocation; the platform fee follows in `finish_platform`.
     pub fn confirm_receipt(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer confirms receipt");
@@ -493,20 +499,56 @@ impl VeriPay {
         escrow.platform_paid = true;
         let seller_amount = escrow.seller_amount;
         let seller = escrow.seller.clone();
+        let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        Promise::new(seller)
-            .transfer(NearToken::from_yoctonear(seller_amount.0))
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                    .pay_platform_fee(escrow_id),
-            )
+        ft_transfer(token, seller, seller_amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .finish_platform(escrow_id),
+        )
     }
 
+    /// After the seller transfer settles: pay the platform fee, or roll the
+    /// completion flags back so the buyer can retry.
     #[private]
-    pub fn pay_platform_fee(&mut self, escrow_id: String) -> Promise {
+    pub fn finish_platform(&mut self, escrow_id: String) {
+        if !payout_ok(0) {
+            let mut escrow = self.internal_get(&escrow_id);
+            escrow.seller_paid = false;
+            escrow.platform_paid = false;
+            escrow.state = EscrowState::AwaitingBuyerConfirmation;
+            self.escrows.insert(escrow_id, escrow);
+            return;
+        }
         let escrow = self.internal_get(&escrow_id);
-        Promise::new(self.owner.clone()).transfer(NearToken::from_yoctonear(escrow.platform_fee.0))
+        let promise = ft_transfer(escrow.token.clone(), self.owner.clone(), escrow.platform_fee);
+        let _ = promise.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "platform".to_string()),
+        );
+    }
+
+    /// Rolls a payout flag back when its FT transfer failed (idempotency guard).
+    #[private]
+    pub fn on_payout_result(&mut self, escrow_id: String, party: String) {
+        if payout_ok(0) {
+            return;
+        }
+        let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return };
+        match party.as_str() {
+            "logistics" => escrow.logistics_paid = false,
+            "platform" => escrow.platform_paid = false,
+            "refund" => escrow.state = EscrowState::Funded,
+            "review" => {
+                escrow.seller_paid = false;
+                escrow.platform_paid = false;
+                escrow.state = EscrowState::ReviewRequired;
+            }
+            _ => {}
+        }
+        log!("payout {} failed for {} — flag rolled back", party, escrow_id);
+        self.escrows.insert(escrow_id, escrow);
     }
 
     /// Buyer reports a problem: funds stay locked, escrow moves to review.
@@ -539,22 +581,32 @@ impl VeriPay {
         escrow.platform_paid = true;
         escrow.state = if buyer_part == 0 { EscrowState::Completed } else { EscrowState::Refunded };
         let seller = escrow.seller.clone();
-        let _ = &escrow.buyer;
+        let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        Promise::new(seller)
-            .transfer(NearToken::from_yoctonear(seller_part))
-            .then(
-                Self::ext(env::current_account_id())
-                    .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                    .pay_buyer_part(escrow_id, U128(buyer_part)),
-            )
+        ft_transfer(token, seller, U128(seller_part)).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .finish_review_payout(escrow_id, U128(buyer_part)),
+        )
     }
 
     #[private]
-    pub fn pay_buyer_part(&mut self, escrow_id: String, amount: U128) -> Promise {
+    pub fn finish_review_payout(&mut self, escrow_id: String, buyer_part: U128) {
+        if !payout_ok(0) {
+            self.on_payout_result(escrow_id, "review".to_string());
+            return;
+        }
         let escrow = self.internal_get(&escrow_id);
+        if buyer_part.0 == 0 {
+            return;
+        }
         let buyer = escrow.buyer.clone().expect("no buyer");
-        Promise::new(buyer).transfer(NearToken::from_yoctonear(amount.0))
+        let promise = ft_transfer(escrow.token.clone(), buyer, buyer_part);
+        let _ = promise.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "review".to_string()),
+        );
     }
 
     /// Buyer refund path: seller never dispatched. Only after the dispatch
@@ -574,14 +626,26 @@ impl VeriPay {
         escrow.state = EscrowState::Refunded;
         let buyer = escrow.buyer.clone().unwrap();
         let amount = escrow.total_amount;
-        self.escrows.insert(escrow_id, escrow);
-        Promise::new(buyer).transfer(NearToken::from_yoctonear(amount.0))
+        let token = escrow.token.clone();
+        self.escrows.insert(escrow_id.clone(), escrow);
+        ft_transfer(token, buyer, amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "refund".to_string()),
+        )
     }
 
-    /// Platform owner sweep for OutLayer refund credits and dust.
+    /// Platform owner sweep for OutLayer refund credits and dust (native NEAR).
     pub fn withdraw(&mut self, amount: U128, to: AccountId) -> Promise {
         require!(env::predecessor_account_id() == self.owner, "only the owner can withdraw");
         Promise::new(to).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    /// Platform owner sweep for NEP-141 balances (e.g. to recover a stuck
+    /// escrow in an explicit operator action, disclosed in the README).
+    pub fn withdraw_ft(&mut self, token: AccountId, amount: U128, to: AccountId) -> Promise {
+        require!(env::predecessor_account_id() == self.owner, "only the owner can withdraw");
+        ft_transfer(token, to, amount)
     }
 
     pub fn update_platform_fee_bps(&mut self, bps: u16) {
@@ -637,4 +701,28 @@ fn pop_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &
     let mut v = map.get(key).cloned().unwrap_or_default();
     v.retain(|x| x != id);
     map.insert(key.clone(), v);
+}
+
+/// NEP-141 payout: the escrow contract holds tUSD, so settlements call
+/// `ft_transfer` on the token contract (1 yoctoNEAR is required by the FT
+/// standard for transfers).
+fn ft_transfer(token: AccountId, receiver_id: AccountId, amount: U128) -> Promise {
+    let args = serde_json::json!({
+        "receiver_id": receiver_id,
+        "amount": amount,
+        "memo": null,
+    })
+    .to_string()
+    .into_bytes();
+    Promise::new(token).function_call(
+        "ft_transfer".to_string(),
+        args,
+        NearToken::from_yoctonear(1),
+        Gas::from_tgas(20),
+    )
+}
+
+/// True when the promise at `index` (a chained callback's input) succeeded.
+fn payout_ok(index: usize) -> bool {
+    matches!(env::promise_result(index), near_sdk::PromiseResult::Successful(_))
 }
