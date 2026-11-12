@@ -19,14 +19,14 @@ use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::json;
 use near_sdk::store::LookupMap;
-use near_sdk::{env, log, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise};
-use schemars::JsonSchema;
+use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise};
+
 
 const MIN_VERIFICATION_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const OUTLAYER_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub enum EscrowState {
@@ -44,7 +44,7 @@ pub enum EscrowState {
 }
 
 /// What the OutLayer verification module returns (its JSON stdout).
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct VerificationOutcome {
@@ -56,14 +56,12 @@ pub struct VerificationOutcome {
     pub reason: String,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct Escrow {
     pub id: String,
-    #[schemars(with = "String")]
     pub seller: AccountId,
-    #[schemars(with = "Option<String>")]
     pub buyer: Option<AccountId>,
     pub invite_hash: Option<String>,
     pub state: EscrowState,
@@ -73,9 +71,7 @@ pub struct Escrow {
     pub logistics_amount: U128,
     pub platform_fee: U128,
     pub total_amount: U128,
-    #[schemars(with = "String")]
     pub token: AccountId,
-    #[schemars(with = "Option<String>")]
     pub logistics_provider: Option<AccountId>,
     pub shipment_id: String,
     pub tracking_number: Option<String>,
@@ -94,19 +90,17 @@ pub struct Escrow {
     pub last_verification: Option<VerificationOutcome>,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
 pub struct ConfigView {
-    #[schemars(with = "String")]
     pub owner: AccountId,
-    #[schemars(with = "String")]
     pub outlayer_contract: AccountId,
     pub outlayer_project: String,
     pub platform_fee_bps: u16,
 }
 
-#[derive(BorshSerialize, near_sdk::borsh::BorshStorageKey)]
+#[derive(BorshSerialize, BorshStorageKey)]
 #[borsh(crate = "near_sdk::borsh")]
 enum StorageKey {
     Escrows,
@@ -585,9 +579,9 @@ impl VeriPay {
     }
 
     /// Platform owner sweep for OutLayer refund credits and dust.
-    pub fn withdraw(&mut self, amount: U128, to: AccountId) {
+    pub fn withdraw(&mut self, amount: U128, to: AccountId) -> Promise {
         require!(env::predecessor_account_id() == self.owner, "only the owner can withdraw");
-        Promise::new(to).transfer(NearToken::from_yoctonear(amount.0));
+        Promise::new(to).transfer(NearToken::from_yoctonear(amount.0))
     }
 
     pub fn update_platform_fee_bps(&mut self, bps: u16) {
