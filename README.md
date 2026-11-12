@@ -1,14 +1,19 @@
 # VeriPay
 
-**Wallet-based escrow, logistics verification and settlement for physical commerce — NEAR testnet MVP.**
+**Wallet-based escrow, logistics verification, settlement — and a reputation marketplace — for physical commerce on NEAR testnet.**
 
 Buyers do not send money to an unknown seller before goods ship. Sellers know the buyer funded the
 deal. Logistics gets paid only when carrier pickup is verified, the seller only after TEE-verified
 delivery plus explicit buyer confirmation, and the platform fee is disclosed before funding.
 
+One wallet connects the whole ecosystem: **marketplace listings → on-chain trust profile → escrow →
+verified logistics → settlement → reputation**. Every reputation number is contract-derived and
+recomputable by anyone — the marketplace is discovery, the chain is the truth.
+
 ```
-CONNECT WALLET → CREATE AGREEMENT → ACCEPT → FUND (tUSD) → SHIP
-→ TEE-VERIFY DELIVERY → CONFIRM RECEIPT → SETTLE (seller + logistics + platform)
+CONNECT WALLET → BROWSE / LIST → CHECK TRUST PROFILE → ESCROW
+→ ACCEPT → FUND (tUSD) → SHIP → TEE-VERIFY DELIVERY → CONFIRM RECEIPT
+→ SETTLE (seller + logistics + platform) → REPUTATION MOVES
 ```
 
 Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
@@ -44,6 +49,12 @@ Full lifecycle proven with real transactions and exact balances (see `scripts/e2
   - `confirm_receipt` paid the seller **+100 tUSD** and the platform **+5 tUSD**
   - contract balance returned to **0**; state `Completed`
 
+- `VP-000004` (reputation cycle): full lifecycle; afterwards `reputation_of(seller)` shows
+  `completed_as_seller: 1`, `reputation_of(buyer)` shows `completed_as_buyer: 1`, both with
+  `volume: 100000000`; `VP-000005` reject moved `requests_rejected: 1` for the declining buyer.
+- Marketplace verified in-app: 4 seeded listings browse at `/market/`, seller trust panel reads
+  live contract counters, profiles at `/u/<wallet>/`, purchase requests → prefilled escrow.
+
 TEE negative case also verified: a tampered tracking number returns
 `verified: false` with the mismatch reason — natively (unit tests) and inside the real TEE.
 
@@ -59,6 +70,7 @@ veripay/               Django modular monolith (product coordinator + projection
   apps/wallets/        NEP-413 challenge/verify, sessions
   apps/escrow/         agreements, invitations, contract reads, settlement projection
   apps/logistics/      partners, Demo Carrier, shipments, verification records
+  apps/market/         listings, purchase requests, trust profiles (/u/<wallet>/)
   templates/ static/   Django templates + HTMX + Alpine + Tailwind; wallet bundle
 tools/web-bundle/      esbuild bundle of @near-wallet-selector (Meteor/HERE/Nightly)
 scripts/               deploy + end-to-end scripts
@@ -125,17 +137,19 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
 ## Demo workflow
 
 1. Connect a wallet (Meteor / HERE / Nightly — sign the free NEP-413 message to sign in).
-2. **New agreement**: product, seller amount, logistics fee, dispatch deadline, inspection window,
-   buyer wallet (or leave empty for a shareable invitation link). Create → wallet-signed `create_escrow`.
-3. Buyer opens the invitation (or dashboard), **accepts**, then **funds** the exact total in tUSD.
-4. Seller assigns the approved logistics provider, then registers the Demo Carrier tracking number.
-   (Demo scans are advanced from the partner portal — clearly labelled simulated.)
+2. **Marketplace**: browse `/market/`, open a listing, inspect the seller's **trust profile**
+   (`/u/<wallet>/` — live contract reputation), then "Request to buy via escrow".
+3. The seller sees the purchase request under `/market/mine/` and creates the escrow — prefilled
+   from the listing — with a wallet-signed `create_escrow`.
+4. Buyer accepts, then **funds** the exact total in tUSD. Logistics is assigned and the Demo
+   Carrier tracking number is registered.
 5. Any party requests **TEE delivery verification** — OutLayer runs the published verifier and the
    contract callback records the attested result.
-6. Seller/provider **settle logistics** (after verified pickup); buyer **confirms receipt** →
-   seller + platform payouts settle; the escrow shows `Completed` with explorer links.
+6. Seller/provider **settle logistics** (verified pickup); buyer **confirms receipt** → seller +
+   platform payouts settle, the listing flips to `sold`, and **reputation moves on-chain for both
+   wallets** — visible instantly on their profiles.
 
-Scripted version of the same path: `scripts/e2e_lifecycle.sh`.
+Scripted version of the escrow path: `scripts/e2e_lifecycle.sh`.
 
 ## Tests
 
@@ -152,6 +166,11 @@ Scripted version of the same path: `scripts/e2e_lifecycle.sh`.
   the TEE is a WASI P2 upgrade path.
 - `REVIEW_REQUIRED` has an explicit, disclosed operator path (`resolve_review`) — this is a
   centralized fallback, not arbitration.
-- Fiat/bank payouts, Intents cross-chain settlement, reputation and mobile apps are out of MVP scope.
+- **Reputation economics are unproven**: counters are mechanism-complete and chain-derived, but on
+  testnet wash-trading is cheap. Production would add stake, fees, or dispute-bond mechanics.
+- Marketplace listings are an off-chain catalog (photos/descriptions); the on-chain reference is
+  the wallet and its escrow history.
+- Fiat/bank payouts, Intents cross-chain settlement, reputation staking, and mobile apps are out of
+  MVP scope.
 
 License: MIT.

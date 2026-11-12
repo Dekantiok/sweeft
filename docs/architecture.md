@@ -26,8 +26,12 @@
   chain back from `outlayer.testnet`).
 - **Django (modular monolith)** — product coordination: wallet challenge/verify (NEP-413),
   agreement metadata, invitation locators, partner applications/approval, shipment simulation,
-  verification orchestration, projections and audit records. It cannot move funds: payouts are
-  triggered by wallet-signed calls to permissioned contract methods.
+  verification orchestration, marketplace listings + purchase requests, projections and audit
+  records. It cannot move funds: payouts are triggered by wallet-signed calls to permissioned
+  contract methods.
+- **Marketplace (`apps/market`)** — discovery layer only: listings reference seller wallets, trust
+  profiles read live contract counters, and "trade via escrow" prefills the on-chain agreement.
+  The catalog can be rebuilt by anyone from chain data (`escrows_range`, `reputation_of`).
 - **OutLayer** — off-chain verifiable execution. Our verification WASM is published (hash-pinned);
   the contract calls `request_execution`; the TEE result returns through the promise callback.
 - **Demo Carrier** — a simulated carrier adapter behind a `CarrierAdapter` interface
