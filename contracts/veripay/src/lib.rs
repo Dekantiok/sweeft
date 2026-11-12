@@ -204,6 +204,8 @@ impl VeriPay {
         dispatch_deadline_ms: u64,
         inspection_period_ms: u64,
         terms_hash: String,
+        logistics_provider: Option<AccountId>,
+        tracking_number: Option<String>,
     ) -> String {
         let seller = env::predecessor_account_id();
         require!(seller_amount.0 > 0, "seller amount must be > 0");
@@ -211,6 +213,9 @@ impl VeriPay {
             require!(b != &seller, "buyer must differ from seller");
         } else {
             require!(invite_hash.is_some(), "invite_hash required when buyer is not preassigned");
+        }
+        if let Some(p) = &logistics_provider {
+            require!(p != &seller, "provider must differ from seller");
         }
         require!(dispatch_deadline_ms > env::block_timestamp() / 1_000_000, "dispatch deadline in the past");
 
@@ -220,6 +225,8 @@ impl VeriPay {
         let id = format!("VP-{:06}", self.next_id);
         self.next_id += 1;
 
+        let tracking_number = tracking_number.filter(|t| !t.trim().is_empty());
+        let has_tracking = tracking_number.is_some();
         let escrow = Escrow {
             id: id.clone(),
             seller: seller.clone(),
@@ -233,14 +240,14 @@ impl VeriPay {
             platform_fee: U128(platform_fee),
             total_amount: U128(total_amount),
             token,
-            logistics_provider: None,
+            logistics_provider,
             shipment_id: format!("SHIP-{}", id),
-            tracking_number: None,
+            tracking_number,
             dispatch_deadline_ms,
             inspection_period_ms,
             created_ms: env::block_timestamp() / 1_000_000,
             terms_hash,
-            shipment_registered: false,
+            shipment_registered: has_tracking,
             verification_pending: false,
             pickup_verified: false,
             delivered_verified: false,
@@ -366,8 +373,17 @@ impl VeriPay {
             "only seller or provider can register the shipment"
         );
         require!(escrow.state == EscrowState::ShipmentPending, "wrong state");
-        require!(!tracking_number.trim().is_empty(), "tracking number required");
-        escrow.tracking_number = Some(tracking_number);
+        // An empty tracking number reuses the one committed at creation (the
+        // marketplace flow pre-registers it so OutLayer can track from day one).
+        let tracking = if tracking_number.trim().is_empty() {
+            escrow
+                .tracking_number
+                .clone()
+                .expect("no tracking number registered at creation")
+        } else {
+            tracking_number
+        };
+        escrow.tracking_number = Some(tracking);
         escrow.shipment_registered = true;
         escrow.state = EscrowState::Shipped;
         self.escrows.insert(escrow_id, escrow);

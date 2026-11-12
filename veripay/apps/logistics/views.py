@@ -99,23 +99,30 @@ def partner_portal(request):
 @require_POST
 @wallet_required_json
 def api_create_shipment(request):
-    """Register a shipment for a funded escrow (Demo Carrier tracking)."""
+    """Register a shipment for a funded escrow (Demo Carrier tracking).
+
+    `tracking_number` may be supplied when the escrow was created with a
+    pre-registered tracking ID (marketplace flow); otherwise the Demo Carrier
+    generates one.
+    """
     body = json.loads(request.body or "{}")
     escrow_id = (body.get("escrow_id") or "").strip()
     agreement = get_object_or_404(EscrowAgreement, escrow_id=escrow_id)
     chain = near.get_escrow(escrow_id)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow missing on-chain"}, status=404)
-    if chain["state"] not in ("Funded", "ShipmentPending"):
-        return JsonResponse({"ok": False, "error": f"escrow is {chain['state']}, expected Funded"}, status=400)
+    if chain["state"] not in ("PendingAcceptance", "Approved", "Funded", "ShipmentPending"):
+        return JsonResponse({"ok": False, "error": f"escrow is {chain['state']}"}, status=400)
     if request.wallet not in (chain["seller"], chain.get("logistics_provider")):
         return JsonResponse({"ok": False, "error": "only the seller or provider can register a shipment"}, status=403)
 
     carrier = carriers.get_carrier()
+    provided = (body.get("tracking_number") or "").strip()
     created = carrier.create_shipment(escrow_id, body.get("origin", "Lagos"), body.get("destination", "Abuja"))
+    tracking = provided or created["tracking_number"]
     provider = LogisticsPartner.objects.filter(settlement_wallet=chain.get("logistics_provider") or "").first()
     shipment, was_created = Shipment.objects.get_or_create(
-        tracking_number=created["tracking_number"],
+        tracking_number=tracking,
         defaults={
             "escrow_id": escrow_id,
             "provider": provider,

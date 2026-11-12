@@ -23,8 +23,13 @@
       <ul class="mt-2 text-slate-600 space-y-1 list-disc list-inside">
         <li>Dispatch within {{ listing.dispatch_days }} day(s) of funding</li>
         <li>Buyer inspection window: {{ listing.inspection_days }} day(s) after verified delivery</li>
-        {% if listing.logistics_note %}<li>Logistics: {{ listing.logistics_note }}</li>{% endif %}
-        <li>Payment is released only after TEE-verified delivery and your explicit confirmation</li>
+        {% if listing.logistics_provider %}
+          <li>Logistics: <b>{{ provider_name }}</b> (<code>{{ listing.logistics_provider }}</code>) — paid on verified pickup</li>
+        {% elif listing.logistics_note %}
+          <li>Logistics: {{ listing.logistics_note }}</li>
+        {% endif %}
+        <li>A shipment tracking ID is created with the escrow — the item is tracked from day one</li>
+        <li>Payment is released only after TEE-verified delivery and the buyer's explicit confirmation</li>
       </ul>
     </div>
   </section>

@@ -8,16 +8,29 @@
 
 <section class="mt-6">
   <h2 class="font-semibold">Purchase requests</h2>
-  {% for r in requests %}
-    {% if r.status == 'pending' %}
-      <div class="bg-white border border-blue-200 rounded-xl p-4 mt-2 flex items-center gap-3 flex-wrap">
-        <div class="text-sm">
-          <code class="font-medium">{{ r.buyer_account }}</code> wants <b>{{ r.listing.title }}</b>
-          <div class="text-xs text-slate-500">{{ r.message|default:"(no message)" }} · {{ r.created_at }}</div>
+  {% for item in requests %}
+    {% if item.show %}
+      <div class="bg-white border border-blue-200 rounded-xl p-4 mt-2 gap-3 flex flex-col">
+        <div class="flex items-center gap-3 flex-wrap">
+          <div class="text-sm">
+            <a class="font-medium text-emerald-700" href="/u/{{ item.req.buyer_account }}/" target="_blank" rel="noreferrer"><code>{{ item.req.buyer_account }}</code></a>
+            wants <b>{{ item.req.listing.title }}</b>
+            <div class="text-xs text-slate-500">{{ item.req.message|default:"(no message)" }} · {{ item.req.created_at }}</div>
+          </div>
+          <div class="flex-1"></div>
+          <div class="flex gap-1.5 flex-wrap text-xs">
+            <span class="rounded-full px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200" title="Completed purchases">🛒 {{ item.rep.completed_as_buyer|default:0 }} bought</span>
+            <span class="rounded-full px-2 py-0.5 bg-sky-50 text-sky-800 border border-sky-200" title="Completed sales">🏷 {{ item.rep.completed_as_seller|default:0 }} sold</span>
+            {% if item.rep.disputes_opened %}<span class="rounded-full px-2 py-0.5 bg-amber-50 text-amber-800 border border-amber-200">⚠ {{ item.rep.disputes_opened }} disputes</span>{% endif %}
+            {% if item.rep.refunds_claimed %}<span class="rounded-full px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200">↩ {{ item.rep.refunds_claimed }} refunds</span>{% endif %}
+            {% if not item.rep.completed_as_buyer and not item.rep.completed_as_seller %}<span class="rounded-full px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200">new wallet</span>{% endif %}
+          </div>
         </div>
-        <div class="flex-1"></div>
-        <a href="/market/{{ r.listing.slug }}/escrow/?buyer={{ r.buyer_account }}" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Create escrow for this buyer</a>
-        <button onclick="declineRequest({{ r.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Decline</button>
+        <div class="flex gap-2 flex-wrap justify-end">
+          <a href="/market/{{ item.req.listing.slug }}/escrow/?buyer={{ item.req.buyer_account }}" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Agree &amp; create escrow</a>
+          <a href="/u/{{ item.req.buyer_account }}/" target="_blank" rel="noreferrer" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Buyer profile</a>
+          <button onclick="declineRequest({{ item.req.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Decline</button>
+        </div>
       </div>
     {% endif %}
   {% empty %}

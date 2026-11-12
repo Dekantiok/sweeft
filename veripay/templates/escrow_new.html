@@ -43,6 +43,14 @@
       <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.counterparty }}" placeholder="buyer.testnet — or empty for a shareable invitation">
     </div>
     <div>
+      <label class="block text-sm font-medium mb-1">Logistics provider (optional — from the approved directory)</label>
+      <input id="f-provider" list="provider-options" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.provider }}" placeholder="Pick a provider — or leave empty and assign later">
+      <datalist id="provider-options">
+        {% for p in providers %}<option value="{{ p.settlement_wallet }}">{{ p.company_name }}</option>{% endfor %}
+      </datalist>
+      <p class="text-xs text-slate-500 mt-1">Choosing a provider now creates the shipment tracking ID with the escrow, so delivery can be tracked from day one.</p>
+    </div>
+    <div>
       <label class="block text-sm font-medium mb-1">Terms (short, hashed on-chain)</label>
       <input id="f-terms" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.terms }}" placeholder="Delivery to Abuja within 7 days; inspection 48h.">
     </div>
@@ -117,6 +125,16 @@
         inviteHash = await sha256Hex(invitationToken);
       }
 
+      // A chosen provider comes with a tracking ID at creation, so the item
+      // can be tracked from day one (OutLayer verification uses this ID).
+      const provider = document.getElementById('f-provider').value.trim().toLowerCase();
+      let tracking = null;
+      if (provider) {
+        const bytes = new Uint8Array(4);
+        crypto.getRandomValues(bytes);
+        tracking = 'DEMO-' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      }
+
       status.textContent = 'Confirm in your wallet (create_escrow)…';
       const res = await VPApp.callContract('create_escrow', {
         product_name: document.getElementById('f-product').value.trim(),
@@ -129,10 +147,16 @@
         dispatch_deadline_ms: new Date(deadline + 'T23:59:59Z').getTime(),
         inspection_period_ms: inspectionDays * 86400000,
         terms_hash: await sha256Hex(terms),
+        logistics_provider: provider || null,
+        tracking_number: tracking,
       });
       let escrowId = res.successValue;
       if (typeof escrowId !== 'string' || !escrowId.startsWith('VP-')) {
         throw new Error('could not read escrow id from the transaction result');
+      }
+      if (tracking) {
+        status.textContent = 'Registering the shipment tracking…';
+        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
       }
       status.textContent = 'Saving metadata…';
       const saved = await VPApp.jsonPost('/api/v1/agreements/', {

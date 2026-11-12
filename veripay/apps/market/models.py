@@ -25,6 +25,9 @@ class Listing(models.Model):
     dispatch_days = models.PositiveIntegerField(default=7)
     inspection_days = models.PositiveIntegerField(default=2)
     logistics_note = models.CharField(max_length=200, blank=True)
+    logistics_provider = models.CharField(
+        max_length=64, blank=True, help_text="Chosen approved provider (settlement wallet), locked into the escrow at creation"
+    )
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="active")
     sold_escrow_id = models.CharField(max_length=32, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

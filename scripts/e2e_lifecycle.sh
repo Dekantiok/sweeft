@@ -33,7 +33,7 @@ TRACKING="DEMO-E2E-$(date +%s | tail -c 5)"
 
 echo "== create escrow (seller)"
 ESCROW_ID=$(call "$SELLER" "$SELLER_KEY" create_escrow \
-  "{\"product_name\":\"E2E test goods\",\"product_desc_hash\":\"e2e\",\"seller_amount\":\"$SELLER_AMOUNT\",\"logistics_amount\":\"$LOGISTICS_AMOUNT\",\"buyer\":\"$BUYER\",\"invite_hash\":null,\"token\":\"$TUSD\",\"dispatch_deadline_ms\":$DL,\"inspection_period_ms\":172800000,\"terms_hash\":\"e2e-terms\"}" \
+  "{\"product_name\":\"E2E test goods\",\"product_desc_hash\":\"e2e\",\"seller_amount\":\"$SELLER_AMOUNT\",\"logistics_amount\":\"$LOGISTICS_AMOUNT\",\"buyer\":\"$BUYER\",\"invite_hash\":null,\"token\":\"$TUSD\",\"dispatch_deadline_ms\":$DL,\"inspection_period_ms\":172800000,\"terms_hash\":\"e2e-terms\",\"logistics_provider\":null,\"tracking_number\":null}" \
   '0.1 NEAR' | grep -o 'VP-[0-9]*' | head -1)
 echo "   escrow: $ESCROW_ID"
 

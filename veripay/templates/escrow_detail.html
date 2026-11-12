@@ -97,7 +97,6 @@
   };
   const WALLET = "{{ wallet_account|default:'' }}";
   const OWNER = "{{ owner|default:'' }}";
-  let SHIPMENT_ID = {{ chain.shipment_id|default:0 }};
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function addButton(label, fn, style='primary') {
@@ -147,7 +146,7 @@
       document.getElementById('actions').appendChild(box);
     }
     if (state === 'ShipmentPending' && (isSeller || isProvider)) {
-      addButton('Create Demo Carrier shipment + register on-chain', doRegisterShipment);
+      addButton('Mark dispatched (register tracking on-chain)', doRegisterShipment);
     }
     if (state === 'Shipped' && (isSeller || isBuyer || isProvider)) {
       addButton('Request TEE delivery verification', doVerify);
@@ -212,12 +211,19 @@
 
   async function doRegisterShipment() {
     try {
-      status('Creating simulated tracking number…');
-      const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id });
-      if (!created.ok) throw new Error(created.error);
-      SHIPMENT_ID = created.shipment_id;
-      status('Registering ' + created.tracking_number + ' on-chain…');
-      await VPApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: created.tracking_number });
+      let tracking = CHAIN ? CHAIN.tracking_number : null;
+      if (!tracking) {
+        status('Creating simulated tracking number…');
+        const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id });
+        if (!created.ok) throw new Error(created.error);
+        tracking = created.tracking_number;
+      } else {
+        // Tracking was pre-registered at creation (marketplace flow): make sure
+        // the Demo Carrier row exists, then mark dispatched on-chain.
+        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
+      }
+      status('Registering ' + tracking + ' on-chain…');
+      await VPApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
       status('Registered — refreshing…'); setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
   }

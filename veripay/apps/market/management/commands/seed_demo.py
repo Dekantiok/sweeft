@@ -66,9 +66,14 @@ class Command(BaseCommand):
                  dispatch_days=5, inspection_days=2, logistics_note="Digital delivery — verification is buyer confirmation"),
         ]
         for item in items:
+            item = dict(item)
+            item["logistics_provider"] = settlement
             listing, was_created = Listing.objects.get_or_create(
                 seller_account=seller, title=item["title"], defaults=item
             )
+            if not was_created:
+                listing.logistics_provider = settlement
+                listing.save(update_fields=["logistics_provider", "updated_at"])
             state = "created" if was_created else "exists"
-            self.stdout.write(f"listing {state}: /market/{listing.slug}/")
+            self.stdout.write(f"listing {state}: /market/{listing.slug}/ (provider {settlement})")
         self.stdout.write(self.style.SUCCESS("demo data ready"))

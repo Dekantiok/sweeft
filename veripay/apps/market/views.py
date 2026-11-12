@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from django.conf import settings
 from django.contrib import messages
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -10,6 +11,7 @@ from django.views.decorators.http import require_POST
 
 from apps.escrow import near
 from apps.escrow.models import EscrowAgreement
+from apps.logistics.models import LogisticsPartner
 from apps.wallets.views import current_wallet
 
 from .models import Listing, PurchaseRequest
@@ -17,9 +19,24 @@ from .models import Listing, PurchaseRequest
 
 def _reputation(account_id: str) -> dict:
     try:
-        return near.view_call(near.settings.VERIPAY_CONTRACT, "reputation_of", {"account_id": account_id}) or {}
+        return near.view_call(settings.VERIPAY_CONTRACT, "reputation_of", {"account_id": account_id}) or {}
     except Exception:  # noqa: BLE001 - page still renders without chain
         return {}
+
+
+def _reputations(account_ids: list[str]) -> dict[str, dict]:
+    """One batch call for list pages."""
+    if not account_ids:
+        return {}
+    try:
+        rows = near.view_call(settings.VERIPAY_CONTRACT, "reputations", {"account_ids": account_ids}) or []
+        return dict(zip(account_ids, rows))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _active_providers():
+    return list(LogisticsPartner.objects.filter(status="ACTIVE"))
 
 
 def market_browse(request):
@@ -46,12 +63,17 @@ def listing_detail(request, slug: str):
     my_request = None
     if wallet:
         my_request = listing.requests.filter(buyer_account=wallet).exclude(status="declined").first()
+    provider_name = ""
+    if listing.logistics_provider:
+        partner = LogisticsPartner.objects.filter(settlement_wallet=listing.logistics_provider).first()
+        provider_name = partner.company_name if partner else "Unknown provider"
     return render(
         request,
         "listing_detail.html",
         {
             "listing": listing,
             "seller_rep": rep,
+            "provider_name": provider_name,
             "my_request": my_request,
             "is_owner": wallet == listing.seller_account,
             "wallet_account": wallet,
@@ -69,6 +91,7 @@ def listing_new(request):
         if price <= 0:
             messages.error(request, "Price must be greater than zero.")
             return redirect("listing-new")
+        provider = request.POST.get("logistics_provider", "").strip()
         listing = Listing.objects.create(
             seller_account=wallet,
             title=request.POST.get("title", "").strip(),
@@ -81,10 +104,11 @@ def listing_new(request):
             dispatch_days=int(request.POST.get("dispatch_days") or 7),
             inspection_days=int(request.POST.get("inspection_days") or 2),
             logistics_note=request.POST.get("logistics_note", "").strip(),
+            logistics_provider=provider,
         )
         messages.success(request, f"Listing “{listing.title}” published.")
         return redirect("listing-detail", slug=listing.slug)
-    return render(request, "listing_new.html", {"wallet_account": wallet})
+    return render(request, "listing_new.html", {"wallet_account": wallet, "providers": _active_providers()})
 
 
 def listing_mine(request):
@@ -92,11 +116,24 @@ def listing_mine(request):
     if not wallet:
         return redirect("/?connect=1")
     listings = Listing.objects.filter(seller_account=wallet)
-    requests = PurchaseRequest.objects.filter(listing__in=listings).select_related("listing")
+    raw_requests = list(
+        PurchaseRequest.objects.filter(listing__in=listings).select_related("listing").order_by("-created_at")
+    )
+    # Buyer trust record, one batch contract call for the whole page.
+    reps = _reputations(sorted({r.buyer_account for r in raw_requests if r.status == "pending"}))
+    requests = [
+        {"req": r, "rep": reps.get(r.buyer_account) or {}, "show": r.status == "pending"}
+        for r in raw_requests
+    ]
     return render(
         request,
         "listing_mine.html",
-        {"listings": listings, "requests": requests, "wallet_account": wallet, "fmt": near.format_token},
+        {
+            "listings": listings,
+            "requests": requests,
+            "wallet_account": wallet,
+            "fmt": near.format_token,
+        },
     )
 
 

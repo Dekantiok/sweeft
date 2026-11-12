@@ -31,6 +31,18 @@
         <label class="block text-sm font-medium mb-1">Location</label>
         <input name="location" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Lagos, Nigeria">
       </div>
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium mb-1">Logistics provider (approved directory — optional)</label>
+        <select name="logistics_provider" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <option value="">Assign later / provider arranges delivery</option>
+          {% for p in providers %}
+            <option value="{{ p.settlement_wallet }}">{{ p.company_name }} — pays to {{ p.settlement_wallet }}</option>
+          {% empty %}
+            <option value="" disabled>No ACTIVE providers yet — see /logistics/</option>
+          {% endfor %}
+        </select>
+        <p class="text-xs text-slate-500 mt-1">Chosen here, locked into every escrow for this listing — the provider ships and gets paid on verified pickup.</p>
+      </div>
     </div>
     <div>
       <label class="block text-sm font-medium mb-1">Description</label>

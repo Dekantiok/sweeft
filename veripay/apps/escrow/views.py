@@ -115,7 +115,7 @@ def escrow_new(request):
     wallet = current_wallet(request)
     if not wallet:
         return redirect("/?connect=1")
-    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "2", "terms": "", "product": "", "listing_slug": "", "listing_title": ""}
+    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "2", "terms": "", "product": "", "listing_slug": "", "listing_title": "", "provider": ""}
     listing_id = request.GET.get("listing")
     if listing_id:
         from apps.market.models import Listing  # local import avoids app-loading cycle
@@ -131,8 +131,16 @@ def escrow_new(request):
                 "product": listing.title,
                 "listing_slug": listing.slug,
                 "listing_title": listing.title,
+                "provider": listing.logistics_provider or "",
             }
-    return render(request, "escrow_new.html", {"wallet_account": wallet, "prefill": prefill})
+    providers = []
+    try:
+        from apps.logistics.models import LogisticsPartner
+
+        providers = list(LogisticsPartner.objects.filter(status="ACTIVE"))
+    except Exception:  # noqa: BLE001
+        providers = []
+    return render(request, "escrow_new.html", {"wallet_account": wallet, "prefill": prefill, "providers": providers})
 
 
 def escrow_detail(request, escrow_id: str):
