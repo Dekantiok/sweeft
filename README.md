@@ -37,12 +37,15 @@ Full lifecycle proven with real transactions and exact balances (see `scripts/e2
 - `VP-000003`: seller `seller.steepdata3968.testnet`, buyer `steepdata3968.testnet`,
   provider `logistics.steepdata3968.testnet`
   - funded 115 tUSD via `ft_transfer_call`
-  - OutLayer TEE executed the published verifier (`84ed000b…` → `7393b6ff…`) and returned
-    `verified: true` for the registered tracking number; the contract recorded
-    `pickup_verified` + `delivered_verified`
+  - OutLayer TEE executed the published verifier (`3153c52b…`, active version of the
+    `steepdata3968.testnet/veripay-verify` project) and returned `verified: true` for the
+    registered tracking number; the contract recorded `pickup_verified` + `delivered_verified`
   - `settle_logistics` paid the provider **+10 tUSD**
   - `confirm_receipt` paid the seller **+100 tUSD** and the platform **+5 tUSD**
   - contract balance returned to **0**; state `Completed`
+
+TEE negative case also verified: a tampered tracking number returns
+`verified: false` with the mismatch reason — natively (unit tests) and inside the real TEE.
 
 Explorer: <https://testnet.near.org/accounts/veripay.steepdata3968.testnet>
 
