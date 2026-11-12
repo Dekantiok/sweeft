@@ -1,10 +1,19 @@
+# Rust
+target/
+**/target/
+
+# Node (legacy SWEeft apps until removed)
 node_modules/
 .next/
-dist/
-build/
-*.log
-.DS_Store
+
+# Python / Django
+__pycache__/
+*.pyc
+.venv/
+venv/
+db.sqlite3
 .env
-.near-credentials/
-neardev/
-*.tgz
+.env.local
+
+# OS / editor
+.DS_Store
