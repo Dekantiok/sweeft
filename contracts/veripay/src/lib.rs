@@ -56,6 +56,36 @@ pub struct VerificationOutcome {
     pub reason: String,
 }
 
+/// On-chain trust record for a wallet. Counters move only inside existing
+/// state transitions — never on creation, and disputes stay neutral until
+/// resolved. `volume` is the sum of seller amounts over completed deals.
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct Reputation {
+    pub completed_as_seller: u32,
+    pub completed_as_buyer: u32,
+    pub disputes_opened: u32,
+    pub refunds_claimed: u32,
+    pub requests_rejected: u32,
+    pub volume: U128,
+    pub first_seen_ms: u64,
+}
+
+impl Default for Reputation {
+    fn default() -> Self {
+        Self {
+            completed_as_seller: 0,
+            completed_as_buyer: 0,
+            disputes_opened: 0,
+            refunds_claimed: 0,
+            requests_rejected: 0,
+            volume: U128(0),
+            first_seen_ms: 0,
+        }
+    }
+}
+
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
 #[serde(crate = "near_sdk::serde")]
@@ -222,6 +252,7 @@ impl VeriPay {
         };
         self.escrows.insert(id.clone(), escrow);
         push_index(&mut self.seller_index, &seller, &id);
+        bump_reputation(&seller, |_| {});
         if let Some(b) = buyer {
             push_index(&mut self.pending_index, &b, &id);
         }
@@ -251,6 +282,7 @@ impl VeriPay {
         self.escrows.insert(escrow_id.clone(), escrow);
         push_index(&mut self.buyer_index, &caller, &escrow_id);
         pop_index(&mut self.pending_index, &caller, &escrow_id);
+        bump_reputation(&caller, |_| {});
         log!("escrow {} approved by buyer {}", escrow_id, caller);
     }
 
@@ -263,6 +295,7 @@ impl VeriPay {
         escrow.state = EscrowState::Rejected;
         self.escrows.insert(escrow_id.clone(), escrow);
         pop_index(&mut self.pending_index, &caller, &escrow_id);
+        bump_reputation(&caller, |r| r.requests_rejected += 1);
     }
 
     /// Seller cancels while still pending acceptance.
@@ -499,8 +532,18 @@ impl VeriPay {
         escrow.platform_paid = true;
         let seller_amount = escrow.seller_amount;
         let seller = escrow.seller.clone();
+        let buyer = escrow.buyer.clone().expect("buyer set");
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        // Trust record: completion counts for both sides; volume is deal value.
+        bump_reputation(&seller, |r| {
+            r.completed_as_seller += 1;
+            r.volume.0 += seller_amount.0;
+        });
+        bump_reputation(&buyer, |r| {
+            r.completed_as_buyer += 1;
+            r.volume.0 += seller_amount.0;
+        });
         ft_transfer(token, seller, seller_amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -563,6 +606,7 @@ impl VeriPay {
         escrow.terms_hash = format!("{}|problem:{}", escrow.terms_hash, reason_hash);
         escrow.state = EscrowState::ReviewRequired;
         self.escrows.insert(escrow_id, escrow);
+        bump_reputation(&env::predecessor_account_id(), |r| r.disputes_opened += 1);
     }
 
     /// Explicit manual review path (platform operator). Not arbitration: it
@@ -628,6 +672,7 @@ impl VeriPay {
         let amount = escrow.total_amount;
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        bump_reputation(&buyer, |r| r.refunds_claimed += 1);
         ft_transfer(token, buyer, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -679,6 +724,40 @@ impl VeriPay {
             .collect()
     }
 
+    // ------------------------------------------------------------------
+    // Reputation & discovery
+    // ------------------------------------------------------------------
+
+    /// On-chain trust record for a wallet (zeros when never seen).
+    pub fn reputation_of(&self, account_id: AccountId) -> Reputation {
+        reputation_map().get(&account_id).cloned().unwrap_or_default()
+    }
+
+    /// Batch variant for list pages.
+    pub fn reputations(&self, account_ids: Vec<AccountId>) -> Vec<Reputation> {
+        account_ids.iter().map(|a| self.reputation_of(a.clone())).collect()
+    }
+
+    /// Page through every escrow ever created (oldest first), so any indexer
+    /// can rebuild the whole book from chain data alone. `limit` caps at 50.
+    pub fn escrows_range(&self, start: u64, limit: u64) -> Vec<Escrow> {
+        let limit = limit.min(50);
+        let mut out = Vec::new();
+        let mut i = start.max(1);
+        while (out.len() as u64) < limit && i < self.next_id {
+            let id = format!("VP-{:06}", i);
+            if let Some(e) = self.escrows.get(&id) {
+                out.push(e.clone());
+            }
+            i += 1;
+        }
+        out
+    }
+
+    pub fn escrow_count(&self) -> u64 {
+        self.next_id - 1
+    }
+
     pub fn get_config(&self) -> ConfigView {
         ConfigView {
             owner: self.owner.clone(),
@@ -725,4 +804,28 @@ fn ft_transfer(token: AccountId, receiver_id: AccountId, amount: U128) -> Promis
 /// True when the promise at `index` (a chained callback's input) succeeded.
 fn payout_ok(index: u64) -> bool {
     matches!(env::promise_result(index), near_sdk::PromiseResult::Successful(_))
+}
+
+// ---------------------------------------------------------------------------
+// Reputation storage
+//
+// Kept OUT of the contract state struct on purpose: Borsh deserialization is
+// positional, so adding fields to `VeriPay` would brick existing state on
+// upgrade. Collections built locally from a constant prefix share the same
+// storage without touching the serialized struct at all.
+// ---------------------------------------------------------------------------
+
+fn reputation_map() -> LookupMap<AccountId, Reputation> {
+    LookupMap::new(b"r1".to_vec())
+}
+
+/// Read-modify-write a wallet's reputation, initialising `first_seen_ms`.
+fn bump_reputation(account: &AccountId, f: impl FnOnce(&mut Reputation)) {
+    let mut map = reputation_map();
+    let mut rep = map.get(account).cloned().unwrap_or_default();
+    if rep.first_seen_ms == 0 {
+        rep.first_seen_ms = env::block_timestamp() / 1_000_000;
+    }
+    f(&mut rep);
+    map.insert(account.clone(), rep);
 }
