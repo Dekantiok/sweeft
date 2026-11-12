@@ -212,8 +212,8 @@
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function addButton(label, fn, style='primary') {
     const cls = style === 'primary'
-      ? 'w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium'
-      : 'w-full border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm';
+      ? 'bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition-colors'
+      : 'border border-slate-600 hover:border-emerald-400 text-slate-200 rounded-lg px-3 py-1.5 text-sm transition-colors';
     const b = el(`<button class="${cls}">${label}</button>`);
     b.onclick = fn;
     document.getElementById('actions').appendChild(b);
