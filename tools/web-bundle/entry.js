@@ -38,9 +38,30 @@ function onChange(cb) {
 }
 
 async function signOut() {
-  if (!selector) return;
-  const wallet = await selector.wallet();
-  await wallet.signOut();
+  try {
+    if (selector) {
+      const wallet = await selector.wallet();
+      await wallet.signOut();
+    }
+  } catch (e) {
+    // The wallet module can fail when it is no longer connected — the
+    // persistence cleanup below still guarantees a clean state.
+    console.warn('wallet signOut failed', e);
+  } finally {
+    clearPersistence();
+  }
+}
+
+// Remove wallet-selector persistence so the next Connect starts fresh
+// (past sessions otherwise survive signOut attempts on a reloaded page).
+function clearPersistence() {
+  try {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith('near-wallet-selector'))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch (e) {
+    /* localStorage unavailable */
+  }
 }
 
 function decodeSuccessValue(res) {

@@ -72,12 +72,28 @@
   }
 
   async function disconnect() {
+    // 1. Clear the server session.
     try {
       await fetch('/api/v1/wallet/logout/', { method: 'POST' });
     } catch (e) {}
+    // 2. Disconnect the wallet module. The selector is only initialised by
+    //    connect() on a fresh page load, so initialise it here first —
+    //    otherwise signOut silently no-ops and the wallet stays persisted.
     try {
+      const c = await cfg();
+      const network = (state.network || c.network || 'testnet').trim() || 'testnet';
+      await VPWallet.init({ network, contractId: state.contractId || c.veripay_contract });
       await VPWallet.signOut();
+    } catch (e) {
+      console.warn('wallet disconnect failed', e);
+    }
+    // 3. Guarantee clean state even if the module threw.
+    try {
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('near-wallet-selector'))
+        .forEach((k) => localStorage.removeItem(k));
     } catch (e) {}
+    state.walletAccount = null;
     window.location.reload();
   }
 
