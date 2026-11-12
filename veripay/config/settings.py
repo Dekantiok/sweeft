@@ -30,6 +30,8 @@ INSTALLED_APPS = [
     "apps.escrow",
     "apps.logistics",
     "apps.market",
+    "apps.ai",
+    "apps.intents",
 ]
 
 MIDDLEWARE = [
@@ -111,3 +113,29 @@ OUTLAYER_PROJECT = os.environ.get("OUTLAYER_PROJECT", "")
 DEMO_CARRIER_PROVIDER_ID = "LOG-DEMO-001"
 DEMO_CARRIER_NAME = "Demo Carrier (simulated)"
 DEMO_CARRIER_WALLET = os.environ.get("DEMO_CARRIER_WALLET", "")
+
+# ---------------------------------------------------------------------------
+# AI infrastructure (provider-neutral — swap via AI_PROVIDER, no code changes)
+#
+#   echo          deterministic rules, no network (default; nothing breaks offline)
+#   openai_compat any OpenAI-compatible /chat/completions endpoint
+#                 (NEAR AI Cloud, OpenAI, Groq, Together, Ollama, LM Studio…)
+#   anthropic     Anthropic Messages API
+# ---------------------------------------------------------------------------
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "echo")
+AI_BASE_URL = os.environ.get("AI_BASE_URL", "https://cloud-api.near.ai/v1")
+AI_API_KEY = os.environ.get("AI_API_KEY", "")
+AI_MODEL = os.environ.get("AI_MODEL", "deepseek/deepseek-v4.1-flash")
+AI_TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
+
+# ---------------------------------------------------------------------------
+# NEAR Intents infrastructure (cross-chain settlement — wire later)
+#
+#   dry       offline simulated quotes/deposits, clearly labelled (default)
+#   oneclick  real 1Click (Intent Swap) HTTP API — requires network + review
+#             of the current docs before enabling in production
+# ---------------------------------------------------------------------------
+INTENTS_PROVIDER = os.environ.get("INTENTS_PROVIDER", "dry")
+INTENTS_BASE_URL = os.environ.get("INTENTS_BASE_URL", "https://1click.chaindefuser.com")
+INTENTS_API_KEY = os.environ.get("INTENTS_API_KEY", "")
+INTENTS_TIMEOUT_SECONDS = int(os.environ.get("INTENTS_TIMEOUT_SECONDS", "30"))

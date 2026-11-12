@@ -7,4 +7,6 @@ urlpatterns = [
     path("", include("apps.escrow.urls")),
     path("", include("apps.logistics.urls")),
     path("", include("apps.market.urls")),
+    path("", include("apps.ai.urls")),
+    path("", include("apps.intents.urls")),
 ]
