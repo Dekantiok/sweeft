@@ -4,7 +4,7 @@
 {% if not wallet_account %}
   <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg">
     <p class="text-sm">Connect the platform owner wallet to open the dispute console.</p>
-    <button onclick="VPApp.connect()" class="mt-3 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
+    <button onclick="VPApp.connect()" class="mt-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
   </div>
 {% elif not_owner %}
   <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg">
@@ -23,7 +23,7 @@
       <div class="bg-white border {% if c.state == 'ReviewRequired' %}border-rose-300{% else %}border-slate-200{% endif %} rounded-xl p-4 mt-4">
         <div class="flex items-center gap-3 flex-wrap">
           <a class="font-semibold text-emerald-700" href="/escrow/{{ d.escrow_id }}/">{{ d.escrow_id }}</a>
-          <span class="text-xs rounded-full px-2 py-0.5 bg-slate-900 text-white">{{ c.state|default:"—" }}</span>
+          <span class="text-xs rounded-full px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white">{{ c.state|default:"—" }}</span>
           <span class="text-xs rounded-full px-2 py-0.5 bg-rose-100 text-rose-800">dispute #{{ d.id }} by {{ d.side }}</span>
           <div class="flex-1"></div>
           <span class="text-xs text-slate-500">{{ d.created_at }}</span>

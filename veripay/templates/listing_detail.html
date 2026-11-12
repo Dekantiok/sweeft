@@ -49,7 +49,7 @@
 
     <div class="bg-white border border-slate-200 rounded-xl p-4">
       {% if not wallet_account %}
-        <button onclick="VPApp.connect()" class="w-full bg-slate-900 text-white rounded-lg px-3 py-2 text-sm">Connect wallet to trade</button>
+        <button onclick="VPApp.connect()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-2 text-sm">Connect wallet to trade</button>
       {% elif is_owner %}
         <a href="/market/{{ listing.slug }}/escrow/" class="block text-center w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Create escrow from this listing</a>
         <p class="text-xs text-slate-500 mt-2">You are the seller — this prefills your agreement. You can add the buyer's wallet on the next screen.</p>

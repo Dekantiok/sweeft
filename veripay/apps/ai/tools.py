@@ -4,11 +4,14 @@ Every tool is one of:
   read    — returns data the agent summarizes for the user
   prepare — returns an ACTION CARD; the user completes the step in the wallet
 
-No tool signs transactions, holds keys, or changes financial state. Write-side
-tools create only off-chain records (purchase requests) or action cards.
+The co-pilot never holds user keys. The ONE money-moving capability works
+through the token's on-chain allowance: the user signs a single `approve`
+granting the agent a scoped budget, then the agent may pay within it
+(payments are recorded as `PaymentIntent` rows for audit).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -20,9 +23,14 @@ from apps.escrow import near
 from apps.logistics.models import LogisticsPartner
 from apps.market.models import Listing, PurchaseRequest
 
+from .agent_wallet import agent_configured
+
 
 class ToolError(ValueError):
     pass
+
+
+ACCOUNT_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*\.(?:testnet|near)$")
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +254,79 @@ def prepare_dispute(*, escrow_id: str, wallet: str, reason: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Co-pilot payments — the ONE money-moving agent capability.
+#
+# Non-custodial by design: the user grants the agent a tUSD allowance with a
+# single wallet-signed `approve`; the token contract enforces the budget for
+# every `ft_transfer_from` the agent signs. Revocable at any time by
+# approving 0. The agent key itself can never exceed the granted allowance.
+# ---------------------------------------------------------------------------
+
+
+def allowance_of(owner: str) -> int:
+    """Remaining tUSD the agent may spend for `owner` (0 on any failure)."""
+    agent = getattr(settings, "AI_AGENT_ACCOUNT", "")
+    if not agent or not owner:
+        return 0
+    try:
+        return int(near.view_call(settings.TUSD_CONTRACT, "ft_allowance", {"owner": owner, "spender": agent}) or 0)
+    except Exception:  # noqa: BLE001 — pre-upgrade tokens simply report no allowance
+        return 0
+
+
+def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
+    """Create a payment intent card the co-pilot can execute from its budget."""
+    from .models import PaymentIntent
+
+    to = (to or "").strip().lower()
+    if not ACCOUNT_ID_RE.match(to) or len(to) > 64:
+        raise ToolError("recipient must be a NEAR account id (e.g. seller.steepdata3968.testnet)")
+    if to == wallet:
+        raise ToolError("that is your own wallet — pick the recipient")
+
+    units = near.parse_token(str(amount))
+    if units <= 0:
+        raise ToolError("amount must be greater than zero")
+
+    cap = int(getattr(settings, "AI_AGENT_MAX_PAYMENT", 100_000_000))
+    if units > cap:
+        raise ToolError(
+            f"that is above the co-pilot per-payment limit ({near.format_token(cap)} tUSD). "
+            "Split the payment or raise AI_AGENT_MAX_PAYMENT."
+        )
+
+    intent = PaymentIntent.objects.create(
+        wallet=wallet,
+        to_account=to,
+        amount=str(units),
+        memo=(memo or "").strip()[:200],
+    )
+
+    agent_account = getattr(settings, "AI_AGENT_ACCOUNT", "")
+    allowance = allowance_of(wallet)
+    grant = int(getattr(settings, "AI_AGENT_GRANT", 250_000_000))
+    return {
+        "type": "payment_proposal",
+        "intent_id": intent.id,
+        "to": to,
+        "amount": str(units),
+        "amount_display": near.format_token(units),
+        "memo": intent.memo,
+        "agent": agent_account,
+        "allowance": str(allowance),
+        "allowance_display": near.format_token(allowance),
+        "can_execute": agent_configured() and allowance >= units,
+        "grant_amount": str(grant),
+        "grant_display": near.format_token(grant),
+        "max_payment_display": near.format_token(cap),
+        "note": (
+            "The co-pilot pays this from the budget you grant it — one wallet approval sets the budget; "
+            "revoke any time by approving 0. The token contract enforces the allowance on-chain."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Registry — tool names are the only strings the LLM may request
 # ---------------------------------------------------------------------------
 
@@ -307,6 +388,16 @@ TOOLS: dict[str, ToolSpec] = {
         description="Prepare a dispute case-file card with a user-supplied reason. Requires escrow_id and reason.",
         handler=prepare_dispute,
     ),
+    "prepare_payment": ToolSpec(
+        name="prepare_payment",
+        kind="prepare",
+        description=(
+            "Propose paying a NEAR account in tUSD from the budget the user granted the co-pilot "
+            "(one wallet approval). Requires to (account id) and amount (in tUSD). Optional memo. "
+            "Capped by the platform per-payment limit and by the user's on-chain allowance."
+        ),
+        handler=prepare_payment,
+    ),
 }
 
 
@@ -316,7 +407,7 @@ def execute_tool(name: str, args: dict, wallet: str) -> dict:
         raise ToolError(f"unknown tool '{name}'")
     if not isinstance(args, dict):
         raise ToolError("tool args must be an object")
-    if spec.name in ("search_listings", "get_my_trade_status"):
+    if spec.name == "search_listings":
         kwargs = {}
         if args.get("query") is not None:
             kwargs["query"] = str(args["query"])[:120]
@@ -354,4 +445,11 @@ def execute_tool(name: str, args: dict, wallet: str) -> dict:
         eid = str(args.get("escrow_id") or "").strip()
         reason = str(args.get("reason") or "").strip()
         return spec.handler(escrow_id=eid, wallet=wallet, reason=reason)
+    if spec.name == "prepare_payment":
+        to = str(args.get("to") or args.get("account_id") or "").strip()
+        amount = args.get("amount")
+        if amount is None or str(amount).strip() == "":
+            raise ToolError("amount is required")
+        memo = str(args.get("memo") or "")[:200]
+        return spec.handler(to=to, amount=amount, memo=memo, wallet=wallet)
     raise ToolError(f"tool '{name}' has no handler")

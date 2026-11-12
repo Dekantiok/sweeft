@@ -30,7 +30,9 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Delivery verification | **Real TEE** — OutLayer (Intel TDX) executes our published WASM verifier; result returns on-chain via the contract callback |
 | Carrier tracking data | **SIMULATED** — Demo Carrier; labelled `SIMULATED DATA` in the DB (`simulated=True`), API responses and UI |
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
-| Fiat payouts / real carriers / arbitration | **Not implemented** (out of MVP scope) |
+| AI co-pilot payments | **Real on-chain** — scoped, revocable tUSD allowance; the agent pays within the budget the user grants (token contract enforces it) |
+| Dispute arbitration pool | **Real** — any NEAR holder stakes NEAR to vote the split; quorum → permissionless settlement; voters reclaim stake |
+| Fiat payouts / real carriers | **Not implemented** (out of MVP scope) |
 
 Boundaries we state plainly: a carrier scan does not prove parcel contents; buyer confirmation is a
 separate settlement condition; a silent buyer never auto-releases funds.
@@ -173,6 +175,26 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
    wallets** — visible instantly on their profiles.
 
 Scripted version of the escrow path: `scripts/e2e_lifecycle.sh`.
+
+### AI co-pilot payments (scoped allowance)
+
+Open the floating 💬 panel and talk to the co-pilot, e.g.
+“pay 25 tUSD to seller.steepdata3968.testnet for invoice 12”.
+
+1. The co-pilot prepares a payment card (recipient, amount, your current budget).
+2. **One wallet signature** grants a tUSD allowance (`approve` on the token) — or
+   “Pay now” settles instantly if a budget already exists.
+3. The agent then signs `ft_transfer_from` **within that budget** — the token
+   contract enforces the allowance on-chain. Revoke any time by approving 0.
+
+Platform policy caps each payment (`AI_AGENT_MAX_PAYMENT`, default 100 tUSD).
+Everything is audited as a `PaymentIntent` with its tx hash. Testnet disclosure:
+the demo agent key lives in the server environment for the MVP; on mainnet the
+same design runs with the key inside a TEE/KMS — the allowance stays the boundary.
+
+Verified live: wallet granted 250 tUSD → agent paid 5 + 10 + 7 tUSD (three
+batches, exact balances on-chain) → allowance deducted to 228; over-cap and
+no-budget paths refused correctly.
 
 ## Tests
 

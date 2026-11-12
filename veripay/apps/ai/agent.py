@@ -25,12 +25,14 @@ Available tools (call by returning an action object):
 - prepare_purchase {listing_slug} — full purchase proposal card (seller score, totals, affordability)
 - prepare_funding {escrow_id} — accept+fund action card for an existing escrow owned by the buyer
 - prepare_dispute {escrow_id, reason} — dispute case-file card with the user's reason
+- prepare_payment {to, amount, memo?} — propose paying a NEAR account in tUSD from the budget the user granted the co-pilot (one wallet approval). The user confirms on the card; execution is capped by the platform limit and the user's on-chain allowance.
 
 Rules:
 - Reply with exactly one JSON object: {"reply": string, "action": {"name": string, "args": object}|null}
 - Prefer search_listings before proposing a purchase; mention seller scores when relevant.
 - check_my_balance before claiming affordability.
 - Never invent listings, balances, or reputations.
+- For payments: only prepare_payment; never claim a payment was made in this turn — execution happens on the user's confirmation and the result is reported back.
 - If the request needs no tool, use action null and just reply.
 - Never claim to have signed, paid, shipped, or settled anything. You prepare; the wallet authorizes.
 """
@@ -39,6 +41,9 @@ ACCOUNT_RE = re.compile(r"([a-z0-9._-]+\.(?:testnet|near))\b", re.I)
 ESCROW_RE = re.compile(r"\b(VP-\d{6})\b", re.I)
 PRICE_RE = re.compile(r"(?:under|below|max(?:imum)?|less than|cheaper than)\s*(?:t?USD\s*)?([\d,.]+)", re.I)
 SLUG_RE = re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+)+)\b", re.I)
+PAY_VERB_RE = re.compile(r"\b(pay|paying|send|sending|transfer|tip)\b", re.I)
+PAY_AMOUNT_RE = re.compile(r"([\d][\d,]*(?:\.\d+)?)\s*(?:tusd|usd|\$)", re.I)
+PAY_MEMO_RE = re.compile(r"\bfor\s+(.+)$", re.I)
 
 
 def _card(kind: str, result: dict) -> dict:
@@ -93,6 +98,55 @@ def keyword_route(message: str, wallet: str) -> dict:
         result = execute_tool("get_seller_score", {"account_id": acct.group(1).lower()}, wallet)
         trace.append({"tool": "get_seller_score", "kind": "read", "args": {"account_id": acct.group(1).lower()}})
         return {"reply": f"{acct.group(1).lower()}: {result['summary']}.", "cards": [], "tool_trace": trace}
+
+    # Co-pilot payments: "pay 25 tUSD to seller.testnet for invoice 12".
+    if PAY_VERB_RE.search(text) and acct:
+        amount_match = (
+            PAY_AMOUNT_RE.search(text)
+            or re.search(r"\b(?:pay|send|transfer|tip)\s+(?:t?usd\s*)?([\d][\d,]*(?:\.\d+)?)", lowered)
+            or re.search(r"\b([\d][\d,]*(?:\.\d+)?)\b", text)
+        )
+        if amount_match:
+            to_account = acct.group(1).lower()
+            amount = amount_match.group(1).replace(",", "")
+            memo = ""
+            memo_match = PAY_MEMO_RE.search(text)
+            if memo_match:
+                memo = ACCOUNT_RE.sub("", memo_match.group(1)).strip(" ,.-—")
+            try:
+                result = execute_tool(
+                    "prepare_payment",
+                    {"to": to_account, "amount": amount, "memo": memo},
+                    wallet,
+                )
+                cards.append(_card(result.get("type", "payment_proposal"), result))
+                trace.append({"tool": "prepare_payment", "kind": "prepare", "args": {"to": to_account, "amount": amount}})
+                if result["can_execute"]:
+                    how = (
+                        f"Your co-pilot budget has {result['allowance_display']} tUSD left, so confirm "
+                        "“Pay now” on the card — the co-pilot settles it for you with no extra popups."
+                    )
+                else:
+                    how = (
+                        f"Your co-pilot budget is {result['allowance_display']} tUSD — grant the suggested budget "
+                        "on the card (one wallet signature) and the co-pilot pays instantly."
+                    )
+                memo_text = f" for {memo}" if memo else ""
+                return {
+                    "reply": (
+                        f"Payment ready: {result['amount_display']} tUSD to {to_account}{memo_text}. "
+                        f"{how} The token contract enforces your budget on-chain — revoke any time by approving 0."
+                    ),
+                    "cards": cards,
+                    "tool_trace": trace,
+                }
+            except ToolError as e:
+                return {"reply": f"I can't prepare that payment: {e}", "cards": [], "tool_trace": trace}
+        return {
+            "reply": "Tell me the amount too, e.g. “pay 25 tUSD to seller.steepdata3968.testnet for invoice 12”.",
+            "cards": [],
+            "tool_trace": trace,
+        }
 
     # Purchase / discovery intent.
     if any(w in lowered for w in ("buy", "purchase", "find", "search", "looking", "want", "need")):

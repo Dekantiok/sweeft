@@ -129,6 +129,23 @@ AI_MODEL = os.environ.get("AI_MODEL", "deepseek/deepseek-v4.1-flash")
 AI_TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
 
 # ---------------------------------------------------------------------------
+# AI co-pilot payments (scoped, revocable on-chain allowance)
+#
+# The co-pilot agent holds NO user keys. A user grants it a tUSD allowance
+# with one wallet signature (`approve` on the token); the agent can then pay
+# within that budget without a popup per payment. The token contract enforces
+# the allowance on-chain — that is the security boundary.
+#
+# Testnet disclosure: AI_AGENT_PRIVATE_KEY lives on the demo server because
+# this is a testnet MVP; on mainnet the key would sit inside a TEE/KMS.
+# ---------------------------------------------------------------------------
+AI_AGENT_ENABLED = os.environ.get("AI_AGENT_ENABLED", "1") == "1"
+AI_AGENT_ACCOUNT = os.environ.get("AI_AGENT_ACCOUNT", "")
+AI_AGENT_PRIVATE_KEY = os.environ.get("AI_AGENT_PRIVATE_KEY", "")
+AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000"))  # 100 tUSD per payment
+AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000"))  # 250 tUSD suggested budget (UI)
+
+# ---------------------------------------------------------------------------
 # NEAR Intents infrastructure (cross-chain settlement — wire later)
 #
 #   dry       offline simulated quotes/deposits, clearly labelled (default)

@@ -236,16 +236,14 @@
       addButton('Accept agreement', () => doAccept(null));
     }
     if (state === 'Approved' && isBuyer) {
-      addButton('Fund {{ chain.total_amount }} (tUSD)', doFund);
+      addButton('Fund ' + (Number(CHAIN.total_amount) / 1e6).toLocaleString() + ' tUSD', doFund);
     }
     if (state === 'Funded' && isSeller) {
-      const input = el('<input class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Provider wallet (e.g. log.testnet)">');
+      const input = el('<input class="flex-1 min-w-[11rem] border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500" placeholder="Provider wallet (e.g. log.testnet)">');
       input.setAttribute('list', 'provider-list');
-      const box = el('<div class="space-y-2"></div>');
+      const box = el('<div class="flex flex-wrap items-center gap-2"></div>');
       box.appendChild(input);
-      const hint = el('<div class="text-xs text-slate-500">Approved logistics providers are suggested — pick one from the directory.</div>');
-      box.appendChild(hint);
-      const b = el('<button class="w-full border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm">Assign logistics provider</button>');
+      const b = el('<button class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Assign logistics provider</button>');
       b.onclick = async () => {
         try {
           status('Assigning…');
@@ -254,6 +252,8 @@
         } catch (e) { status(''); alert('Failed: ' + e.message); }
       };
       box.appendChild(b);
+      const hint = el('<div class="w-full text-xs text-slate-500">Approved logistics providers are suggested — pick one from the directory.</div>');
+      box.appendChild(hint);
       document.getElementById('actions').appendChild(box);
     }
     if (state === 'ShipmentPending' && (isSeller || isProvider)) {
@@ -280,10 +280,10 @@
       addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
     }
     if (state === 'ReviewRequired' && WALLET === OWNER) {
-      const input = el('<input type="number" min="0" max="100" value="100" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Seller share %">');
-      const box = el('<div class="space-y-2"><div class="text-xs text-amber-700">Platform resolution path (disclosed fallback). Seller share of the remaining balance; the rest returns to the buyer.</div></div>');
+      const input = el('<input type="number" min="0" max="100" value="100" class="w-24 border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200" placeholder="Seller share %">');
+      const box = el('<div class="flex flex-wrap items-center gap-2"><div class="w-full text-xs text-amber-300/90">Platform resolution path (disclosed fallback). Seller share of the remaining balance; the rest returns to the buyer.</div></div>');
       box.appendChild(input);
-      const b = el('<button class="w-full bg-amber-600 hover:bg-amber-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Resolve review</button>');
+      const b = el('<button class="bg-amber-600 hover:bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Resolve review</button>');
       b.onclick = async () => {
         try {
           const pct = Math.max(0, Math.min(100, parseInt(input.value || '0', 10)));

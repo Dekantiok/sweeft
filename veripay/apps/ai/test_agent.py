@@ -151,6 +151,147 @@ class KeywordRouteTests(TestCase):
         self.assertIn("completed sales", result["reply"])
 
 
+class PaymentToolTests(TestCase):
+    def test_prepare_payment_validates_inputs(self):
+        with self.assertRaises(tools.ToolError):
+            tools.prepare_payment(to="not-an-account", amount="5", wallet="buyer.testnet")
+        with self.assertRaises(tools.ToolError):
+            tools.prepare_payment(to="seller.testnet", amount="0", wallet="buyer.testnet")
+        with self.assertRaises(tools.ToolError):
+            tools.prepare_payment(to="buyer.testnet", amount="5", wallet="buyer.testnet")
+
+    @override_settings(AI_AGENT_MAX_PAYMENT=100_000_000)
+    def test_prepare_payment_caps_amount(self):
+        with self.assertRaises(tools.ToolError):
+            tools.prepare_payment(to="seller.testnet", amount="100.01", wallet="buyer.testnet")
+
+    @override_settings(
+        AI_AGENT_ACCOUNT="agent.testnet",
+        AI_AGENT_PRIVATE_KEY="ed25519:dummy",
+        AI_AGENT_ENABLED=True,
+        AI_AGENT_MAX_PAYMENT=100_000_000,
+        AI_AGENT_GRANT=250_000_000,
+    )
+    def test_prepare_payment_card_and_intent(self):
+        from .models import PaymentIntent
+
+        with mock.patch("apps.ai.tools.allowance_of", return_value=300_000_000):
+            card = tools.prepare_payment(to="seller.testnet", amount="25", memo="invoice 12", wallet="buyer.testnet")
+        self.assertEqual(card["type"], "payment_proposal")
+        self.assertEqual(card["amount"], "25000000")
+        self.assertEqual(card["amount_display"], "25")
+        self.assertTrue(card["can_execute"])
+        self.assertEqual(card["allowance_display"], "300")
+        intent = PaymentIntent.objects.get(pk=card["intent_id"])
+        self.assertEqual(intent.wallet, "buyer.testnet")
+        self.assertEqual(intent.to_account, "seller.testnet")
+        self.assertEqual(intent.status, "proposed")
+
+        with mock.patch("apps.ai.tools.allowance_of", return_value=1_000_000):
+            card2 = tools.prepare_payment(to="seller.testnet", amount="25", wallet="buyer.testnet")
+        self.assertFalse(card2["can_execute"])  # allowance below amount
+
+    def test_allowance_falls_back_to_zero(self):
+        with override_settings(AI_AGENT_ACCOUNT="agent.testnet"):
+            with mock.patch("apps.ai.tools.near.view_call", side_effect=RuntimeError("no method")):
+                self.assertEqual(tools.allowance_of("buyer.testnet"), 0)
+            with mock.patch("apps.ai.tools.near.view_call", return_value="42000000"):
+                self.assertEqual(tools.allowance_of("buyer.testnet"), 42_000_000)
+
+
+class PaymentRouteTests(TestCase):
+    @override_settings(AI_PROVIDER="echo", AI_AGENT_ACCOUNT="agent.testnet")
+    def test_pay_route_builds_payment_card(self):
+        with mock.patch("apps.ai.tools.allowance_of", return_value=0):
+            result = agent.keyword_route("pay 25 tUSD to seller.testnet for invoice 12", "buyer.testnet")
+        self.assertTrue(result["cards"], result["reply"])
+        card = result["cards"][0]
+        self.assertEqual(card["kind"], "payment_proposal")
+        self.assertEqual(card["to"], "seller.testnet")
+        self.assertEqual(card["amount"], "25000000")
+        self.assertEqual(card["memo"], "invoice 12")
+        self.assertIn("seller.testnet", result["reply"])
+
+    @override_settings(AI_PROVIDER="echo")
+    def test_pay_route_without_amount_asks(self):
+        result = agent.keyword_route("pay seller.testnet please", "buyer.testnet")
+        self.assertFalse(result["cards"])
+        self.assertIn("amount", result["reply"].lower())
+
+
+class PaymentEndpointTests(TestCase):
+    def setUp(self):
+        self.session = self.client.session
+        self.session["wallet"] = "buyer.testnet"
+        self.session.save()
+
+    def _intent(self, **kwargs):
+        from .models import PaymentIntent
+
+        defaults = dict(wallet="buyer.testnet", to_account="seller.testnet", amount="25000000", memo="invoice 12")
+        defaults.update(kwargs)
+        return PaymentIntent.objects.create(**defaults)
+
+    def test_execute_requires_wallet(self):
+        self.client.session.flush()
+        intent = self._intent()
+        res = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        self.assertEqual(res.status_code, 401)
+
+    def test_execute_wrong_wallet_404(self):
+        intent = self._intent(wallet="someone-else.testnet")
+        res = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        self.assertEqual(res.status_code, 404)
+
+    @override_settings(AI_AGENT_ACCOUNT="agent.testnet", AI_AGENT_PRIVATE_KEY="ed25519:dummy", AI_AGENT_ENABLED=True)
+    def test_execute_success_records_tx(self):
+        intent = self._intent()
+        with mock.patch(
+            "apps.ai.views.transfer_from_allowance",
+            return_value={"success": True, "tx_hash": "HASH123", "error": None},
+        ) as signer:
+            res = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        body = res.json()
+        self.assertEqual(res.status_code, 200, body)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["tx_hash"], "HASH123")
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, "executed")
+        self.assertEqual(intent.tx_hash, "HASH123")
+        # idempotent: executing again returns the same hash without re-signing
+        with mock.patch("apps.ai.views.transfer_from_allowance") as signer2:
+            res2 = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        self.assertEqual(res2.json()["tx_hash"], "HASH123")
+        signer2.assert_not_called()
+
+    @override_settings(AI_AGENT_ACCOUNT="agent.testnet", AI_AGENT_PRIVATE_KEY="ed25519:dummy", AI_AGENT_ENABLED=True)
+    def test_execute_chain_failure_marks_failed(self):
+        intent = self._intent()
+        with mock.patch(
+            "apps.ai.views.transfer_from_allowance",
+            return_value={"success": False, "tx_hash": "HASHFAIL", "error": "allowance exceeded"},
+        ):
+            res = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        self.assertEqual(res.status_code, 502)
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, "failed")
+        self.assertIn("allowance exceeded", intent.error)
+
+    @override_settings(AI_AGENT_ACCOUNT="agent.testnet", AI_AGENT_PRIVATE_KEY="ed25519:dummy", AI_AGENT_ENABLED=True, AI_AGENT_MAX_PAYMENT=1_000_000)
+    def test_execute_respects_payment_cap(self):
+        intent = self._intent(amount="25000000")
+        res = self.client.post(f"/api/v1/ai/payments/{intent.id}/execute/")
+        self.assertEqual(res.status_code, 400)
+
+    def test_agent_info_endpoint(self):
+        with mock.patch("apps.ai.views.tools.allowance_of", return_value=42_000_000):
+            res = self.client.get("/api/v1/ai/agent/")
+        body = res.json()
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(body["wallet"], "buyer.testnet")
+        self.assertEqual(body["allowance_display"], "42")
+
+
 class EndpointTests(TestCase):
     def setUp(self):
         self.session = self.client.session
