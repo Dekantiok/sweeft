@@ -194,6 +194,12 @@ def escrow_detail(request, escrow_id: str):
     from .models import Dispute
 
     dispute = Dispute.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
+    arbitration = None
+    if chain:
+        try:
+            arbitration = near.view_call(settings.VERIPAY_CONTRACT, "arbitration_status", {"escrow_id": escrow_id})
+        except Exception:  # noqa: BLE001
+            arbitration = None
     return render(
         request,
         "escrow_detail.html",
@@ -208,6 +214,7 @@ def escrow_detail(request, escrow_id: str):
             "provider_options": provider_options,
             "invitation_link": invitation_link,
             "dispute": dispute,
+            "arbitration": arbitration,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
             "fmt": near.format_token,

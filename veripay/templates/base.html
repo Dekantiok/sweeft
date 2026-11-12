@@ -5,7 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23059669'/%3E%3Ctext x='16' y='22' font-size='18' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'%3EV%3C/text%3E%3C/svg%3E">
   <title>{% block title %}VeriPay — escrow for physical commerce{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          boxShadow: {
+            soft: '0 4px 20px rgba(15, 23, 42, 0.06)',
+            card: '0 10px 32px rgba(15, 23, 42, 0.10)',
+          },
+          colors: {
+            brand: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', 800: '#065f46', 900: '#064e3b' },
+          },
+        },
+      },
+    };
+  </script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261112k">
@@ -13,42 +32,40 @@
   <script src="{% static 'js/app.js' %}?v=20261112k"></script>
   <script src="{% static 'js/chat.js' %}?v=20261113a"></script>
 </head>
-<body class="h-full bg-slate-50 text-slate-900" data-network="{{ NEAR_NETWORK }}" data-contract="{{ VERIPAY_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
+<body class="h-full bg-[#f6f8fb] text-slate-900 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ VERIPAY_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
   <div class="min-h-full">
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+    <header class="bg-slate-900/95 backdrop-blur border-b border-slate-800 sticky top-0 z-20 shadow-soft">
       <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
-        <a href="/" class="flex items-center gap-2">
-          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white font-bold">V</span>
-          <span class="font-semibold text-lg">VeriPay</span>
-          <span class="hidden sm:inline text-xs text-slate-500 border border-slate-200 rounded-full px-2 py-0.5">testnet MVP</span>
+        <a href="/" class="flex items-center gap-2.5 group">
+          <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-extrabold shadow-[0_0_16px_rgba(16,185,129,0.35)] group-hover:scale-105 transition-transform">V</span>
+          <span class="font-semibold text-lg text-white tracking-tight">VeriPay</span>
+          <span class="hidden sm:inline text-[11px] text-emerald-300 border border-emerald-800/60 bg-emerald-900/40 rounded-full px-2 py-0.5">testnet</span>
         </a>
-        <nav class="hidden md:flex items-center gap-4 text-sm text-slate-600 ml-4">
-          <a class="hover:text-emerald-700" href="/market/">Marketplace</a>
+        <nav class="hidden md:flex items-center gap-5 text-sm text-slate-300 ml-5">
+          <a class="hover:text-emerald-300 transition-colors" href="/market/">Marketplace</a>
           {% if wallet_account %}
-            <a class="hover:text-emerald-700" href="/dashboard/">Dashboard</a>
-            <a class="hover:text-emerald-700" href="/escrow/new/">New agreement</a>
-            <a class="hover:text-emerald-700" href="/market/mine/">My listings</a>
-            {% if my_partner %}<a class="hover:text-emerald-700" href="/partners/portal/">Partner portal</a>{% endif %}
-            {% if wallet_account == PLATFORM_OWNER %}<a class="text-amber-700 hover:text-amber-900" href="/disputes/">Disputes</a>{% endif %}
+            <a class="hover:text-emerald-300 transition-colors" href="/dashboard/">Dashboard</a>
+            <a class="hover:text-emerald-300 transition-colors" href="/escrow/new/">New agreement</a>
+            <a class="hover:text-emerald-300 transition-colors" href="/market/mine/">My listings</a>
+            {% if my_partner %}<a class="hover:text-emerald-300 transition-colors" href="/partners/portal/">Partner portal</a>{% endif %}
+            {% if wallet_account == PLATFORM_OWNER %}
+              <a class="text-amber-300 hover:text-amber-200 transition-colors" href="/disputes/">Disputes</a>
+              <a class="text-amber-300 hover:text-amber-200 transition-colors" href="/ops/">Ops</a>
+            {% endif %}
           {% endif %}
-          <a class="hover:text-emerald-700" href="/logistics/">Logistics</a>
+          <a class="hover:text-emerald-300 transition-colors" href="/logistics/">Logistics</a>
         </nav>
         <div class="flex-1"></div>
         <div id="wallet-box" class="flex items-center gap-2">
           {% if wallet_account %}
-            <span id="tusd-balance" title="tUSD balance (testnet demo token)" class="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 rounded px-2 py-1">… tUSD</span>
-            <button id="faucet-btn" class="text-xs border border-emerald-300 text-emerald-800 rounded px-2 py-1 hover:bg-emerald-50" onclick="VPApp.faucet()">Get test tUSD</button>
-            <a href="/u/{{ wallet_account }}/" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">My trust profile</a>
-            <code class="text-xs bg-slate-100 rounded px-2 py-1">{{ wallet_account }}</code>
-            <button class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100" onclick="VPApp.disconnect()">Disconnect</button>
+            <span id="tusd-balance" title="tUSD balance (testnet demo token)" class="text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1">… tUSD</span>
+            <button id="faucet-btn" class="text-xs border border-emerald-700 text-emerald-300 rounded-full px-2.5 py-1 hover:bg-emerald-900/50 transition-colors" onclick="VPApp.faucet()">Get test tUSD</button>
+            <a href="/u/{{ wallet_account }}/" class="text-xs text-slate-300 border border-slate-700 rounded-full px-2.5 py-1 hover:border-emerald-500 hover:text-emerald-300 transition-colors">My trust profile</a>
+            <code class="text-xs bg-slate-800 text-slate-200 border border-slate-700 rounded-full px-2.5 py-1">{{ wallet_account }}</code>
+            <button class="text-xs text-slate-300 border border-slate-700 rounded-full px-2.5 py-1 hover:border-rose-400 hover:text-rose-300 transition-colors" onclick="VPApp.disconnect()">Disconnect</button>
           {% else %}
-            <button class="text-sm bg-slate-900 text-white rounded-lg px-3 py-1.5 hover:bg-slate-700" onclick="VPApp.connect()">Connect wallet</button>
+            <button class="text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-full px-4 py-2 font-medium shadow-[0_0_18px_rgba(16,185,129,0.25)] transition-all" onclick="VPApp.connect()">Connect wallet</button>
           {% endif %}
-        </div>
-      </div>
-      <div class="bg-amber-50 border-t border-amber-200 text-amber-900 text-xs">
-        <div class="max-w-6xl mx-auto px-4 py-1.5">
-          Testnet MVP. Demo Carrier tracking data is <b>simulated</b>; delivery verification runs on OutLayer TEE (Intel TDX). Only test tokens are used.
         </div>
       </div>
     </header>
@@ -65,11 +82,13 @@
       {% block content %}{% endblock %}
     </main>
 
-    <footer class="border-t border-slate-200 mt-10">
-      <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-wrap gap-4">
+    <footer class="border-t border-slate-200 mt-10 bg-white">
+      <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-wrap gap-4 items-center">
+        <span class="text-emerald-700 font-medium">Testnet MVP</span>
         <span>Contract: <code>{{ VERIPAY_CONTRACT|default:"not deployed yet" }}</code></span>
         <span>Token: <code>{{ TUSD_CONTRACT|default:"not deployed yet" }}</code></span>
         <span>OutLayer: <code>{{ OUTLAYER_CONTRACT }}</code></span>
+        <span class="text-slate-400">tUSD is a testnet demo token — get it with “Get test tUSD” in the header. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine.</span>
       </div>
     </footer>
   </div>

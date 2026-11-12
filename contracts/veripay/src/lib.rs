@@ -25,6 +25,9 @@ use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearTok
 const MIN_VERIFICATION_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const OUTLAYER_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
+const MIN_VOTE_STAKE_YOCTO: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR per vote
+const MIN_ARBITRATION_STAKE_YOCTO: u128 = 50_000_000_000_000_000_000_000; // 0.05 NEAR quorum
+const MAX_ARBITRATION_VOTES: usize = 24;
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -84,6 +87,31 @@ impl Default for Reputation {
             first_seen_ms: 0,
         }
     }
+}
+
+/// One arbitration vote (stake is in yoctoNEAR, refundable after finalization).
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct ArbitrationVote {
+    pub voter: AccountId,
+    pub seller_pct: u8,
+    pub stake: U128,
+    pub voted_ms: u64,
+    pub claimed: bool,
+}
+
+/// An open arbitration case for an escrow in `ReviewRequired`.
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct ArbitrationCase {
+    pub escrow_id: String,
+    pub opened_ms: u64,
+    pub votes: Vec<ArbitrationVote>,
+    pub total_stake: U128,
+    pub finalized: bool,
+    pub winning_pct: u8,
 }
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
@@ -660,6 +688,152 @@ impl VeriPay {
         bump_reputation(&caller, |r| r.disputes_opened += 1);
     }
 
+    // ------------------------------------------------------------------
+    // Arbitration pool (decentralized dispute resolution)
+    //
+    // Any NEAR holder may stake NEAR to arbitrate a dispute. Votes choose the
+    // seller's share of the remaining balance. Parties to a dispute may not
+    // vote on their own case. Once the stake quorum is met, anyone can settle
+    // — no platform-owner signature required. Voters reclaim stake after
+    // finalization (pull pattern, no mass payout loops).
+    // ------------------------------------------------------------------
+
+    /// Any NEAR holder may stake NEAR to arbitrate a dispute. Votes choose the
+    /// seller's share of the remaining balance. One vote per voter per case;
+    /// re-voting replaces it.
+    #[payable]
+    pub fn vote_dispute(&mut self, escrow_id: String, seller_pct: u8) {
+        require!(seller_pct <= 100, "pct must be 0..=100");
+        let escrow = self.internal_get(&escrow_id);
+        require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
+        let voter = env::predecessor_account_id();
+        require!(voter != escrow.seller, "parties cannot arbitrate their own dispute");
+        require!(Some(&voter) != escrow.buyer.as_ref(), "parties cannot arbitrate their own dispute");
+        let attached = env::attached_deposit();
+        require!(
+            attached >= NearToken::from_yoctonear(MIN_VOTE_STAKE_YOCTO),
+            "stake at least 0.01 NEAR to vote"
+        );
+        let stake = U128(attached.as_yoctonear());
+
+        let mut map = arbitration_map();
+        let mut case = map.get(&escrow_id).cloned().unwrap_or(ArbitrationCase {
+            escrow_id: escrow_id.clone(),
+            opened_ms: env::block_timestamp() / 1_000_000,
+            votes: vec![],
+            total_stake: U128(0),
+            finalized: false,
+            winning_pct: 0,
+        });
+        require!(!case.finalized, "arbitration already finalized");
+
+        if let Some(existing) = case.votes.iter_mut().find(|v| v.voter == voter) {
+            case.total_stake.0 -= existing.stake.0;
+            existing.seller_pct = seller_pct;
+            existing.stake = stake;
+            existing.voted_ms = env::block_timestamp() / 1_000_000;
+            existing.claimed = false;
+        } else {
+            require!(case.votes.len() < MAX_ARBITRATION_VOTES, "vote limit reached");
+            case.votes.push(ArbitrationVote {
+                voter,
+                seller_pct,
+                stake,
+                voted_ms: env::block_timestamp() / 1_000_000,
+                claimed: false,
+            });
+        }
+        case.total_stake.0 += stake.0;
+        map.insert(escrow_id, case);
+    }
+
+    /// Settlement is permissionless once the stake quorum is met: pays the
+    /// stake-weighted majority's seller share and refunds the buyer the rest.
+    pub fn finalize_arbitration(&mut self, escrow_id: String) -> Promise {
+        let mut escrow = self.internal_get(&escrow_id);
+        require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
+        require!(!escrow.seller_paid, "already settled");
+
+        let mut map = arbitration_map();
+        let mut case = map.get(&escrow_id).cloned().expect("no arbitration votes for this dispute");
+        require!(!case.finalized, "arbitration already finalized");
+        require!(case.total_stake.0 >= MIN_ARBITRATION_STAKE_YOCTO, "arbitration quorum not reached");
+        require!(!case.votes.is_empty(), "no votes yet");
+
+        let mut tally: std::collections::BTreeMap<u8, u128> = std::collections::BTreeMap::new();
+        for v in &case.votes {
+            *tally.entry(v.seller_pct).or_insert(0) += v.stake.0;
+        }
+        let winning_pct = tally
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1))
+            .map(|(pct, _)| pct)
+            .unwrap_or(0);
+
+        case.finalized = true;
+        case.winning_pct = winning_pct;
+        map.insert(escrow_id.clone(), case);
+
+        let remaining = escrow.total_amount.0 - if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let seller_part = remaining * winning_pct as u128 / 100;
+        let buyer_part = remaining - seller_part;
+        escrow.seller_paid = true;
+        escrow.platform_paid = true;
+        escrow.state = if buyer_part == 0 { EscrowState::Completed } else { EscrowState::Refunded };
+        let seller = escrow.seller.clone();
+        let token = escrow.token.clone();
+        self.escrows.insert(escrow_id.clone(), escrow);
+        log!("arbitration finalized for {} with {}% to seller", escrow_id, winning_pct);
+        ft_transfer(token, seller, U128(seller_part)).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .finish_arbitration_payout(escrow_id, U128(buyer_part)),
+        )
+    }
+
+    #[private]
+    pub fn finish_arbitration_payout(&mut self, escrow_id: String, buyer_part: U128) {
+        if !payout_ok(0) {
+            self.on_payout_result(escrow_id, "review".to_string());
+            return;
+        }
+        let escrow = self.internal_get(&escrow_id);
+        if buyer_part.0 == 0 {
+            return;
+        }
+        let buyer = escrow.buyer.clone().expect("no buyer");
+        let promise = ft_transfer(escrow.token.clone(), buyer, buyer_part);
+        let _ = promise.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "review".to_string()),
+        );
+    }
+
+    /// Voters reclaim their stake after finalization. Each stake is claimable
+    /// exactly once (pull pattern — no mass payout loops).
+    pub fn claim_stake(&mut self, escrow_id: String) -> Promise {
+        let mut map = arbitration_map();
+        let mut case = map.get(&escrow_id).cloned().expect("no arbitration case for this dispute");
+        require!(case.finalized, "arbitration not finalized yet");
+        let voter = env::predecessor_account_id();
+        let vote = case
+            .votes
+            .iter_mut()
+            .find(|v| v.voter == voter)
+            .expect("no vote from this wallet for this dispute");
+        require!(!vote.claimed, "stake already claimed");
+        let amount = vote.stake;
+        vote.claimed = true;
+        map.insert(escrow_id, case);
+        Promise::new(voter).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    /// View: full arbitration case (votes, stake, quorum, outcome).
+    pub fn arbitration_status(&self, escrow_id: String) -> Option<ArbitrationCase> {
+        arbitration_map().get(&escrow_id).cloned()
+    }
+
     /// Explicit manual review path (platform operator). Not arbitration: it
     /// releases the remaining balance as a simple split between seller and
     /// buyer. Disclosed as a centralized fallback in the README.
@@ -879,4 +1053,10 @@ fn bump_reputation(account: &AccountId, f: impl FnOnce(&mut Reputation)) {
     }
     f(&mut rep);
     map.insert(account.clone(), rep);
+}
+
+/// Arbitration cases live under their own prefix, constructed locally (never
+/// as a state-struct field) so no state migration is needed on upgrade.
+fn arbitration_map() -> LookupMap<String, ArbitrationCase> {
+    LookupMap::new(b"ar1".to_vec())
 }

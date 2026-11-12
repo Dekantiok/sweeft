@@ -1,26 +1,36 @@
 {% extends "base.html" %}
 {% block title %}VeriPay — safe trade on NEAR{% endblock %}
 {% block content %}
-<section class="max-w-4xl">
-  <h1 class="text-4xl font-bold tracking-tight">Trade safely, anywhere.</h1>
-  <p class="text-slate-600 mt-3 text-lg">
-    VeriPay holds the buyer's funds in a NEAR smart contract and releases them along an agreed path:
-    logistics is paid when carrier pickup is verified, the seller when delivery is TEE-verified and
-    the buyer confirms. One wallet connects escrow, marketplace, logistics and your reputation.
-  </p>
+<section class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 px-8 py-12 text-white shadow-card">
+  <div class="pointer-events-none absolute inset-0 opacity-[0.15]" style="background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,0.35) 1px, transparent 0);background-size:26px 26px"></div>
+  <div class="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-emerald-500/20 blur-3xl"></div>
+  <div class="relative max-w-3xl">
+    <div class="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
+      <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+      NEAR testnet · escrow · marketplace · verified logistics
+    </div>
+    <h1 class="mt-4 text-4xl md:text-5xl font-extrabold tracking-tight leading-tight">
+      Trade safely,<br class="hidden md:block"> anywhere.
+    </h1>
+    <p class="mt-4 text-lg text-slate-300 leading-relaxed">
+      Funds sit in a NEAR smart contract and settle along an agreed path: logistics is paid when
+      carrier pickup is verified, the seller when delivery is TEE-verified and the buyer confirms.
+      One wallet connects escrow, marketplace, logistics and your on-chain reputation.
+    </p>
 
   {% if wallet_account %}
-    <div class="mt-6 flex flex-wrap items-center gap-3">
-      <a href="/escrow/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-2.5 font-medium">Create an escrow</a>
-      <a href="/market/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-5 py-2.5">Browse the marketplace</a>
-      <span class="text-sm text-slate-500">Signed in as <code>{{ wallet_account }}</code></span>
+    <div class="mt-8 flex flex-wrap items-center gap-3">
+      <a href="/escrow/new/" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-full px-6 py-3 font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] transition-all">Create an escrow</a>
+      <a href="/market/" class="border border-slate-600 hover:border-emerald-400 hover:text-emerald-300 rounded-full px-6 py-3 text-slate-200 transition-colors">Browse the marketplace</a>
+      <span class="text-sm text-slate-400">Signed in as <code class="text-emerald-300">{{ wallet_account }}</code></span>
     </div>
   {% else %}
-    <div class="mt-6">
-      <button onclick="VPApp.connect()" class="bg-slate-900 hover:bg-slate-700 text-white rounded-lg px-5 py-2.5 font-medium">Connect wallet to start</button>
-      <span class="text-sm text-slate-500 ml-3">Free sign-in — no gas, no transaction.</span>
+    <div class="mt-8 flex flex-wrap items-center gap-4">
+      <button onclick="VPApp.connect()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-full px-6 py-3 font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] transition-all">Connect wallet to start</button>
+      <span class="text-sm text-slate-400">Free sign-in — no gas, no transaction.</span>
     </div>
   {% endif %}
+  </div>
 </section>
 
 <section class="grid md:grid-cols-2 gap-5 mt-10">

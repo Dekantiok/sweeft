@@ -83,6 +83,27 @@ docs/                  architecture, lifecycle, settlement rules, verification, 
 experience and keeps a searchable projection; carrier systems report events; OutLayer attests to the
 execution of the configured verification code; the buyer's confirmation remains a separate condition.
 
+## Getting tUSD (testnet demo token)
+
+tUSD is a **testnet demo token** (`tusd.steepdata3968.testnet`, 6 decimals) used for escrow
+funding and settlement. It is **not a stablecoin** and holds no value.
+
+**Get it from the app:** connect your wallet, then click **“Get test tUSD”** in the header (or on
+the dashboard). Your wallet signs an open-mint transaction and 100 tUSD arrives within seconds.
+The header chip then shows your live balance.
+
+**Get it from the CLI:**
+
+```bash
+near contract call-function as-transaction tusd.steepdata3968.testnet mint \
+  json-args '{"account_id":"yourname.testnet","amount":"100000000"}' \
+  prepaid-gas '50 Tgas' attached-deposit '0 NEAR' sign-as tusd.steepdata3968.testnet \
+  network-config testnet sign-with-legacy-keychain send
+```
+
+**See it in your wallet app:** import the custom token
+`tusd.steepdata3968.testnet` (symbol `tUSD`, 6 decimals) in Meteor / HERE / Nightly.
+
 ## Setup
 
 ```bash

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import ops, views
 
 urlpatterns = [
     path("", views.landing, name="landing"),
@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/v1/agreements/<str:escrow_id>/sync/", views.api_sync_agreement, name="api-agreement-sync"),
     path("api/v1/invitations/<str:token>/", views.api_invitation, name="api-invitation"),
     path("api/v1/invitations/<str:token>/accept/", views.api_invitation_accept, name="api-invitation-accept"),
+    path("ops/", ops.ops_console, name="ops-console"),
 ]
 
 # Dispute workflow (appended: keeps the original urlpatterns import path tidy)

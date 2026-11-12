@@ -77,6 +77,61 @@
   </section>
 {% endif %}
 
+{% if chain.state == 'ReviewRequired' or arbitration %}
+  <section class="mt-4 bg-white border border-indigo-200 rounded-xl p-4">
+    <div class="flex items-center gap-3 flex-wrap">
+      <h2 class="font-semibold">Arbitration pool</h2>
+      <span class="text-xs text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5">NEAR holders decide</span>
+      {% if arbitration %}
+        <span class="text-xs text-slate-500">{{ arbitration.votes|length }} vote(s) · {{ arbitration.total_stake }} yoctoNEAR staked</span>
+      {% endif %}
+    </div>
+    <p class="text-xs text-slate-500 mt-1">
+      Any NEAR holder can stake NEAR to choose the seller's share of the remaining escrow balance.
+      The dispute's parties cannot vote on their own case. Settlement is permissionless once quorum is met.
+    </p>
+
+    {% if arbitration and arbitration.votes %}
+      <div class="mt-3 space-y-1">
+        {% for v in arbitration.votes %}
+          <div class="text-sm flex items-center gap-2 flex-wrap">
+            <code class="text-xs">{{ v.voter }}</code>
+            <span class="text-xs bg-slate-100 rounded-full px-2 py-0.5">{{ v.seller_pct }}% to seller</span>
+            <span class="text-xs text-slate-500">{{ v.stake }} yoctoNEAR{% if v.claimed %} · claimed{% endif %}</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if not arbitration or not arbitration.finalized %}
+      <div class="mt-4 grid sm:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Seller share (%)</label>
+          <input id="arb-pct" type="number" min="0" max="100" value="70" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Stake (NEAR, min 0.01)</label>
+          <input id="arb-amount" value="0.02" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div class="flex items-end">
+          <button onclick="arbitrateVote()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Stake &amp; vote</button>
+        </div>
+      </div>
+      {% if arbitration and arbitration.total_stake|floatformat:0 >= 50000000000000000000000 %}
+        <button onclick="finalizeArbitration()" class="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Finalize settlement (quorum met)</button>
+      {% else %}
+        <p class="text-xs text-slate-500 mt-2">Quorum: at least 0.05 NEAR total stake, then anyone can finalize.</p>
+      {% endif %}
+    {% else %}
+      <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+        <b>Arbitration finalized: {{ arbitration.winning_pct }}% to the seller.</b>
+        <button onclick="claimStake()" class="ml-3 border border-emerald-300 hover:bg-emerald-100 rounded-lg px-3 py-1.5 text-xs">Claim my stake back</button>
+      </div>
+    {% endif %}
+    <p id="arb-status" class="text-xs text-slate-500 mt-2"></p>
+  </section>
+{% endif %}
+
 <div class="grid lg:grid-cols-3 gap-4 mt-5">
   <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
     <h2 class="font-semibold">Agreement</h2>
@@ -318,6 +373,46 @@
   async function sha256Hex(text) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function toYoctoNEAR(text) {
+    const clean = String(text || '0').trim();
+    if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return '0';
+    const [w = '0', f = ''] = clean.split('.');
+    return (BigInt(w) * 10n ** 24n + BigInt((f + '0'.repeat(24)).slice(0, 24) || '0')).toString();
+  }
+
+  async function arbitrateVote() {
+    const pct = Math.max(0, Math.min(100, parseInt(document.getElementById('arb-pct').value || '0', 10)));
+    const amount = toYoctoNEAR(document.getElementById('arb-amount').value);
+    if (BigInt(amount) < 10000000000000000000000n) { alert('Stake at least 0.01 NEAR.'); return; }
+    const el = document.getElementById('arb-status');
+    try {
+      el.textContent = 'Confirm your vote in the wallet…';
+      await VPApp.callContract('vote_dispute', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '150000000000000', amount);
+      el.textContent = 'Vote recorded — refreshing…';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { el.textContent = ''; alert('Vote failed: ' + e.message); }
+  }
+
+  async function finalizeArbitration() {
+    const el = document.getElementById('arb-status');
+    try {
+      el.textContent = 'Finalizing settlement…';
+      await VPApp.callContract('finalize_arbitration', { escrow_id: AGREEMENT.escrow_id }, '150000000000000', '0');
+      el.textContent = 'Arbitration finalized — refreshing…';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { el.textContent = ''; alert('Finalize failed: ' + e.message); }
+  }
+
+  async function claimStake() {
+    const el = document.getElementById('arb-status');
+    try {
+      el.textContent = 'Claiming your stake…';
+      await VPApp.callContract('claim_stake', { escrow_id: AGREEMENT.escrow_id }, '150000000000000', '0');
+      el.textContent = 'Stake reclaimed — refreshing…';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { el.textContent = ''; alert('Claim failed: ' + e.message); }
   }
 
   async function fileDispute(method, label) {
