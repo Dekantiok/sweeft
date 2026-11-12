@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Escrow not found — VeriPay{% endblock %}
+{% block content %}
+<div class="max-w-lg bg-white border border-slate-200 rounded-xl p-6">
+  <h1 class="text-xl font-semibold">Escrow not found</h1>
+  <p class="text-sm text-slate-600 mt-2">No escrow <code>{{ escrow_id }}</code> exists on the VeriPay contract. Check the ID, or open your dashboard to see your agreements.</p>
+  <a href="/dashboard/" class="inline-block mt-4 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Open dashboard</a>
+</div>
+{% endblock %}

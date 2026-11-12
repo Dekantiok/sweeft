@@ -55,10 +55,13 @@ def dashboard(request):
     )
     buying = [a for a in agreements if a.buyer_account == wallet]
     selling = [a for a in agreements if a.seller_account == wallet]
-    invitations = EscrowInvitation.objects.filter(status="pending").exclude(
-        agreement__seller_account=wallet
-    )
-    my_invitations = [inv for inv in invitations if inv.agreement.buyer_account in ("", wallet)]
+    # Only preassigned invitations appear here; unassigned ones are locators
+    # (the link is required), so they are not listed to arbitrary wallets.
+    my_invitations = [
+        inv
+        for inv in EscrowInvitation.objects.filter(status="pending", agreement__buyer_account=wallet)
+        if inv.agreement.seller_account != wallet
+    ]
     return render(
         request,
         "dashboard.html",
@@ -103,6 +106,8 @@ def escrow_detail(request, escrow_id: str):
             dispatch_deadline_ms=chain["dispatch_deadline_ms"],
             terms_hash=chain.get("terms_hash", ""),
         )
+    if agreement is None and not chain:
+        return render(request, "escrow_missing.html", {"escrow_id": escrow_id, "wallet_account": current_wallet(request)}, status=404)
     invitation_link = None
     if agreement and agreement.pk:
         inv = agreement.invitations.filter(status="pending").first()
