@@ -154,10 +154,6 @@
       if (typeof escrowId !== 'string' || !escrowId.startsWith('VP-')) {
         throw new Error('could not read escrow id from the transaction result');
       }
-      if (tracking) {
-        status.textContent = 'Registering the shipment tracking…';
-        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
-      }
       status.textContent = 'Saving metadata…';
       const saved = await VPApp.jsonPost('/api/v1/agreements/', {
         escrow_id: escrowId,
@@ -168,6 +164,13 @@
         tx_hash: res.txHash,
       });
       if (!saved.ok) throw new Error(saved.error || 'failed to save metadata');
+      if (tracking) {
+        // The tracking ID was committed on-chain at creation; this records the
+        // Demo Carrier shipment row so the item can be tracked immediately.
+        status.textContent = 'Registering the shipment tracking…';
+        const ship = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
+        if (ship && ship.ok === false) throw new Error(ship.error || 'failed to register tracking');
+      }
       window.location.href = '/escrow/' + escrowId + '/';
     } catch (e) {
       status.textContent = '';

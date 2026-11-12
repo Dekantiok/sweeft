@@ -107,7 +107,6 @@ def api_create_shipment(request):
     """
     body = json.loads(request.body or "{}")
     escrow_id = (body.get("escrow_id") or "").strip()
-    agreement = get_object_or_404(EscrowAgreement, escrow_id=escrow_id)
     chain = near.get_escrow(escrow_id)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow missing on-chain"}, status=404)

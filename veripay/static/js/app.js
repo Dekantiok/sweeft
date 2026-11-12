@@ -113,12 +113,19 @@
     return hash ? `${state.explorer}/tx/${hash}` : null;
   }
 
-  function jsonPost(url, body) {
-    return fetch(url, {
+  async function jsonPost(url, body) {
+    const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
-    }).then((r) => r.json());
+    });
+    const text = await r.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      // Never let an HTML error page surface as a JSON parse mystery.
+      throw new Error(`${url} → HTTP ${r.status}: ${text.slice(0, 120).replace(/<[^>]*>/g, ' ').trim()}`);
+    }
   }
 
   // ------------------------------------------------------------------
