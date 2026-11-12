@@ -68,7 +68,7 @@ def verify(request):
         public_key=public_key,
         signature_b64=signature,
         message=challenge_row.message,
-        nonce=challenge_row.nonce,
+        nonce_b64=challenge_row.nonce,
         recipient=challenge_row.recipient,
         callback_url=body.get("callback_url"),
     )

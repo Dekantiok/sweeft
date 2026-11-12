@@ -8,7 +8,7 @@ import hashlib
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
 from apps.wallets import base58
 from apps.wallets.nep413 import NEP413_TAG, borsh_payload, verify_nep413
@@ -95,3 +95,66 @@ class VerifyTests(SimpleTestCase):
             recipient="localhost:8000",
         )
         self.assertFalse(ok)
+
+
+class VerifyEndpointTests(TestCase):
+    """Full HTTP flow: challenge -> sign (as a wallet would) -> verify -> session."""
+
+    def _sign(self, message: str, nonce_b64: str, recipient: str):
+        priv = Ed25519PrivateKey.generate()
+        raw = priv.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        public_key = f"ed25519:{base58.b58encode(raw)}"
+        digest = hashlib.sha256(
+            borsh_payload(message, base64.b64decode(nonce_b64), recipient)
+        ).digest()
+        return public_key, base64.b64encode(priv.sign(digest)).decode()
+
+    def test_full_login_flow(self):
+        ch = self.client.get("/api/v1/wallet/challenge/?account_id=alice.testnet").json()
+        public_key, signature = self._sign(ch["message"], ch["nonce"], ch["recipient"])
+        res = self.client.post(
+            "/api/v1/wallet/verify/",
+            data={
+                "account_id": "alice.testnet",
+                "public_key": public_key,
+                "signature": signature,
+                "nonce": ch["nonce"],
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertTrue(res.json()["ok"])
+        self.assertEqual(self.client.session["wallet"], "alice.testnet")
+
+    def test_replayed_challenge_rejected(self):
+        ch = self.client.get("/api/v1/wallet/challenge/?account_id=alice.testnet").json()
+        public_key, signature = self._sign(ch["message"], ch["nonce"], ch["recipient"])
+        payload = {
+            "account_id": "alice.testnet",
+            "public_key": public_key,
+            "signature": signature,
+            "nonce": ch["nonce"],
+        }
+        first = self.client.post("/api/v1/wallet/verify/", data=payload, content_type="application/json")
+        self.assertTrue(first.json()["ok"])
+        second = self.client.post("/api/v1/wallet/verify/", data=payload, content_type="application/json")
+        self.assertEqual(second.status_code, 400)
+        self.assertIn("already used", second.json()["error"])
+
+    def test_wrong_signature_rejected(self):
+        ch = self.client.get("/api/v1/wallet/challenge/?account_id=alice.testnet").json()
+        public_key, _ = self._sign(ch["message"], ch["nonce"], ch["recipient"])
+        res = self.client.post(
+            "/api/v1/wallet/verify/",
+            data={
+                "account_id": "alice.testnet",
+                "public_key": public_key,
+                "signature": base64.b64encode(b"\x00" * 64).decode(),
+                "nonce": ch["nonce"],
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("verification failed", res.json()["error"])
