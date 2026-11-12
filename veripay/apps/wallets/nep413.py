@@ -1,10 +1,12 @@
 """NEP-413 (sign message) verification with no external dependencies.
 
-Payload borsh layout:
-    string  message      (u32 len + utf8)
+Payload borsh layout (matches @near-wallet-selector/core's `payloadSchema`):
+
+    u32     tag = 2147484061          # 2^31 + 413, per NEP-413
+    string  message                   # u32 len + utf8
     [u8;32] nonce
-    string  recipient    (u32 len + utf8)
-    option  callback_url (1 byte flag, then string if Some)
+    string  recipient                 # u32 len + utf8
+    option  callback_url              # 1 byte flag, then string if Some
 
 The wallet signs sha256(borsh(payload)); we verify with the wallet's public key.
 Supports ed25519 and secp256k1 keys.
@@ -22,11 +24,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from . import base58
 
+NEP413_TAG = 2147484061  # 2^31 + 413
+
 
 def borsh_payload(message: str, nonce: bytes, recipient: str, callback_url: str | None = None) -> bytes:
     if len(nonce) != 32:
         raise ValueError("nonce must be 32 bytes")
     buf = bytearray()
+    buf += struct.pack("<I", NEP413_TAG)
     m = message.encode()
     buf += struct.pack("<I", len(m)) + m
     buf += nonce

@@ -47,7 +47,8 @@
     try {
       const chRes = await fetch(`/api/v1/wallet/challenge/?account_id=${encodeURIComponent(accountId)}`);
       const ch = await chRes.json();
-      const nonceBytes = Uint8Array.from(atob(ch.nonce), (c) => c.charCodeAt(0));
+      // wallet-selector core requires a real Buffer of exactly 32 bytes.
+      const nonceBytes = Buffer.from(ch.nonce, 'base64');
       const signed = await VPWallet.signLogin(ch.message, ch.recipient, nonceBytes);
       const res = await fetch('/api/v1/wallet/verify/', {
         method: 'POST',
