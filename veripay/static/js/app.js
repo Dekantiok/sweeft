@@ -104,10 +104,80 @@
     }).then((r) => r.json());
   }
 
+  // ------------------------------------------------------------------
+  // tUSD helpers: balance display + self-serve faucet (open testnet mint)
+  // ------------------------------------------------------------------
+
+  async function tokenBalance(accountId) {
+    const c = await cfg();
+    const r = await fetch(c.rpc_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'bal',
+        method: 'query',
+        params: {
+          request_type: 'call_function',
+          finality: 'final',
+          account_id: c.tusd_contract,
+          method_name: 'ft_balance_of',
+          args_base64: btoa(JSON.stringify({ account_id: accountId })),
+        },
+      }),
+    });
+    const j = await r.json();
+    const text = new TextDecoder().decode(Uint8Array.from(j.result?.result || []));
+    return text ? BigInt(JSON.parse(text)) : 0n;
+  }
+
+  function fmtUnits(units) {
+    const s = units.toString().padStart(7, '0');
+    const whole = s.slice(0, -6).replace(/^0+(?=\d)/, '') || '0';
+    const frac = s.slice(-6).replace(/0+$/, '');
+    return frac ? `${whole}.${frac}` : whole;
+  }
+
+  async function refreshTokenBalance() {
+    const el = document.getElementById('tusd-balance');
+    if (!el || !state.walletAccount) return;
+    try {
+      el.textContent = fmtUnits(await tokenBalance(state.walletAccount)) + ' tUSD';
+    } catch (e) {
+      el.textContent = '— tUSD';
+    }
+  }
+
+  async function faucet() {
+    if (!requireWallet()) return;
+    const btn = document.getElementById('faucet-btn');
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = 'Minting…'; }
+      const c = await cfg();
+      await VPWallet.callMethod(
+        c.tusd_contract,
+        'mint',
+        { account_id: state.walletAccount, amount: '100000000' }, // 100 tUSD (6 decimals)
+        '100000000000000',
+        '0',
+      );
+      alert('100 test tUSD minted to ' + state.walletAccount + ' (testnet demo token).');
+      await refreshTokenBalance();
+    } catch (e) {
+      alert('Faucet failed: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Get test tUSD'; }
+    }
+  }
+
   function init(options) {
     Object.assign(state, options || {});
     window.VPApp = window.VPApp || {};
-    Object.assign(window.VPApp, { state, cfg, connect, disconnect, login, callContract, callToken, explorerTx, jsonPost, requireWallet });
+    Object.assign(window.VPApp, {
+      state, cfg, connect, disconnect, login, callContract, callToken,
+      explorerTx, jsonPost, requireWallet, tokenBalance, refreshTokenBalance, faucet,
+    });
+    if (state.walletAccount) refreshTokenBalance();
   }
 
   window.VPApp = { init };

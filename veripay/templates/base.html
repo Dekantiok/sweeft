@@ -8,9 +8,9 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
-  <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261112d">
-  <script src="{% static 'js/veripay-wallet.js' %}?v=20261112d"></script>
-  <script src="{% static 'js/app.js' %}?v=20261112d"></script>
+  <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261112e">
+  <script src="{% static 'js/veripay-wallet.js' %}?v=20261112e"></script>
+  <script src="{% static 'js/app.js' %}?v=20261112e"></script>
 </head>
 <body class="h-full bg-slate-50 text-slate-900" data-network="{{ NEAR_NETWORK }}" data-contract="{{ VERIPAY_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
   <div class="min-h-full">
@@ -34,6 +34,9 @@
         <div class="flex-1"></div>
         <div id="wallet-box" class="flex items-center gap-2">
           {% if wallet_account %}
+            <span id="tusd-balance" title="tUSD balance (testnet demo token)" class="text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 rounded px-2 py-1">… tUSD</span>
+            <button id="faucet-btn" class="text-xs border border-emerald-300 text-emerald-800 rounded px-2 py-1 hover:bg-emerald-50" onclick="VPApp.faucet()">Get test tUSD</button>
+            <a href="/u/{{ wallet_account }}/" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">My trust profile</a>
             <code class="text-xs bg-slate-100 rounded px-2 py-1">{{ wallet_account }}</code>
             <button class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100" onclick="VPApp.disconnect()">Disconnect</button>
           {% else %}

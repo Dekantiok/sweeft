@@ -15,6 +15,13 @@
   <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-900 text-sm px-4 py-2">Chain read error: {{ chain_error }}</div>
 {% endif %}
 
+{% if chain.state == 'ReviewRequired' %}
+  <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm px-4 py-3">
+    <b>Funds are locked pending review.</b> The buyer reported a problem; the seller allocation stays locked until the platform resolution path is used.
+    {% if wallet_account == owner %}You are the platform owner — the resolution action is available in the Actions panel.{% else %}The platform owner will resolve this; no party can move funds in the meantime.{% endif %}
+  </div>
+{% endif %}
+
 <div class="grid lg:grid-cols-3 gap-4 mt-5">
   <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
     <h2 class="font-semibold">Agreement</h2>
@@ -86,6 +93,7 @@
     buyer: "{{ chain.buyer|default:agreement.buyer_account|escapejs }}",
   };
   const WALLET = "{{ wallet_account|default:'' }}";
+  const OWNER = "{{ owner|default:'' }}";
   let SHIPMENT_ID = {{ chain.shipment_id|default:0 }};
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
@@ -147,6 +155,22 @@
     }
     if ((state === 'Funded' || state === 'ShipmentPending') && isBuyer && deadlinePassed()) {
       addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
+    }
+    if (state === 'ReviewRequired' && WALLET === OWNER) {
+      const input = el('<input type="number" min="0" max="100" value="100" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Seller share %">');
+      const box = el('<div class="space-y-2"><div class="text-xs text-amber-700">Platform resolution path (disclosed fallback). Seller share of the remaining balance; the rest returns to the buyer.</div></div>');
+      box.appendChild(input);
+      const b = el('<button class="w-full bg-amber-600 hover:bg-amber-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Resolve review</button>');
+      b.onclick = async () => {
+        try {
+          const pct = Math.max(0, Math.min(100, parseInt(input.value || '0', 10)));
+          status('Resolving…');
+          await VPApp.callContract('resolve_review', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '0', '150000000000000');
+          status('Resolved — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+        } catch (e) { status(''); alert('Failed: ' + e.message); }
+      };
+      box.appendChild(b);
+      document.getElementById('actions').appendChild(box);
     }
     if (ns(state) && !CHAIN.problem_reported && !CHAIN.seller_paid) {
       addButton('Open Demo shipment controls', () => window.location.href = '/partners/portal/', 'ghost');

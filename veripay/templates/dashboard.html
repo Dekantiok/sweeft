@@ -9,41 +9,58 @@
   </div>
 {% else %}
   <h1 class="text-2xl font-semibold">Dashboard</h1>
-  <p class="text-sm text-slate-500 mt-1">Signed in as <code>{{ wallet_account }}</code></p>
+  <p class="text-sm text-slate-500 mt-1">Signed in as <code>{{ wallet_account }}</code> · <a class="text-emerald-700" href="/u/{{ wallet_account }}/">view trust profile →</a></p>
+
+  {% if chain_error %}
+    <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm px-4 py-2">
+      Chain read failed ({{ chain_error }}) — showing cached records only. Try Refresh in a moment.
+    </div>
+  {% endif %}
+
+  <div class="mt-5 bg-white border border-slate-200 rounded-xl p-4 flex items-center gap-4 flex-wrap">
+    <div>
+      <div class="text-sm font-medium">Test funds</div>
+      <div class="text-xs text-slate-500">New here? Mint 100 test tUSD (testnet demo token) to your wallet — gas only.</div>
+    </div>
+    <div class="flex-1"></div>
+    <button id="faucet-btn-dash" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm" onclick="VPApp.faucet()">Get test tUSD</button>
+  </div>
 
   <div class="grid lg:grid-cols-2 gap-4 mt-6">
     <section class="bg-white border border-slate-200 rounded-xl p-4">
       <h2 class="font-semibold">Buying</h2>
       {% if buying %}
         <ul class="mt-3 space-y-2">
-          {% for a in buying %}
-            <li class="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2">
-              <div>
-                <a class="text-emerald-700 font-medium" href="/escrow/{{ a.escrow_id }}/">{{ a.escrow_id }}</a>
-                <span class="text-sm text-slate-600">— {{ a.product_name }}</span>
+          {% for r in buying %}
+            <li class="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 gap-2">
+              <div class="min-w-0">
+                <a class="text-emerald-700 font-medium" href="/escrow/{{ r.escrow_id }}/">{{ r.escrow_id }}</a>
+                <span class="text-sm text-slate-600">— {{ r.title }}</span>
+                {% if r.source == 'chain' %}<span class="text-xs text-slate-400">(chain)</span>{% endif %}
               </div>
-              <span class="text-xs rounded-full px-2 py-1 bg-slate-100">{{ a.state }}</span>
+              <span class="text-xs rounded-full px-2 py-1 bg-slate-100 shrink-0">{{ r.state }}</span>
             </li>
           {% endfor %}
         </ul>
-      {% else %}<p class="text-sm text-slate-500 mt-2">No purchases yet — open an invitation link or fund an accepted agreement.</p>{% endif %}
+      {% else %}<p class="text-sm text-slate-500 mt-2">No purchases yet — open an invitation link or accept a request.</p>{% endif %}
     </section>
 
     <section class="bg-white border border-slate-200 rounded-xl p-4">
       <h2 class="font-semibold">Selling</h2>
       {% if selling %}
         <ul class="mt-3 space-y-2">
-          {% for a in selling %}
-            <li class="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2">
-              <div>
-                <a class="text-emerald-700 font-medium" href="/escrow/{{ a.escrow_id }}/">{{ a.escrow_id }}</a>
-                <span class="text-sm text-slate-600">— {{ a.product_name }}</span>
+          {% for r in selling %}
+            <li class="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 gap-2">
+              <div class="min-w-0">
+                <a class="text-emerald-700 font-medium" href="/escrow/{{ r.escrow_id }}/">{{ r.escrow_id }}</a>
+                <span class="text-sm text-slate-600">— {{ r.title }}</span>
+                {% if r.source == 'chain' %}<span class="text-xs text-slate-400">(chain)</span>{% endif %}
               </div>
-              <span class="text-xs rounded-full px-2 py-1 bg-slate-100">{{ a.state }}</span>
+              <span class="text-xs rounded-full px-2 py-1 bg-slate-100 shrink-0">{{ r.state }}</span>
             </li>
           {% endfor %}
         </ul>
-      {% else %}<p class="text-sm text-slate-500 mt-2">No sales yet — create an agreement to get started.</p>{% endif %}
+      {% else %}<p class="text-sm text-slate-500 mt-2">No sales yet — create an agreement or list an item in the marketplace.</p>{% endif %}
     </section>
 
     <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">

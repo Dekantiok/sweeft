@@ -52,11 +52,45 @@ def dashboard(request):
     wallet = current_wallet(request)
     if not wallet:
         return render(request, "dashboard.html", {"wallet_account": None})
-    agreements = list(
-        EscrowAgreement.objects.filter(seller_account=wallet) | EscrowAgreement.objects.filter(buyer_account=wallet)
+
+    # Merge the Django projection with live chain data: an escrow exists for
+    # this wallet if the contract says so, metadata row or not.
+    items: dict[str, dict] = {}
+    agreements = EscrowAgreement.objects.filter(seller_account=wallet) | EscrowAgreement.objects.filter(
+        buyer_account=wallet
     )
-    buying = [a for a in agreements if a.buyer_account == wallet]
-    selling = [a for a in agreements if a.seller_account == wallet]
+    for a in agreements:
+        items[a.escrow_id] = {
+            "escrow_id": a.escrow_id,
+            "title": a.product_name or "(untitled)",
+            "state": a.state,
+            "seller": a.seller_account,
+            "buyer": a.buyer_account,
+            "source": "app",
+        }
+    chain_error = None
+    try:
+        for e in near.escrows_for(wallet):
+            row = items.get(e["id"])
+            if row is None:
+                items[e["id"]] = {
+                    "escrow_id": e["id"],
+                    "title": e.get("product_name") or "(on-chain escrow)",
+                    "state": e["state"],
+                    "seller": e["seller"],
+                    "buyer": e.get("buyer") or "",
+                    "source": "chain",
+                }
+            else:
+                row["state"] = e["state"]  # chain state wins
+                row["buyer"] = e.get("buyer") or row["buyer"]
+    except Exception as exc:  # noqa: BLE001 - page still renders from the projection
+        chain_error = str(exc)
+
+    all_items = sorted(items.values(), key=lambda r: r["escrow_id"], reverse=True)
+    buying = [r for r in all_items if r["buyer"] == wallet]
+    selling = [r for r in all_items if r["seller"] == wallet]
+
     # Only preassigned invitations appear here; unassigned ones are locators
     # (the link is required), so they are not listed to arbitrary wallets.
     my_invitations = [
@@ -72,6 +106,7 @@ def dashboard(request):
             "selling": selling,
             "invitations": my_invitations,
             "wallet_account": wallet,
+            "chain_error": chain_error,
         },
     )
 
@@ -132,6 +167,11 @@ def escrow_detail(request, escrow_id: str):
         inv = agreement.invitations.filter(status="pending").first()
         if inv:
             invitation_link = request.build_absolute_uri(f"/invitations/{inv.token}/")
+    owner = None
+    try:
+        owner = (near.view_call(settings.VERIPAY_CONTRACT, "get_config", {}) or {}).get("owner")
+    except Exception:  # noqa: BLE001 - page renders without config
+        pass
     return render(
         request,
         "escrow_detail.html",
@@ -142,6 +182,7 @@ def escrow_detail(request, escrow_id: str):
             "chain_json": json.dumps(chain or {}),
             "chain_error": chain_error,
             "wallet_account": current_wallet(request),
+            "owner": owner,
             "invitation_link": invitation_link,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],

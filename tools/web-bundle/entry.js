@@ -73,10 +73,18 @@ async function callMethod(contractId, method, args, gas = '100000000000000', dep
 async function signLogin(message, recipient, nonce) {
   const wallet = await selector.wallet();
   const res = await wallet.signMessage({ message, recipient, nonce });
+  const out = res || {};
+  // Normalize across Meteor (payload), HERE (SignedMessage) and Nightly
+  // (possibly a raw signature object or string).
+  let signature = out.signature ?? out.Signature ?? (typeof res === 'string' ? res : undefined);
+  let publicKey = out.publicKey ?? out.public_key ?? out.publicKeyStr ?? undefined;
+  if (publicKey && typeof publicKey === 'object' && typeof publicKey.toString === 'function') {
+    publicKey = publicKey.toString();
+  }
   return {
-    accountId: res?.accountId || account(),
-    publicKey: res?.publicKey,
-    signature: res?.signature,
+    accountId: out.accountId || out.account_id || account(),
+    publicKey,
+    signature,
   };
 }
 
