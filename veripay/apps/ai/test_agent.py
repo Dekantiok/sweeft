@@ -48,6 +48,17 @@ class ToolTests(TestCase):
         self.assertEqual(result["results"][0]["title"], "Cotton fabric")
         self.assertIn("completed sales", result["results"][0]["seller_score"])
 
+    def test_plural_matches_singular_listing(self):
+        with mock.patch("apps.ai.tools._reputation_of", return_value=rep()):
+            result = tools.search_listings(query="solar inverters")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["results"][0]["title"], "Solar inverter batch")
+
+    def test_multi_token_and_semantics(self):
+        with mock.patch("apps.ai.tools._reputation_of", return_value=rep()):
+            result = tools.search_listings(query="inverter abuja")
+        self.assertEqual(result["count"], 1)
+
     def test_price_filter(self):
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep()):
             result = tools.search_listings(query="", max_price=900)

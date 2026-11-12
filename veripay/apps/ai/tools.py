@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from django.conf import settings
+from django.db.models import Q
 from django.urls import reverse
 
 from apps.escrow import near
@@ -61,11 +62,36 @@ def rank_score(rep: dict) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _token_candidates(token: str) -> set[str]:
+    """Small singularization set so plurals match singular listing titles."""
+    candidates = {token}
+    if len(token) > 3 and token.endswith("s"):
+        candidates.add(token[:-1])
+    if len(token) > 4 and token.endswith("ies"):
+        candidates.add(token[:-3] + "y")
+    return candidates
+
+
 def search_listings(*, query: str = "", max_price: float | None = None, kind: str | None = None, limit: int = 8) -> dict:
-    """Find ACTIVE listings and attach each seller's live on-chain trust record."""
+    """Find ACTIVE listings and attach each seller's live on-chain trust record.
+
+    Matching is per token (AND across tokens) with light singularization, so
+    "solar inverters" matches "Solar inverter batch".
+    """
     qs = Listing.objects.filter(status="active").select_related()
-    if query:
-        qs = qs.filter(title__icontains=query) | qs.filter(description__icontains=query) | qs.filter(category__icontains=query)
+    for token in (query or "").split():
+        token = token.strip().lower()
+        if not token:
+            continue
+        token_q = Q()
+        for candidate in _token_candidates(token):
+            token_q |= (
+                Q(title__icontains=candidate)
+                | Q(description__icontains=candidate)
+                | Q(category__icontains=candidate)
+                | Q(location__icontains=candidate)
+            )
+        qs = qs.filter(token_q)
     if kind in ("goods", "service"):
         qs = qs.filter(kind=kind)
     listings = list(qs.distinct()[:60])
