@@ -14,12 +14,30 @@ let config = { network: 'testnet', contractId: '' };
 
 async function init(options) {
   config = { ...config, ...(options || {}) };
-  if (selector) return;
-  selector = await setupWalletSelector({
-    network: config.network,
-    modules: [setupMeteorWallet(), setupHereWallet(), setupNightly()],
-  });
-  modal = setupModal(selector, { contractId: config.contractId });
+  await ensureSelector();
+}
+
+// Lazily create the selector. Actions (callMethod, signLogin, signOut) run on
+// freshly reloaded pages where only `init` was called by the host app — they
+// must never depend on the user clicking Connect in this page load.
+async function ensureSelector() {
+  if (!selector) {
+    selector = await setupWalletSelector({
+      network: config.network,
+      modules: [setupMeteorWallet(), setupHereWallet(), setupNightly()],
+    });
+    modal = setupModal(selector, { contractId: config.contractId });
+  }
+  return selector;
+}
+
+async function selectedWallet() {
+  const s = await ensureSelector();
+  const state = s.store.getState();
+  if (!state.selectedWalletId && !(state.accounts || []).length) {
+    throw new Error('Wallet session not found in this browser — click "Connect wallet" and sign in again.');
+  }
+  return s.wallet();
 }
 
 function showModal() {
@@ -76,7 +94,7 @@ function decodeSuccessValue(res) {
 }
 
 async function callMethod(contractId, method, args, gas = '100000000000000', deposit = '0') {
-  const wallet = await selector.wallet();
+  const wallet = await selectedWallet();
   const action = transactions.functionCall(
     method,
     new TextEncoder().encode(JSON.stringify(args)),
@@ -92,7 +110,7 @@ async function callMethod(contractId, method, args, gas = '100000000000000', dep
 }
 
 async function signLogin(message, recipient, nonce) {
-  const wallet = await selector.wallet();
+  const wallet = await selectedWallet();
   const res = await wallet.signMessage({ message, recipient, nonce });
   const out = res || {};
   // Normalize across Meteor (payload), HERE (SignedMessage) and Nightly

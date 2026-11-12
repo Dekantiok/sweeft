@@ -194,7 +194,17 @@
       state, cfg, connect, disconnect, login, callContract, callToken,
       explorerTx, jsonPost, requireWallet, tokenBalance, refreshTokenBalance, faucet,
     });
-    if (state.walletAccount) refreshTokenBalance();
+    if (state.walletAccount) {
+      // Logged-in session: warm up the wallet selector so on-chain actions work
+      // without re-clicking Connect (the selector is per page load).
+      cfg()
+        .then((c) => VPWallet.init({
+          network: (state.network || c.network || 'testnet').trim() || 'testnet',
+          contractId: state.contractId || c.veripay_contract,
+        }))
+        .catch((e) => console.warn('wallet warm-up failed', e));
+      refreshTokenBalance();
+    }
   }
 
   window.VPApp = { init };
