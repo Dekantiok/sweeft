@@ -70,6 +70,18 @@ async function signOut() {
   }
 }
 
+// Whether the selector currently has a connected wallet in this browser
+// (used by the host app to detect session-vs-wallet mismatches).
+async function isConnected() {
+  try {
+    const s = await ensureSelector();
+    const st = s.store.getState();
+    return !!(st.selectedWalletId && (st.accounts || []).length);
+  } catch (e) {
+    return false;
+  }
+}
+
 // Remove wallet-selector persistence so the next Connect starts fresh
 // (past sessions otherwise survive signOut attempts on a reloaded page).
 function clearPersistence() {
@@ -133,6 +145,7 @@ export {
   account,
   onChange,
   signOut,
+  isConnected,
   callMethod,
   signLogin,
 };

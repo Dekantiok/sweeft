@@ -194,21 +194,59 @@
     }
   }
 
+  // ------------------------------------------------------------------
+  // Session vs wallet-connection mismatch
+  // ------------------------------------------------------------------
+
+  function showWalletMismatchBanner() {
+    if (document.getElementById('wallet-mismatch')) return;
+    const bar = document.createElement('div');
+    bar.id = 'wallet-mismatch';
+    bar.style.cssText =
+      'position:sticky;top:0;z-index:60;background:#fef3c7;border-bottom:1px solid #fde68a;' +
+      'color:#92400e;font-size:13px;padding:8px 16px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+    bar.innerHTML =
+      '<span>Your wallet app is disconnected in this browser — sign in again to act on escrows.</span>' +
+      '<button id="wm-reconnect" style="border:1px solid #b45309;border-radius:6px;padding:2px 10px;background:#fff">Reconnect</button>' +
+      '<button id="wm-signout" style="border:1px solid #d1d5db;border-radius:6px;padding:2px 10px;background:#fff;color:#374151">Sign out</button>';
+    document.body.prepend(bar);
+    document.getElementById('wm-reconnect').onclick = () => connect();
+    document.getElementById('wm-signout').onclick = () => disconnect();
+  }
+
+  function hideWalletMismatchBanner() {
+    const bar = document.getElementById('wallet-mismatch');
+    if (bar) bar.remove();
+  }
+
+  async function checkWalletConnection() {
+    if (!state.walletAccount) return;
+    try {
+      const connected = await VPWallet.isConnected();
+      if (!connected) showWalletMismatchBanner();
+      else hideWalletMismatchBanner();
+    } catch (e) {
+      /* leave the UI as-is */
+    }
+  }
+
   function init(options) {
     Object.assign(state, options || {});
     window.VPApp = window.VPApp || {};
     Object.assign(window.VPApp, {
       state, cfg, connect, disconnect, login, callContract, callToken,
       explorerTx, jsonPost, requireWallet, tokenBalance, refreshTokenBalance, faucet,
+      checkWalletConnection,
     });
     if (state.walletAccount) {
       // Logged-in session: warm up the wallet selector so on-chain actions work
-      // without re-clicking Connect (the selector is per page load).
+      // without re-clicking Connect, then flag a disconnected wallet clearly.
       cfg()
         .then((c) => VPWallet.init({
           network: (state.network || c.network || 'testnet').trim() || 'testnet',
           contractId: state.contractId || c.veripay_contract,
         }))
+        .then(() => checkWalletConnection())
         .catch((e) => console.warn('wallet warm-up failed', e));
       refreshTokenBalance();
     }
