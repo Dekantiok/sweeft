@@ -60,6 +60,24 @@ def get_escrow(escrow_id: str):
     return view_call(settings.VERIPAY_CONTRACT, "get_escrow", {"escrow_id": escrow_id})
 
 
+# Page renders may repeat reads within seconds; a tiny TTL cache keeps
+# navigation snappy when the RPC is slow. The sync/refresh endpoints use the
+# raw `get_escrow` above so "Refresh from chain" is always fresh.
+_escrow_cache: dict = {}
+
+
+def get_escrow_cached(escrow_id: str, ttl_seconds: int = 8):
+    import time
+
+    now = time.time()
+    hit = _escrow_cache.get(escrow_id)
+    if hit and now - hit[1] < ttl_seconds:
+        return hit[0]
+    value = get_escrow(escrow_id)
+    _escrow_cache[escrow_id] = (value, now)
+    return value
+
+
 def escrows_for(account_id: str):
     return view_call(settings.VERIPAY_CONTRACT, "escrows_for", {"account_id": account_id}) or []
 
@@ -71,6 +89,23 @@ def pending_for(account_id: str):
 def token_balance(token_contract: str, account_id: str) -> str:
     result = view_call(token_contract, "ft_balance_of", {"account_id": account_id})
     return result or "0"
+
+
+# Platform config (owner, fee bps, outlayer addresses) changes rarely; cache it
+# briefly so page loads don't pay two RPC round-trips for every render.
+_config_cache: dict = {"value": None, "ts": 0.0}
+
+
+def get_config_cached(ttl_seconds: int = 30) -> dict:
+    import time
+
+    now = time.time()
+    if _config_cache["value"] is not None and now - _config_cache["ts"] < ttl_seconds:
+        return _config_cache["value"]
+    value = view_call(settings.VERIPAY_CONTRACT, "get_config", {}) or {}
+    _config_cache["value"] = value
+    _config_cache["ts"] = now
+    return value
 
 
 # ---------------------------------------------------------------------------

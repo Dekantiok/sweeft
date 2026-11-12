@@ -625,6 +625,41 @@ impl VeriPay {
         bump_reputation(&env::predecessor_account_id(), |r| r.disputes_opened += 1);
     }
 
+    /// Either party can open a dispute. The buyer may escalate from
+    /// shipped/awaiting-confirmation states (same as report_problem); the
+    /// seller may additionally escalate from funded/shipment-pending states
+    /// (e.g. an unresponsive buyer) — this closes the "funds locked with no
+    /// exit" gap. Funds stay locked until the review path resolves them.
+    pub fn open_dispute(&mut self, escrow_id: String, reason_hash: String) {
+        let mut escrow = self.internal_get(&escrow_id);
+        let caller = env::predecessor_account_id();
+        let is_buyer = Some(&caller) == escrow.buyer.as_ref();
+        let is_seller = caller == escrow.seller;
+        require!(is_buyer || is_seller, "only buyer or seller can open a dispute");
+        require!(escrow.state != EscrowState::ReviewRequired, "already disputed");
+        if is_buyer {
+            require!(
+                escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+                "buyer cannot dispute in this state"
+            );
+        } else {
+            require!(
+                escrow.state == EscrowState::Funded
+                    || escrow.state == EscrowState::ShipmentPending
+                    || escrow.state == EscrowState::Shipped
+                    || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+                "seller cannot dispute in this state"
+            );
+        }
+        let side = if is_buyer { "buyer" } else { "seller" };
+        escrow.problem_reported = true;
+        escrow.terms_hash = format!("{}|dispute:{}:{}", escrow.terms_hash, side, reason_hash);
+        escrow.state = EscrowState::ReviewRequired;
+        log!("dispute opened by {} on {}", side, escrow_id);
+        self.escrows.insert(escrow_id, escrow);
+        bump_reputation(&caller, |r| r.disputes_opened += 1);
+    }
+
     /// Explicit manual review path (platform operator). Not arbitration: it
     /// releases the remaining balance as a simple split between seller and
     /// buyer. Disclosed as a centralized fallback in the README.

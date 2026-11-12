@@ -28,6 +28,7 @@
             <a class="hover:text-emerald-700" href="/escrow/new/">New agreement</a>
             <a class="hover:text-emerald-700" href="/market/mine/">My listings</a>
             {% if my_partner %}<a class="hover:text-emerald-700" href="/partners/portal/">Partner portal</a>{% endif %}
+            {% if wallet_account == PLATFORM_OWNER %}<a class="text-amber-700 hover:text-amber-900" href="/disputes/">Disputes</a>{% endif %}
           {% endif %}
           <a class="hover:text-emerald-700" href="/logistics/">Logistics</a>
         </nav>

@@ -71,6 +71,8 @@ veripay/               Django modular monolith (product coordinator + projection
   apps/escrow/         agreements, invitations, contract reads, settlement projection
   apps/logistics/      partners, Demo Carrier, shipments, verification records
   apps/market/         listings, purchase requests, trust profiles (/u/<wallet>/)
+  apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) — see docs/ai-and-intents.md
+  apps/intents/        provider-neutral NEAR Intents (dry | oneclick) — cross-chain, wired later
   templates/ static/   Django templates + HTMX + Alpine + Tailwind; wallet bundle
 tools/web-bundle/      esbuild bundle of @near-wallet-selector (Meteor/HERE/Nightly)
 scripts/               deploy + end-to-end scripts

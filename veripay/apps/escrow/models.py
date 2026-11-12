@@ -108,3 +108,52 @@ class SettlementRecord(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class Dispute(models.Model):
+    """Off-chain case file for an on-chain dispute (escrow in ReviewRequired).
+
+    The contract locks the funds; this records the story: who opened it, why,
+    evidence from both sides, the AI advisory (labelled with its source), and
+    how the platform resolution ended. Nothing here can move funds.
+    """
+
+    SIDE_CHOICES = [("buyer", "Buyer"), ("seller", "Seller")]
+    STATUS_CHOICES = [("open", "Open"), ("resolved", "Resolved"), ("withdrawn", "Withdrawn")]
+
+    escrow_id = models.CharField(max_length=32, db_index=True)
+    opened_by = models.CharField(max_length=64)
+    side = models.CharField(max_length=8, choices=SIDE_CHOICES)
+    reason = models.TextField()
+    reason_hash = models.CharField(max_length=128, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="open")
+    ai_recommendation = models.JSONField(default=dict, blank=True)
+    resolution_pct = models.PositiveSmallIntegerField(null=True, blank=True)
+    resolution_note = models.TextField(blank=True)
+    resolution_tx = models.CharField(max_length=120, blank=True)
+    opened_tx = models.CharField(max_length=120, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"dispute {self.escrow_id} by {self.opened_by} [{self.status}]"
+
+
+class DisputeEvidence(models.Model):
+    """A statement filed by one party while the dispute is open."""
+
+    dispute = models.ForeignKey(Dispute, on_delete=models.CASCADE, related_name="evidence")
+    author = models.CharField(max_length=64)
+    side = models.CharField(max_length=8, choices=Dispute.SIDE_CHOICES)
+    text = models.TextField()
+    links = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"evidence by {self.author} on {self.dispute.escrow_id}"

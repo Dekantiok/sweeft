@@ -22,6 +22,61 @@
   </div>
 {% endif %}
 
+{% if dispute %}
+  <section class="mt-4 bg-white border {% if dispute.status == 'open' %}border-rose-300{% else %}border-slate-200{% endif %} rounded-xl p-4">
+    <div class="flex items-center gap-3 flex-wrap">
+      <h2 class="font-semibold">Dispute case file #{{ dispute.id }}</h2>
+      <span class="text-xs rounded-full px-2 py-0.5 {% if dispute.status == 'open' %}bg-rose-100 text-rose-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">{{ dispute.get_status_display }}</span>
+      <span class="text-xs text-slate-500">opened by <code>{{ dispute.opened_by }}</code> ({{ dispute.side }}) · {{ dispute.created_at }}</span>
+    </div>
+    <p class="text-sm text-slate-700 mt-2"><b>Claim:</b> {{ dispute.reason }}</p>
+
+    <div class="mt-3">
+      <h3 class="text-sm font-medium">Evidence ({{ dispute.evidence.count }})</h3>
+      {% for e in dispute.evidence.all %}
+        <div class="mt-2 border border-slate-100 rounded-lg p-2 text-sm">
+          <div class="text-xs text-slate-500"><code>{{ e.author }}</code> ({{ e.side }}) · {{ e.created_at }}</div>
+          <div class="mt-1 whitespace-pre-line">{{ e.text }}</div>
+          {% if e.links %}<div class="text-xs mt-1">{% for l in e.links %}<a class="text-emerald-700 mr-2" href="{{ l }}" target="_blank" rel="noreferrer">{{ l }}</a>{% endfor %}</div>{% endif %}
+        </div>
+      {% empty %}
+        <p class="text-sm text-slate-500 mt-1">No evidence filed yet.</p>
+      {% endfor %}
+    </div>
+
+    {% if dispute.ai_recommendation %}
+      <div class="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm">
+        <b>AI advisory: {{ dispute.ai_recommendation.pct }}% to the seller.</b>
+        {{ dispute.ai_recommendation.reason }}
+        <div class="text-xs text-slate-500 mt-1">source: {{ dispute.ai_recommendation.source }} — advisory only; the platform owner confirms the split on-chain.</div>
+      </div>
+    {% endif %}
+
+    {% if dispute.status == 'open' %}
+      <div class="mt-3">
+        <label class="block text-sm font-medium mb-1">File evidence (both sides welcome)</label>
+        <textarea id="evidence-text" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="What happened? Include links to photos/receipts…"></textarea>
+        <div class="flex gap-2 mt-2 flex-wrap">
+          <button onclick="addEvidence({{ dispute.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-sm">Submit evidence</button>
+          <button onclick="aiReview({{ dispute.id }})" class="border border-violet-300 text-violet-800 hover:bg-violet-50 rounded-lg px-3 py-1.5 text-sm">Ask AI arbiter (advisory)</button>
+        </div>
+        <p id="dispute-status" class="text-xs text-slate-500 mt-1"></p>
+      </div>
+    {% elif dispute.status == 'resolved' %}
+      <div class="mt-3 text-sm text-slate-700">
+        <b>Resolution:</b> {% if dispute.resolution_pct is not None %}{{ dispute.resolution_pct }}% to seller{% else %}recorded{% endif %}
+        {% if dispute.resolution_note %} — {{ dispute.resolution_note }}{% endif %}
+        <div class="text-xs text-slate-500 mt-1">{{ dispute.resolved_at }}{% if dispute.resolution_tx %} · tx <code>{{ dispute.resolution_tx }}</code>{% endif %}</div>
+      </div>
+    {% endif %}
+  </section>
+{% elif chain.state == 'ReviewRequired' %}
+  <section class="mt-4 bg-white border border-rose-200 rounded-xl p-4 text-sm">
+    <b>On-chain dispute detected</b> — no case file registered yet. A party can file the details here:
+    <button onclick="openDispute()" class="ml-2 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Register dispute details</button>
+  </section>
+{% endif %}
+
 <div class="grid lg:grid-cols-3 gap-4 mt-5">
   <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
     <h2 class="font-semibold">Agreement</h2>
@@ -97,6 +152,7 @@
   };
   const WALLET = "{{ wallet_account|default:'' }}";
   const OWNER = "{{ owner|default:'' }}";
+  const DISPUTE_ID = {{ dispute.id|default:"null" }};
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function addButton(label, fn, style='primary') {
@@ -156,7 +212,14 @@
     }
     if (state === 'AwaitingBuyerConfirmation' && isBuyer) {
       addButton('Confirm receipt — release seller payment', () => simpleCall('confirm_receipt', 'Receipt confirmed', '150000000000000'));
+    }
+    if ((state === 'Shipped' || state === 'AwaitingBuyerConfirmation') && isBuyer) {
       addButton('Report a problem', doReportProblem, 'ghost');
+    }
+    // Seller escalation (fixes the silent-buyer lock): allowed from funded
+    // states too — the contract keeps funds locked until review resolves.
+    if (['Funded', 'ShipmentPending', 'Shipped', 'AwaitingBuyerConfirmation'].includes(state) && isSeller) {
+      addButton('Open a dispute', doOpenDispute, 'ghost');
     }
     if ((state === 'Funded' || state === 'ShipmentPending') && isBuyer && deadlinePassed()) {
       addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
@@ -170,7 +233,14 @@
         try {
           const pct = Math.max(0, Math.min(100, parseInt(input.value || '0', 10)));
           status('Resolving…');
-          await VPApp.callContract('resolve_review', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '0', '150000000000000');
+          const res = await VPApp.callContract('resolve_review', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '0', '150000000000000');
+          if (DISPUTE_ID) {
+            await VPApp.jsonPost(`/api/v1/disputes/${DISPUTE_ID}/resolve/`, {
+              release_pct: pct,
+              note: 'Platform resolution via the disclosed review path.',
+              tx_hash: res.txHash,
+            }).catch(() => {});
+          }
           status('Resolved — refreshing…'); setTimeout(() => window.location.reload(), 2500);
         } catch (e) { status(''); alert('Failed: ' + e.message); }
       };
@@ -245,16 +315,57 @@
     } catch (e) { status(''); alert('Verification failed: ' + e.message); }
   }
 
-  async function doReportProblem() {
-    const reason = prompt('Describe the problem (stored as a hash on-chain):');
+  async function sha256Hex(text) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async function fileDispute(method, label) {
+    const reason = prompt('Describe the dispute — this becomes the case file (a hash is committed on-chain):');
     if (!reason) return;
     try {
-      status('Reporting problem…');
-      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(reason));
-      const hex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-      await VPApp.callContract('report_problem', { escrow_id: AGREEMENT.escrow_id, reason_hash: hex });
-      status('Reported — funds stay locked pending review.'); setTimeout(() => window.location.reload(), 2500);
+      status(label + ' — confirm in your wallet…');
+      const hex = await sha256Hex(reason);
+      const res = await VPApp.callContract(method, { escrow_id: AGREEMENT.escrow_id, reason_hash: hex }, '0', '150000000000000');
+      status('Recording the case file…');
+      const saved = await VPApp.jsonPost('/api/v1/disputes/', {
+        escrow_id: AGREEMENT.escrow_id, reason, tx_hash: res.txHash,
+      });
+      if (!saved.ok) throw new Error(saved.error);
+      status('Dispute opened — funds locked pending review.'); setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
+  }
+
+  async function doReportProblem() { return fileDispute('report_problem', 'Reporting problem'); }
+  async function doOpenDispute() { return fileDispute('open_dispute', 'Opening dispute'); }
+
+  async function openDispute() {
+    // On-chain dispute exists but no case file — attach details.
+    return fileDispute('open_dispute', 'Registering dispute');
+  }
+
+  async function addEvidence(disputeId) {
+    const text = document.getElementById('evidence-text').value.trim();
+    const el = document.getElementById('dispute-status');
+    if (!text) { el.textContent = 'Write your statement first.'; return; }
+    el.textContent = 'Filing…';
+    try {
+      const res = await VPApp.jsonPost(`/api/v1/disputes/${disputeId}/evidence/`, { text });
+      if (!res.ok) throw new Error(res.error);
+      el.textContent = 'Filed — refreshing…';
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (e) { el.textContent = ''; alert('Failed: ' + e.message); }
+  }
+
+  async function aiReview(disputeId) {
+    const el = document.getElementById('dispute-status');
+    el.textContent = 'Asking the AI arbiter (advisory)…';
+    try {
+      const res = await VPApp.jsonPost(`/api/v1/disputes/${disputeId}/ai-review/`, {});
+      if (!res.ok) throw new Error(res.error);
+      const rec = res.recommendation;
+      el.textContent = `AI advisory: ${rec.pct}% to seller (${rec.source}) — ${rec.reason}`;
+    } catch (e) { el.textContent = ''; alert('Failed: ' + e.message); }
   }
 
   async function simpleCall(method, label, gas) {

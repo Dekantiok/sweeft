@@ -25,6 +25,7 @@ def config_context(request):
         "OUTLAYER_CONTRACT": settings.OUTLAYER_CONTRACT,
         "NEAR_NETWORK": settings.NEAR_NETWORK,
         "EXPLORER_URL": settings.EXPLORER_URL,
+        "PLATFORM_OWNER": settings.PLATFORM_OWNER,
     }
 
 
@@ -148,7 +149,7 @@ def escrow_detail(request, escrow_id: str):
     chain = None
     chain_error = None
     try:
-        chain = near.get_escrow(escrow_id)
+        chain = near.get_escrow_cached(escrow_id)
     except Exception as e:  # noqa: BLE001 - surfaced in the UI
         chain_error = str(e)
     if agreement is None and chain:
@@ -177,7 +178,7 @@ def escrow_detail(request, escrow_id: str):
             invitation_link = request.build_absolute_uri(f"/invitations/{inv.token}/")
     owner = None
     try:
-        owner = (near.view_call(settings.VERIPAY_CONTRACT, "get_config", {}) or {}).get("owner")
+        owner = (near.get_config_cached() or {}).get("owner")
     except Exception:  # noqa: BLE001 - page renders without config
         pass
     provider_options = []
@@ -190,6 +191,9 @@ def escrow_detail(request, escrow_id: str):
         ]
     except Exception:  # noqa: BLE001
         provider_options = []
+    from .models import Dispute
+
+    dispute = Dispute.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
     return render(
         request,
         "escrow_detail.html",
@@ -203,6 +207,7 @@ def escrow_detail(request, escrow_id: str):
             "owner": owner,
             "provider_options": provider_options,
             "invitation_link": invitation_link,
+            "dispute": dispute,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
             "fmt": near.format_token,

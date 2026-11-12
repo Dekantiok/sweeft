@@ -139,3 +139,7 @@ INTENTS_PROVIDER = os.environ.get("INTENTS_PROVIDER", "dry")
 INTENTS_BASE_URL = os.environ.get("INTENTS_BASE_URL", "https://1click.chaindefuser.com")
 INTENTS_API_KEY = os.environ.get("INTENTS_API_KEY", "")
 INTENTS_TIMEOUT_SECONDS = int(os.environ.get("INTENTS_TIMEOUT_SECONDS", "30"))
+
+# Platform owner hint for UI affordances (nav links). Authorization is always
+# checked against the on-chain config — this is display only.
+PLATFORM_OWNER = os.environ.get("PLATFORM_OWNER", "steepdata3968.testnet")

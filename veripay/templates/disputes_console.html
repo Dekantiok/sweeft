@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Disputes — platform console{% endblock %}
+{% block content %}
+{% if not wallet_account %}
+  <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg">
+    <p class="text-sm">Connect the platform owner wallet to open the dispute console.</p>
+    <button onclick="VPApp.connect()" class="mt-3 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
+  </div>
+{% elif not_owner %}
+  <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg">
+    <h1 class="text-xl font-semibold">Platform console</h1>
+    <p class="text-sm text-slate-600 mt-2">This console is for the platform owner (<code>{{ owner }}</code>). Your wallet is not the owner.</p>
+  </div>
+{% else %}
+  <div class="flex items-center gap-3 flex-wrap">
+    <h1 class="text-2xl font-semibold">Dispute console</h1>
+    <span class="text-xs rounded-full px-3 py-1 bg-amber-100 text-amber-900">platform owner</span>
+    <span class="text-sm text-slate-500">Funds stay locked in escrow until each case is resolved on-chain.</span>
+  </div>
+
+  {% for row in disputes %}
+    {% with d=row.dispute c=row.chain %}
+      <div class="bg-white border {% if c.state == 'ReviewRequired' %}border-rose-300{% else %}border-slate-200{% endif %} rounded-xl p-4 mt-4">
+        <div class="flex items-center gap-3 flex-wrap">
+          <a class="font-semibold text-emerald-700" href="/escrow/{{ d.escrow_id }}/">{{ d.escrow_id }}</a>
+          <span class="text-xs rounded-full px-2 py-0.5 bg-slate-900 text-white">{{ c.state|default:"—" }}</span>
+          <span class="text-xs rounded-full px-2 py-0.5 bg-rose-100 text-rose-800">dispute #{{ d.id }} by {{ d.side }}</span>
+          <div class="flex-1"></div>
+          <span class="text-xs text-slate-500">{{ d.created_at }}</span>
+        </div>
+        <p class="text-sm text-slate-700 mt-2">{{ d.reason|truncatechars:240 }}</p>
+        <p class="text-xs text-slate-500 mt-1">
+          parties: seller <code>{{ c.seller|default:"—" }}</code> · buyer <code>{{ c.buyer|default:"—" }}</code>
+          · evidence filed: {{ d.evidence.count }}
+          {% if d.ai_recommendation %} · AI advisory: {{ d.ai_recommendation.pct }}% to seller ({{ d.ai_recommendation.source }}){% endif %}
+        </p>
+        <div class="flex gap-2 mt-3">
+          <a href="/escrow/{{ d.escrow_id }}/" class="bg-amber-600 hover:bg-amber-700 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Review & resolve →</a>
+        </div>
+      </div>
+    {% endwith %}
+  {% empty %}
+    <div class="bg-white border border-slate-200 rounded-xl p-6 mt-4 text-sm text-slate-500">
+      No open disputes. When a party escalates an escrow, the case file appears here.
+    </div>
+  {% endfor %}
+{% endif %}
+{% endblock %}
