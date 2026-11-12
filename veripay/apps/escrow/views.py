@@ -200,6 +200,28 @@ def escrow_detail(request, escrow_id: str):
             arbitration = near.view_call(settings.VERIPAY_CONTRACT, "arbitration_status", {"escrow_id": escrow_id})
         except Exception:  # noqa: BLE001
             arbitration = None
+
+    # Review board (governed dispute resolution). Shown while a dispute is
+    # open — proposals, votes and the escalation form live here.
+    gov_ctx = None
+    if chain and chain.get("state") == "ReviewRequired":
+        try:
+            from . import gov as gov_mod
+
+            policy = gov_mod.fetch_policy()
+            council = gov_mod.council_info(policy)
+            wallet = current_wallet(request)
+            gov_ctx = {
+                "dao": gov_mod.dao_account(),
+                "council": council,
+                "proposals": gov_mod.proposals_for_escrow(escrow_id),
+                "proposal_bond_display": near.format_near(gov_mod.proposal_bond_yocto(policy)),
+                "proposal_bond_yocto": str(gov_mod.proposal_bond_yocto(policy)),
+                "is_council": bool(wallet and wallet in (council["members"] or [])),
+                "is_party": bool(wallet and wallet in (chain.get("seller"), chain.get("buyer"))),
+            }
+        except Exception:  # noqa: BLE001
+            gov_ctx = None
     return render(
         request,
         "escrow_detail.html",
@@ -215,6 +237,7 @@ def escrow_detail(request, escrow_id: str):
             "invitation_link": invitation_link,
             "dispute": dispute,
             "arbitration": arbitration,
+            "gov": gov_ctx,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
             "fmt": near.format_token,

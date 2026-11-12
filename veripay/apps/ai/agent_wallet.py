@@ -61,6 +61,19 @@ def _parse_key(private_key: str) -> tuple[Ed25519PrivateKey, bytes]:
     return Ed25519PrivateKey.from_private_bytes(seed), public
 
 
+def _function_call_action(method_name: str, args: dict, gas: int, deposit: int) -> bytes:
+    action = b"\x02"  # Action::FunctionCall
+    action += _borsh_string(method_name)
+    action += _borsh_bytes(json.dumps(args).encode())
+    action += struct.pack("<Q", gas)
+    action += deposit.to_bytes(16, "little")
+    return action
+
+
+def _transfer_action(deposit: int) -> bytes:
+    return b"\x03" + deposit.to_bytes(16, "little")  # Action::Transfer
+
+
 def _build_transaction(
     *,
     signer_id: str,
@@ -68,10 +81,7 @@ def _build_transaction(
     nonce: int,
     receiver_id: str,
     block_hash: bytes,
-    method_name: str,
-    args: dict,
-    gas: int,
-    deposit: int,
+    action: bytes,
 ) -> bytes:
     tx = _borsh_string(signer_id)
     tx += b"\x00" + public_key  # ed25519 key type tag + 32 bytes
@@ -79,12 +89,7 @@ def _build_transaction(
     tx += _borsh_string(receiver_id)
     tx += block_hash
     tx += struct.pack("<I", 1)  # exactly one action
-    # Action::FunctionCall (enum tag 2)
-    tx += b"\x02"
-    tx += _borsh_string(method_name)
-    tx += _borsh_bytes(json.dumps(args).encode())
-    tx += struct.pack("<Q", gas)
-    tx += deposit.to_bytes(16, "little")
+    tx += action
     return tx
 
 
@@ -106,23 +111,12 @@ def _failure_reason(status: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def sign_and_send(
-    *,
-    method_name: str,
-    args: dict,
-    receiver_id: str | None = None,
-    gas: int = GAS_FUNCTION_CALL,
-    deposit: int = 1,
-) -> dict:
-    """Sign one FunctionCall with the agent key and broadcast it.
+def _send_transaction(*, signer: str, private_key: str, receiver: str, action: bytes) -> dict:
+    """Sign one action with the given key and broadcast it.
 
     Returns {"success": bool, "tx_hash": str, "error": str|None}.
     """
-    if not agent_configured():
-        raise RuntimeError("co-pilot agent wallet is not configured on this deployment")
-    signer = settings.AI_AGENT_ACCOUNT
-    receiver = receiver_id or signer
-    key, public = _parse_key(settings.AI_AGENT_PRIVATE_KEY)
+    key, public = _parse_key(private_key)
     public_key_str = "ed25519:" + b58encode(public)
 
     access = _rpc(
@@ -137,9 +131,9 @@ def sign_and_send(
     )
     access_result = access.get("result") or {}
     if "error" in access:
-        raise RuntimeError(f"cannot read agent access key: {access['error'].get('cause', access['error'])}")
+        raise RuntimeError(f"cannot read access key: {access['error'].get('cause', access['error'])}")
     if isinstance(access_result, dict) and access_result.get("error"):
-        raise RuntimeError(f"cannot read agent access key: {access_result['error']}")
+        raise RuntimeError(f"cannot read access key: {access_result['error']}")
     nonce = int(access_result["nonce"]) + 1
 
     block = _rpc("block", {"finality": "final"}, timeout=20)
@@ -155,10 +149,7 @@ def sign_and_send(
         nonce=nonce,
         receiver_id=receiver,
         block_hash=block_hash,
-        method_name=method_name,
-        args=args,
-        gas=gas,
-        deposit=deposit,
+        action=action,
     )
     # NEAR signatures are over SHA-256 of the borsh-encoded transaction
     # (near-crypto `Signature::verify` is called with `signed_tx.get_hash()`).
@@ -183,6 +174,30 @@ def sign_and_send(
         "tx_hash": tx_hash,
         "error": None if success else _failure_reason(status),
     }
+
+
+def sign_and_send(
+    *,
+    method_name: str,
+    args: dict,
+    receiver_id: str | None = None,
+    gas: int = GAS_FUNCTION_CALL,
+    deposit: int = 1,
+) -> dict:
+    """Sign one FunctionCall with the co-pilot agent key and broadcast it."""
+    if not agent_configured():
+        raise RuntimeError("co-pilot agent wallet is not configured on this deployment")
+    signer = settings.AI_AGENT_ACCOUNT
+    receiver = receiver_id or signer
+    action = _function_call_action(method_name, args, gas, deposit)
+    return _send_transaction(signer=signer, private_key=settings.AI_AGENT_PRIVATE_KEY, receiver=receiver, action=action)
+
+
+def send_near_from(*, signer: str, private_key: str, receiver: str, amount_yocto: int) -> dict:
+    """Plain NEAR transfer signed by an explicit key (ops / treasury demos)."""
+    return _send_transaction(
+        signer=signer, private_key=private_key, receiver=receiver, action=_transfer_action(amount_yocto)
+    )
 
 
 def transfer_from_allowance(*, owner: str, receiver: str, amount: int, memo: str | None = None) -> dict:

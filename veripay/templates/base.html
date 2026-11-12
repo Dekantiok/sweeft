@@ -27,10 +27,10 @@
   </script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
-  <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261112k">
+  <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261113b">
   <script src="{% static 'js/veripay-wallet.js' %}?v=20261112k"></script>
-  <script src="{% static 'js/app.js' %}?v=20261112k"></script>
-  <script src="{% static 'js/chat.js' %}?v=20261113b"></script>
+  <script src="{% static 'js/app.js' %}?v=20261113b"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261113c"></script>
 </head>
 <body class="h-full bg-slate-950 text-slate-100 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ VERIPAY_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
   <style>
@@ -123,6 +123,7 @@
                   <a href="/market/mine/">My listings</a>
                   {% if my_partner %}<a href="/partners/portal/">Partner portal</a>{% endif %}
                   <a href="/u/{{ wallet_account }}/">Trust profile</a>
+                  <a href="/governance/">Governance board</a>
                   {% if wallet_account == PLATFORM_OWNER %}
                     <a href="/disputes/">Disputes</a>
                     <a href="/ops/">Ops console</a>

@@ -103,6 +103,12 @@
     return VPWallet.callMethod(c.veripay_contract, method, args, gas, deposit);
   }
 
+  // Call any contract (e.g. the governance DAO: add_proposal / act_proposal).
+  async function callContractOn(contractId, method, args, deposit = '0', gas = '150000000000000') {
+    if (!requireWallet()) throw new Error('wallet not connected');
+    return VPWallet.callMethod(contractId, method, args, gas, deposit);
+  }
+
   async function callToken(method, args, deposit = '1', gas = '100000000000000') {
     if (!requireWallet()) throw new Error('wallet not connected');
     const c = await cfg();
@@ -235,6 +241,7 @@
     window.VPApp = window.VPApp || {};
     Object.assign(window.VPApp, {
       state, cfg, connect, disconnect, login, callContract, callToken,
+      callContractOn,
       explorerTx, jsonPost, requireWallet, tokenBalance, refreshTokenBalance, faucet,
       checkWalletConnection,
     });

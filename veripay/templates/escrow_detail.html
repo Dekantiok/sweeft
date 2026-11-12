@@ -17,8 +17,8 @@
 
 {% if chain.state == 'ReviewRequired' %}
   <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm px-4 py-3">
-    <b>Funds are locked pending review.</b> The buyer reported a problem; the seller allocation stays locked until the platform resolution path is used.
-    {% if wallet_account == owner %}You are the platform owner — the resolution action is available in the Actions panel.{% else %}The platform owner will resolve this; no party can move funds in the meantime.{% endif %}
+    <b>Funds are locked pending resolution.</b> A party can escalate to the <b>Review board</b> (council-approved on-chain proposal)
+    or settle through the <b>arbitration pool</b> — funds move only when one of those resolves, and the platform owner holds no fallback key.
   </div>
 {% endif %}
 
@@ -48,7 +48,7 @@
       <div class="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm">
         <b>AI advisory: {{ dispute.ai_recommendation.pct }}% to the seller.</b>
         {{ dispute.ai_recommendation.reason }}
-        <div class="text-xs text-slate-500 mt-1">source: {{ dispute.ai_recommendation.source }} — advisory only; the platform owner confirms the split on-chain.</div>
+        <div class="text-xs text-slate-500 mt-1">source: {{ dispute.ai_recommendation.source }} — advisory only; the review board (or arbitration pool) confirms the split on-chain.</div>
       </div>
     {% endif %}
 
@@ -132,6 +132,58 @@
   </section>
 {% endif %}
 
+{% if gov %}
+  <section class="mt-4 bg-white border border-emerald-800/50 rounded-xl p-4">
+    <div class="flex items-center gap-3 flex-wrap">
+      <h2 class="font-semibold">Review board</h2>
+      <span class="text-xs text-emerald-200 bg-emerald-900/50 rounded-full px-2 py-0.5">governed resolution</span>
+      <span class="text-xs text-slate-500"><code>{{ gov.dao }}</code> · {{ gov.council.votes_needed }} of {{ gov.council.members|length }} approvals · bond {{ gov.proposal_bond_display }} NEAR (returned)</span>
+    </div>
+    <p class="text-xs text-slate-500 mt-1">
+      Disputes are decided by council-approved on-chain proposals — the platform owner holds no fallback key.
+      Approvals execute through the DAO automatically once the threshold is met.
+    </p>
+
+    {% for p in gov.proposals %}
+      <div class="mt-3 border border-slate-200 rounded-lg p-3 text-sm">
+        <div class="flex items-center gap-2 flex-wrap">
+          <b>Proposal #{{ p.id }}</b>
+          <span class="text-xs">{{ p.description }}</span>
+          <span class="text-xs rounded-full px-2 py-0.5 {% if p.status == 'InProgress' %}bg-amber-100 text-amber-800{% elif p.status == 'Approved' %}bg-emerald-100 text-emerald-800{% elif p.status == 'Rejected' %}bg-rose-100 text-rose-800{% else %}bg-slate-100 text-slate-700{% endif %}">{{ p.status }}</span>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">proposed by <code>{{ p.proposer }}</code>{% if p.review %} · {{ p.review.seller_pct }}% to seller{% endif %}</div>
+        <div class="mt-2 flex gap-2 flex-wrap">
+          {% for voter, action in p.votes.items %}
+            <span class="text-xs rounded-full px-2 py-0.5 {% if action == 'Approve' %}bg-emerald-100 text-emerald-800{% else %}bg-rose-100 text-rose-800{% endif %}">{{ voter }} → {{ action }}</span>
+          {% empty %}
+            <span class="text-xs text-slate-500">no votes yet — council: {{ gov.council.members|join:", " }}</span>
+          {% endfor %}
+        </div>
+        {% if p.status == 'InProgress' and gov.is_council %}
+          <div class="mt-2 flex gap-2 flex-wrap">
+            <button onclick="voteGovProposal({{ p.id }}, 'VoteApprove')" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Approve</button>
+            <button onclick="voteGovProposal({{ p.id }}, 'VoteReject')" class="border border-rose-400 text-rose-300 rounded-lg px-3 py-1.5 text-xs">Reject</button>
+          </div>
+        {% endif %}
+      </div>
+    {% empty %}
+      {% if gov.is_party %}
+        <div class="mt-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Seller share of remaining balance (%)</label>
+            <input id="rb-pct" type="number" min="0" max="100" value="{{ dispute.ai_recommendation.pct|default:50 }}" class="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <button onclick="proposeReview()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm font-medium">Escalate to review board</button>
+          <span class="text-xs text-slate-500">One wallet signature · bond returned when the proposal finalises</span>
+        </div>
+      {% else %}
+        <p class="text-sm text-slate-500 mt-2">No proposal yet. Only the buyer or seller of this escrow can escalate it to the board.</p>
+      {% endif %}
+    {% endfor %}
+    <p id="rb-status" class="text-xs text-slate-500 mt-2"></p>
+  </section>
+{% endif %}
+
 <div class="grid lg:grid-cols-3 gap-4 mt-5">
   <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
     <h2 class="font-semibold">Agreement</h2>
@@ -208,6 +260,8 @@
   const WALLET = "{{ wallet_account|default:'' }}";
   const OWNER = "{{ owner|default:'' }}";
   const DISPUTE_ID = {{ dispute.id|default:"null" }};
+  const GOV_DAO = "{{ gov.dao|default:''|escapejs }}";
+  const GOV_BOND = "{{ gov.proposal_bond_yocto|default:'0' }}";
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function addButton(label, fn, style='primary') {
@@ -279,28 +333,14 @@
     if ((state === 'Funded' || state === 'ShipmentPending') && isBuyer && deadlinePassed()) {
       addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
     }
-    if (state === 'ReviewRequired' && WALLET === OWNER) {
-      const input = el('<input type="number" min="0" max="100" value="100" class="w-24 border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200" placeholder="Seller share %">');
-      const box = el('<div class="flex flex-wrap items-center gap-2"><div class="w-full text-xs text-amber-300/90">Platform resolution path (disclosed fallback). Seller share of the remaining balance; the rest returns to the buyer.</div></div>');
-      box.appendChild(input);
-      const b = el('<button class="bg-amber-600 hover:bg-amber-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Resolve review</button>');
-      b.onclick = async () => {
-        try {
-          const pct = Math.max(0, Math.min(100, parseInt(input.value || '0', 10)));
-          status('Resolving…');
-          const res = await VPApp.callContract('resolve_review', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '0', '150000000000000');
-          if (DISPUTE_ID) {
-            await VPApp.jsonPost(`/api/v1/disputes/${DISPUTE_ID}/resolve/`, {
-              release_pct: pct,
-              note: 'Platform resolution via the disclosed review path.',
-              tx_hash: res.txHash,
-            }).catch(() => {});
-          }
-          status('Resolved — refreshing…'); setTimeout(() => window.location.reload(), 2500);
-        } catch (e) { status(''); alert('Failed: ' + e.message); }
-      };
-      box.appendChild(b);
-      document.getElementById('actions').appendChild(box);
+    // Disputes are governed now: resolution happens via the Review board
+    // (council-approved DAO proposal) or the community arbitration pool —
+    // the platform owner has no resolution action. Point people at the panel.
+    if (state === 'ReviewRequired') {
+      addButton('Decide via Review board (below) ↓', () => {
+        const panel = document.getElementById('rb-pct');
+        if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 'ghost');
     }
     if (ns(state) && !CHAIN.problem_reported && !CHAIN.seller_paid) {
       addButton('Open Demo shipment controls', () => window.location.href = '/partners/portal/', 'ghost');
@@ -413,6 +453,45 @@
       el.textContent = 'Stake reclaimed — refreshing…';
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { el.textContent = ''; alert('Claim failed: ' + e.message); }
+  }
+
+  // --- Review board (Sputnik DAO) ---------------------------------------
+  async function proposeReview() {
+    const el = document.getElementById('rb-status');
+    const pct = Math.max(0, Math.min(100, parseInt((document.getElementById('rb-pct') || {}).value || '50', 10)));
+    const args = {
+      proposal: {
+        description: 'Resolve dispute on ' + AGREEMENT.escrow_id + ': ' + pct + '% to seller',
+        kind: {
+          FunctionCall: {
+            receiver_id: document.body.dataset.contract,
+            actions: [{
+              method_name: 'resolve_review',
+              args: btoa(JSON.stringify({ escrow_id: AGREEMENT.escrow_id, seller_pct: pct })),
+              deposit: '0',
+              gas: '100000000000000',
+            }],
+          },
+        },
+      },
+    };
+    try {
+      el.textContent = 'Confirm the escalation in your wallet (bond attached)…';
+      await VPApp.callContractOn(GOV_DAO, 'add_proposal', args, GOV_BOND, '150000000000000');
+      el.textContent = 'Proposal filed — refreshing…';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { el.textContent = ''; alert('Escalation failed: ' + e.message); }
+  }
+
+  async function voteGovProposal(id, action) {
+    const el = document.getElementById('rb-status');
+    try {
+      el.textContent = 'Confirm your vote in the wallet…';
+      // Final approvals execute the proposal → needs the higher gas budget.
+      await VPApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
+      el.textContent = 'Vote recorded — refreshing…';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { el.textContent = ''; alert('Vote failed: ' + e.message); }
   }
 
   async function fileDispute(method, label) {

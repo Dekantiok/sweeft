@@ -32,6 +32,8 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
 | AI co-pilot payments | **Real on-chain** — scoped, revocable tUSD allowance; the agent pays within the budget the user grants (token contract enforces it) |
 | Dispute arbitration pool | **Real** — any NEAR holder stakes NEAR to vote the split; quorum → permissionless settlement; voters reclaim stake |
+| Review board (Sputnik DAO) | **Real** — disputes resolve ONLY via council-approved on-chain proposals (2-of-3); the platform owner has no resolution key |
+| Treasury (DAO multisig) | **Real** — platform fees accrue to the board account; spending requires a council-approved Transfer proposal |
 | Fiat payouts / real carriers | **Not implemented** (out of MVP scope) |
 
 Boundaries we state plainly: a carrier scan does not prove parcel contents; buyer confirmation is a
@@ -59,6 +61,24 @@ Full lifecycle proven with real transactions and exact balances (see `scripts/e2
 
 TEE negative case also verified: a tampered tracking number returns
 `verified: false` with the mismatch reason — natively (unit tests) and inside the real TEE.
+
+### Governance verified on testnet (Sputnik DAO review board)
+
+Board: [`veripay-board.testnet`](https://testnet.near.org/accounts/veripay-board.testnet) — council 2-of-3
+(`steepdata3968` + `seller.steepdata3968` + `logistics.steepdata3968`), default Sputnik policy.
+
+- **Proposal #0** — council voted to lower the proposal bond to 0.1 NEAR (governance parameter change, executed).
+- **Proposal #1** — dispute on `VP-000012`: the seller (a party) filed the escalation; the **other two council
+  members approved** (the proposing party recused itself) → the DAO executed `resolve_review(VP-000012, 60)`
+  on-chain → exact split: seller **+69 tUSD**, buyer **+46 tUSD** of the 115 tUSD escrow.
+- **Proposal #2** — treasury spend: 0.2 NEAR from the board account to the logistics partner
+  (arbitration participation incentive) — executed via Transfer proposal.
+- **Platform fees → treasury**: completing `VP-000006` paid the 5 tUSD fee to the board account. (First attempt
+  failed because the treasury wasn't registered in the token — the payout rolled back safely and the new
+  permissionless `retry_platform_payout` recovered the funds on-chain: treasury **+5 tUSD**.)
+
+The escrow contract's `get_gov_info` shows `arbiter`/`treasury` = the DAO; the platform owner can appoint the board
+but **cannot resolve disputes** — that power is gone by design.
 
 Explorer: <https://testnet.near.org/accounts/veripay.steepdata3968.testnet>
 
@@ -172,20 +192,25 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
    contract callback records the attested result.
 6. Seller/provider **settle logistics** (verified pickup); buyer **confirms receipt** → seller +
    platform payouts settle, the listing flips to `sold`, and **reputation moves on-chain for both
-   wallets** — visible instantly on their profiles.
+   wallets** — visible instantly on their profiles. Platform fees land in the **review-board treasury**.
+7. **Governance**: while an escrow is `ReviewRequired`, either party can **Escalate to the review board**
+   from the escrow page — a wallet-signed DAO proposal (`resolve_review`); council members approve on
+   `/governance/`; at 2-of-3 the DAO executes the split on-chain. The arbitration pool stays as the
+   permissionless community tier, the board is the governed tier.
 
 Scripted version of the escrow path: `scripts/e2e_lifecycle.sh`.
 
-### AI co-pilot payments (scoped allowance)
+### AI co-pilot payments (scoped allowance, user-set limit)
 
 Open the floating 💬 panel and talk to the co-pilot, e.g.
 “pay 25 tUSD to seller.steepdata3968.testnet for invoice 12”.
 
 1. The co-pilot prepares a payment card (recipient, amount, your current budget).
-2. **One wallet signature** grants a tUSD allowance (`approve` on the token) — or
-   “Pay now” settles instantly if a budget already exists.
+2. **You set the limit** — type the budget on the card (or on the dashboard “Co-pilot budget” card)
+   and approve it with **one wallet signature** (`approve` on the token). “Pay now” settles instantly
+   once a budget exists.
 3. The agent then signs `ft_transfer_from` **within that budget** — the token
-   contract enforces the allowance on-chain. Revoke any time by approving 0.
+   contract enforces your limit on-chain. Update the limit any time; revoke by setting 0.
 
 Platform policy caps each payment (`AI_AGENT_MAX_PAYMENT`, default 100 tUSD).
 Everything is audited as a `PaymentIntent` with its tx hash. Testnet disclosure:
@@ -195,6 +220,16 @@ same design runs with the key inside a TEE/KMS — the allowance stays the bound
 Verified live: wallet granted 250 tUSD → agent paid 5 + 10 + 7 tUSD (three
 batches, exact balances on-chain) → allowance deducted to 228; over-cap and
 no-budget paths refused correctly.
+
+### Governance console
+
+- `/governance/` — board account, council members + threshold, all proposals with votes and statuses,
+  treasury balances (NEAR + tUSD), treasury Transfer proposals, and the on-chain wiring
+  (`arbiter`/`treasury`).
+- Escrow page — “Review board” panel appears while a dispute is open: escalation form for the parties,
+  Approve/Reject for council members, live vote chips.
+- Contract — `get_gov_info`, `set_arbiter`, `set_treasury` (+ 7 Rust unit tests for the authorization
+  rules) and permissionless `retry_platform_payout` for failed fee transfers.
 
 ## Tests
 

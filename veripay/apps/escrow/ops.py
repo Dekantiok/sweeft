@@ -35,6 +35,14 @@ def ops_console(request):
     except Exception:  # noqa: BLE001
         count, escrows = 0, []
 
+    gov = None
+    try:
+        from . import gov as gov_mod
+
+        gov = gov_mod.summary()
+    except Exception:  # noqa: BLE001
+        gov = None
+
     completed = [e for e in escrows if e.get("state") == "Completed"]
     disputed = [e for e in escrows if e.get("state") == "ReviewRequired"]
     total_volume = sum(int(e.get("seller_amount") or 0) for e in completed)
@@ -69,6 +77,7 @@ def ops_console(request):
             "stats": stats,
             "recent_escrows": escrows[:12],
             "arbitration": arbitration,
+            "gov": gov,
             "pending_partners_list": LogisticsPartner.objects.filter(status__in=["PENDING", "UNDER_REVIEW"]),
             "open_disputes_list": Dispute.objects.filter(status="open")[:20],
             "fee_bps": (near.get_config_cached() or {}).get("platform_fee_bps", 500),

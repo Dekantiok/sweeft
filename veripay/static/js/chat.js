@@ -178,9 +178,13 @@
       pay.onclick = () => execPayment(node, c.intent_id);
       btns.appendChild(pay);
     } else {
-      const grant = el(`<button style="background:#059669;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12.5px;cursor:pointer">Grant ${escapeHtml(c.grant_display)} tUSD budget &amp; pay</button>`);
-      grant.onclick = () => grantAndPay(node, c.intent_id, c.agent, c.grant_amount);
-      btns.appendChild(grant);
+      const wrap = el('<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>');
+      const input = el(`<input value="${escapeHtml(c.grant_display)}" title="Budget to grant the co-pilot (tUSD)" style="width:6rem;background:#020617;border:1px solid #334155;border-radius:8px;padding:6px 8px;font-size:12.5px;color:#e2e8f0">`);
+      const grant = el('<button style="background:#059669;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12.5px;cursor:pointer">Grant budget &amp; pay</button>');
+      grant.onclick = () => grantAndPay(node, c.intent_id, c.agent, toUnits(input.value));
+      wrap.appendChild(input);
+      wrap.appendChild(grant);
+      btns.appendChild(wrap);
     }
     const wallet = el('<button style="background:none;border:1px solid #475569;color:#cbd5e1;border-radius:8px;padding:7px 10px;font-size:12.5px;cursor:pointer">Pay with my wallet</button>');
     wallet.onclick = () => payWithWallet(node, c.to, c.amount, c.memo);

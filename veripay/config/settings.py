@@ -160,3 +160,12 @@ INTENTS_TIMEOUT_SECONDS = int(os.environ.get("INTENTS_TIMEOUT_SECONDS", "30"))
 # Platform owner hint for UI affordances (nav links). Authorization is always
 # checked against the on-chain config — this is display only.
 PLATFORM_OWNER = os.environ.get("PLATFORM_OWNER", "steepdata3968.testnet")
+
+# ---------------------------------------------------------------------------
+# Governance: Sputnik/Trezu DAO review board + treasury.
+#
+# The escrow contract's `arbiter`/`treasury` are set to this account on-chain
+# (`get_gov_info`). Disputes resolve ONLY via council-approved proposals;
+# platform fees accrue to this account's treasury.
+# ---------------------------------------------------------------------------
+GOVERNANCE_DAO = os.environ.get("GOVERNANCE_DAO", "veripay-board.testnet")

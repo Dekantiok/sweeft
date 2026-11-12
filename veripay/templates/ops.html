@@ -100,6 +100,19 @@
           {% endfor %}
         </div>
       </div>
+
+      {% if gov %}
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <h2 class="font-semibold text-sm">Governance (Sputnik DAO)</h2>
+        <p class="text-xs text-slate-500 mt-1">
+          Review board <code>{{ gov.dao }}</code> — disputes resolve only via council proposals; fees accrue to the treasury.
+        </p>
+        <div class="text-sm mt-2">
+          <b>{{ gov.active_count }}</b> open proposal(s) · treasury <b>{{ gov.treasury_tusd_display }}</b> tUSD / <b>{{ gov.treasury_near_display }}</b> NEAR
+        </div>
+        <a class="inline-block mt-2 text-xs text-emerald-700" href="/governance/">Open governance console →</a>
+      </div>
+      {% endif %}
     </section>
   </div>
 {% endif %}

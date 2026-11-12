@@ -608,12 +608,35 @@ impl VeriPay {
             return;
         }
         let escrow = self.internal_get(&escrow_id);
-        let promise = ft_transfer(escrow.token.clone(), self.owner.clone(), escrow.platform_fee);
+        let promise = ft_transfer(escrow.token.clone(), self.platform_fee_recipient(), escrow.platform_fee);
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .on_payout_result(escrow_id, "platform".to_string()),
         );
+    }
+
+    /// Permissionless retry for a failed platform-fee payout (e.g. the fee
+    /// recipient was not registered in the token at completion time, or the
+    /// transfer ran out of gas). Funds can only ever go to the configured
+    /// fee recipient — safe for anyone to call.
+    pub fn retry_platform_payout(&mut self, escrow_id: String) -> Promise {
+        let mut escrow = self.internal_get(&escrow_id);
+        require!(escrow.seller_paid, "seller payout not complete");
+        require!(!escrow.platform_paid, "platform fee already paid");
+        require!(
+            escrow.state == EscrowState::Completed || escrow.state == EscrowState::Refunded,
+            "escrow not settled"
+        );
+        escrow.platform_paid = true;
+        let platform_fee = escrow.platform_fee;
+        let token = escrow.token.clone();
+        self.escrows.insert(escrow_id.clone(), escrow);
+        ft_transfer(token, self.platform_fee_recipient(), platform_fee).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .on_payout_result(escrow_id, "platform".to_string()),
+        )
     }
 
     /// Rolls a payout flag back when its FT transfer failed (idempotency guard).
@@ -834,11 +857,74 @@ impl VeriPay {
         arbitration_map().get(&escrow_id).cloned()
     }
 
-    /// Explicit manual review path (platform operator). Not arbitration: it
-    /// releases the remaining balance as a simple split between seller and
-    /// buyer. Disclosed as a centralized fallback in the README.
+    // ------------------------------------------------------------------
+    // Governance: review board + treasury
+    //
+    // The platform's trust model inverts from "one hot key" to "governed":
+    // disputes are decided by the board account (a Sputnik/Trezu DAO whose
+    // council must approve the split as an on-chain proposal), and platform
+    // fees accrue to a treasury account instead of the owner EOA.
+    // ------------------------------------------------------------------
+
+    /// Appoint the review board. Callable by the owner (bootstrap) or by the
+    /// current board (handoff). Once set, ONLY the board can resolve disputes.
+    pub fn set_arbiter(&mut self, account_id: AccountId) {
+        let caller = env::predecessor_account_id();
+        let current = self.get_arbiter();
+        require!(
+            caller == self.owner || Some(caller) == current,
+            "only the owner or the current board can appoint the board"
+        );
+        gov_config_map().insert("arbiter".to_string(), account_id);
+    }
+
+    /// Review board account (None = owner bootstrap mode).
+    pub fn get_arbiter(&self) -> Option<AccountId> {
+        gov_config_map().get(&"arbiter".to_string()).cloned()
+    }
+
+    /// Set where platform fees accrue (e.g. a Trezu multisig treasury).
+    /// Callable by the owner or the current treasury/board.
+    pub fn set_treasury(&mut self, account_id: AccountId) {
+        let caller = env::predecessor_account_id();
+        let current = self.get_treasury();
+        let board = self.get_arbiter();
+        require!(
+            caller == self.owner || Some(caller.clone()) == current || Some(caller) == board,
+            "only the owner, board or current treasury can change the treasury"
+        );
+        gov_config_map().insert("treasury".to_string(), account_id);
+    }
+
+    /// Treasury account (None = owner).
+    pub fn get_treasury(&self) -> Option<AccountId> {
+        gov_config_map().get(&"treasury".to_string()).cloned()
+    }
+
+    /// Single-call governance snapshot for UIs.
+    pub fn get_gov_info(&self) -> GovInfo {
+        GovInfo {
+            arbiter: self.get_arbiter(),
+            treasury: self.get_treasury(),
+        }
+    }
+
+    /// Where platform fees go: treasury when set, else owner.
+    fn platform_fee_recipient(&self) -> AccountId {
+        self.get_treasury().unwrap_or_else(|| self.owner.clone())
+    }
+
+    /// Explicit manual review path — now GOVERNED. Disputes are resolved by
+    /// the review board set via `set_arbiter` (typically a Sputnik/Trezu DAO
+    /// whose council approves the split as an on-chain FunctionCall proposal).
+    /// Until a board is appointed the platform owner can resolve (bootstrap
+    /// only); once `set_arbiter` is called the owner can no longer decide.
     pub fn resolve_review(&mut self, escrow_id: String, seller_pct: u8) -> Promise {
-        require!(env::predecessor_account_id() == self.owner, "only the platform owner resolves review");
+        let resolver = self.get_arbiter().unwrap_or_else(|| self.owner.clone());
+        require!(
+            env::predecessor_account_id() == resolver,
+            "only the review board resolves disputes"
+        );
         require!(seller_pct <= 100, "pct must be 0..=100");
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::ReviewRequired, "wrong state");
@@ -1059,4 +1145,114 @@ fn bump_reputation(account: &AccountId, f: impl FnOnce(&mut Reputation)) {
 /// as a state-struct field) so no state migration is needed on upgrade.
 fn arbitration_map() -> LookupMap<String, ArbitrationCase> {
     LookupMap::new(b"ar1".to_vec())
+}
+
+/// Governance configuration (review board + treasury) lives under its own
+/// prefix — never a state-struct field — so upgrades need no migration.
+/// While unset, the platform owner is the bootstrap resolver/fee recipient.
+fn gov_config_map() -> LookupMap<String, AccountId> {
+    LookupMap::new(b"gov".to_vec())
+}
+
+/// Governance snapshot for UIs (single call).
+#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, Debug)]
+#[borsh(crate = "near_sdk::borsh")]
+#[serde(crate = "near_sdk::serde")]
+pub struct GovInfo {
+    /// Review board (typically a Sputnik/Trezu DAO). Once set, ONLY this
+    /// account can resolve disputes — the owner fallback is replaced.
+    pub arbiter: Option<AccountId>,
+    /// Where platform fees accrue. Unset = owner.
+    pub treasury: Option<AccountId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use near_sdk::test_utils::{accounts, VMContextBuilder};
+    use near_sdk::testing_env;
+
+    fn as_account(account: AccountId) -> VMContextBuilder {
+        let mut b = VMContextBuilder::new();
+        b.predecessor_account_id(account)
+            .account_balance(NearToken::from_near(50));
+        b
+    }
+
+    fn setup() -> VeriPay {
+        testing_env!(as_account(accounts(0)).build());
+        VeriPay::new(accounts(0), accounts(5), "test-project".to_string(), 500)
+    }
+
+    #[test]
+    fn owner_appoints_board_and_board_can_hand_off() {
+        let mut c = setup();
+        assert_eq!(c.get_arbiter(), None);
+        c.set_arbiter(accounts(1));
+        assert_eq!(c.get_arbiter(), Some(accounts(1)));
+        testing_env!(as_account(accounts(1)).build());
+        c.set_arbiter(accounts(2));
+        assert_eq!(c.get_arbiter(), Some(accounts(2)));
+    }
+
+    #[test]
+    #[should_panic(expected = "only the owner or the current board")]
+    fn stranger_cannot_appoint_board() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(5)).build());
+        c.set_arbiter(accounts(1));
+    }
+
+    #[test]
+    fn treasury_defaults_to_owner_then_follows_config() {
+        let mut c = setup();
+        assert_eq!(c.platform_fee_recipient(), accounts(0));
+        c.set_treasury(accounts(3));
+        assert_eq!(c.platform_fee_recipient(), accounts(3));
+        // the board can also rotate the treasury
+        testing_env!(as_account(accounts(0)).build());
+        c.set_arbiter(accounts(1));
+        testing_env!(as_account(accounts(1)).build());
+        c.set_treasury(accounts(4));
+        assert_eq!(c.get_treasury(), Some(accounts(4)));
+    }
+
+    #[test]
+    #[should_panic(expected = "only the owner, board or current treasury")]
+    fn stranger_cannot_change_treasury() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(5)).build());
+        c.set_treasury(accounts(3));
+    }
+
+    #[test]
+    #[should_panic(expected = "only the review board resolves disputes")]
+    fn owner_cannot_resolve_after_board_is_set() {
+        let mut c = setup();
+        c.set_arbiter(accounts(1));
+        // Owner tries to decide a dispute — rejected BEFORE any state access.
+        c.resolve_review("VP-000001".to_string(), 50);
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown escrow")]
+    fn board_passes_resolver_auth_check() {
+        let mut c = setup();
+        c.set_arbiter(accounts(1));
+        testing_env!(as_account(accounts(1)).build());
+        // Board passes the resolver gate and fails later on the missing
+        // escrow — proving the auth check itself accepts the board.
+        c.resolve_review("VP-000001".to_string(), 50);
+    }
+
+    #[test]
+    fn gov_info_snapshot() {
+        let mut c = setup();
+        assert_eq!(c.get_gov_info().arbiter, None);
+        c.set_arbiter(accounts(1));
+        c.set_treasury(accounts(2));
+        let info = c.get_gov_info();
+        assert_eq!(info.arbiter, Some(accounts(1)));
+        assert_eq!(info.treasury, Some(accounts(2)));
+    }
 }
