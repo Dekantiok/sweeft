@@ -23,6 +23,8 @@ def config_context(request):
         "VERIPAY_CONTRACT": settings.VERIPAY_CONTRACT,
         "TUSD_CONTRACT": settings.TUSD_CONTRACT,
         "OUTLAYER_CONTRACT": settings.OUTLAYER_CONTRACT,
+        "NEAR_NETWORK": settings.NEAR_NETWORK,
+        "EXPLORER_URL": settings.EXPLORER_URL,
     }
 
 

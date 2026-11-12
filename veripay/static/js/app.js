@@ -27,13 +27,20 @@
   }
 
   async function connect() {
-    await VPWallet.init({ network: state.network, contractId: state.contractId || (await cfg()).veripay_contract });
-    VPWallet.showModal();
-    VPWallet.onChange(async (accountId) => {
-      if (accountId && accountId !== state.walletAccount) {
-        await login(accountId);
-      }
-    });
+    try {
+      const c = await cfg();
+      const network = (state.network || c.network || 'testnet').trim() || 'testnet';
+      await VPWallet.init({ network, contractId: state.contractId || c.veripay_contract });
+      VPWallet.showModal();
+      VPWallet.onChange(async (accountId) => {
+        if (accountId && accountId !== state.walletAccount) {
+          await login(accountId);
+        }
+      });
+    } catch (e) {
+      console.error('Wallet connect failed', e);
+      alert('Wallet connect failed: ' + (e && e.message ? e.message : e));
+    }
   }
 
   async function login(accountId) {
