@@ -8,7 +8,12 @@ for funds and authorization.
 import os
 from pathlib import Path
 
+import environ
+
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load veripay/.env if present (testnet addresses live there).
+environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-not-secret-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"

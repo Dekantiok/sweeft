@@ -723,6 +723,6 @@ fn ft_transfer(token: AccountId, receiver_id: AccountId, amount: U128) -> Promis
 }
 
 /// True when the promise at `index` (a chained callback's input) succeeded.
-fn payout_ok(index: usize) -> bool {
+fn payout_ok(index: u64) -> bool {
     matches!(env::promise_result(index), near_sdk::PromiseResult::Successful(_))
 }
