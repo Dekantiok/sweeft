@@ -1,5 +1,6 @@
 // VeriPay wallet bundle: exposes a stable window.VPWallet API to Django templates.
 // Built with esbuild; see package.json.
+import './shims/process-shim.js';
 import { setupWalletSelector } from '@near-wallet-selector/core';
 import { setupMeteorWallet } from '@near-wallet-selector/meteor-wallet';
 import { setupHereWallet } from '@near-wallet-selector/here-wallet';

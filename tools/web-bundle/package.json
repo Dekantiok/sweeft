@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "Bundles @near-wallet-selector into a single static JS file for the Django templates.",
   "scripts": {
-    "build": "esbuild entry.js --bundle --format=iife --global-name=VPWallet --outfile=../../static/js/veripay-wallet.js --alias:crypto=./shims/crypto.js --alias:buffer=./shims/buffer.js --alias:util=./shims/util.js --define:global=globalThis --define:process.env.NODE_ENV='\"production\"' --minify"
+    "build": "esbuild entry.js --bundle --format=iife --global-name=VPWallet --outfile=../../veripay/static/js/veripay-wallet.js --alias:crypto=./shims/crypto.js --alias:buffer=./shims/buffer.js --alias:util=./shims/util.js --define:global=globalThis --define:process.env.NODE_ENV='\"production\"' --minify",
+    "css": "mkdir -p ../../veripay/static/css && cp node_modules/@near-wallet-selector/modal-ui/styles.css ../../veripay/static/css/wallet-modal.css"
   },
   "dependencies": {
     "@near-wallet-selector/core": "10.1.4",
