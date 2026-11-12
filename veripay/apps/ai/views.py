@@ -6,7 +6,10 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.wallets.views import current_wallet
+
 from . import services
+from .agent import run_agent
 from .providers.base import AIProviderError
 from .registry import provider_status
 
@@ -65,3 +68,28 @@ def ai_listing(request):
     except AIProviderError as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=502)
     return JsonResponse({"ok": True, "draft": draft})
+
+
+@csrf_exempt
+@require_POST
+def ai_chat(request):
+    """One co-pilot turn: natural language -> validated tools -> reply + action cards.
+
+    The agent proposes; the wallet authorizes. No endpoint here signs anything.
+    """
+    wallet = current_wallet(request)
+    if not wallet:
+        return JsonResponse({"ok": False, "error": "connect your wallet to use the trade co-pilot"}, status=401)
+    try:
+        body = json.loads(request.body or "{}")
+    except ValueError:
+        return JsonResponse({"ok": False, "error": "invalid JSON"}, status=400)
+    message = (body.get("message") or "").strip()
+    if not message:
+        return JsonResponse({"ok": False, "error": "message is required"}, status=400)
+    try:
+        result = run_agent(message[:2000], wallet)
+    except AIProviderError as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=502)
+    result["wallet"] = wallet
+    return JsonResponse({"ok": True, **result})
