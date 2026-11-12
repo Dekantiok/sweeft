@@ -213,7 +213,6 @@
     const reason = prompt('Describe the problem (stored as a hash on-chain):');
     if (!reason) return;
     try {
-      const hash = await VPApp.cryptoHash ? VPApp.cryptoHash(reason) : null;
       status('Reporting problem…');
       const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(reason));
       const hex = Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');

@@ -68,8 +68,10 @@
   const DECIMALS = 6;
   function toUnits(text) {
     const clean = String(text || '0').replace(/,/g, '').trim();
-    const [w, _, f] = clean.partition ? [clean.split('.')[0], '', clean.split('.')[1] || ''] : [clean, '', ''];
-    return BigInt(w || '0') * BigInt(10 ** DECIMALS) + BigInt((f + '0'.repeat(DECIMALS)).slice(0, DECIMALS) || '0');
+    if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return 0n;
+    const [w = '0', f = ''] = clean.split('.');
+    const frac = (f + '0'.repeat(DECIMALS)).slice(0, DECIMALS);
+    return BigInt(w || '0') * BigInt(10 ** DECIMALS) + BigInt(frac || '0');
   }
   async function sha256Hex(text) {
     const data = new TextEncoder().encode(text);
