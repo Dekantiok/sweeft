@@ -55,7 +55,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.wallets.context.wallet_context",
-                "apps.escrow.context.config_context",
+                "apps.escrow.views.config_context",
             ],
         },
     },

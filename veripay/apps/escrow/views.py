@@ -86,8 +86,25 @@ def escrow_detail(request, escrow_id: str):
         chain = near.get_escrow(escrow_id)
     except Exception as e:  # noqa: BLE001 - surfaced in the UI
         chain_error = str(e)
+    if agreement is None and chain:
+        # On-chain escrow without a metadata row (e.g. created via CLI):
+        # synthesize a read-only record so the page renders.
+        agreement = EscrowAgreement(
+            escrow_id=escrow_id,
+            seller_account=chain["seller"],
+            buyer_account=chain.get("buyer") or "",
+            product_name=chain.get("product_name") or "(unknown — created outside the web app)",
+            seller_amount=chain["seller_amount"],
+            logistics_amount=chain["logistics_amount"],
+            platform_fee=chain["platform_fee"],
+            total_amount=chain["total_amount"],
+            token_contract=chain["token"],
+            state=chain["state"],
+            dispatch_deadline_ms=chain["dispatch_deadline_ms"],
+            terms_hash=chain.get("terms_hash", ""),
+        )
     invitation_link = None
-    if agreement:
+    if agreement and agreement.pk:
         inv = agreement.invitations.filter(status="pending").first()
         if inv:
             invitation_link = request.build_absolute_uri(f"/invitations/{inv.token}/")
@@ -95,8 +112,10 @@ def escrow_detail(request, escrow_id: str):
         request,
         "escrow_detail.html",
         {
+            "escrow_id": escrow_id,
             "agreement": agreement,
             "chain": chain,
+            "chain_json": json.dumps(chain or {}),
             "chain_error": chain_error,
             "wallet_account": current_wallet(request),
             "invitation_link": invitation_link,

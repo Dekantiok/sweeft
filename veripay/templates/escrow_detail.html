@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% load humanize %}
 {% block title %}{{ agreement.escrow_id|default:escrow_id }} — VeriPay{% endblock %}
 {% block content %}
 {% with chain_state=chain.state|default:agreement.state %}
@@ -80,9 +79,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  const CHAIN = {{ chain|safe|default:"null" }};
+  const CHAIN = {{ chain_json|safe }};
   const AGREEMENT = {
-    escrow_id: "{{ agreement.escrow_id|default:escrow_id }}",
+    escrow_id: "{{ agreement.escrow_id|escapejs }}",
     seller: "{{ chain.seller|default:agreement.seller_account|escapejs }}",
     buyer: "{{ chain.buyer|default:agreement.buyer_account|escapejs }}",
   };
