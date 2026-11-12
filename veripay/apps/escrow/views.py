@@ -172,6 +172,16 @@ def escrow_detail(request, escrow_id: str):
         owner = (near.view_call(settings.VERIPAY_CONTRACT, "get_config", {}) or {}).get("owner")
     except Exception:  # noqa: BLE001 - page renders without config
         pass
+    provider_options = []
+    try:
+        from apps.logistics.models import LogisticsPartner
+
+        provider_options = [
+            {"wallet": p.settlement_wallet, "name": p.company_name}
+            for p in LogisticsPartner.objects.filter(status="ACTIVE")
+        ]
+    except Exception:  # noqa: BLE001
+        provider_options = []
     return render(
         request,
         "escrow_detail.html",
@@ -183,6 +193,7 @@ def escrow_detail(request, escrow_id: str):
             "chain_error": chain_error,
             "wallet_account": current_wallet(request),
             "owner": owner,
+            "provider_options": provider_options,
             "invitation_link": invitation_link,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],

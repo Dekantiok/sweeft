@@ -27,7 +27,7 @@
             <a class="hover:text-emerald-700" href="/dashboard/">Dashboard</a>
             <a class="hover:text-emerald-700" href="/escrow/new/">New agreement</a>
             <a class="hover:text-emerald-700" href="/market/mine/">My listings</a>
-            <a class="hover:text-emerald-700" href="/partners/portal/">Partner portal</a>
+            {% if my_partner %}<a class="hover:text-emerald-700" href="/partners/portal/">Partner portal</a>{% endif %}
           {% endif %}
           <a class="hover:text-emerald-700" href="/logistics/">Logistics</a>
         </nav>
@@ -79,6 +79,10 @@
       explorer: document.body.dataset.explorer,
       walletAccount: "{{ wallet_account|default:'' }}",
     });
+    // Deep links like /?connect=1 open the wallet modal immediately.
+    if (!{{ wallet_account|yesno:"true,false" }} && new URLSearchParams(location.search).get('connect') === '1') {
+      VPApp.connect();
+    }
   </script>
   {% block scripts %}{% endblock %}
 </body>

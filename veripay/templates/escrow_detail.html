@@ -55,6 +55,9 @@
   <section class="bg-white border border-slate-200 rounded-xl p-4">
     <h2 class="font-semibold">Actions</h2>
     <div id="actions" class="mt-3 space-y-3"></div>
+    <datalist id="provider-list">
+      {% for p in provider_options %}<option value="{{ p.wallet }}">{{ p.name }}</option>{% endfor %}
+    </datalist>
     <p class="text-xs text-slate-500 mt-3">All financial actions are wallet-signed; the backend cannot move funds.</p>
   </section>
 
@@ -127,8 +130,11 @@
     }
     if (state === 'Funded' && isSeller) {
       const input = el('<input class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Provider wallet (e.g. log.testnet)">');
+      input.setAttribute('list', 'provider-list');
       const box = el('<div class="space-y-2"></div>');
       box.appendChild(input);
+      const hint = el('<div class="text-xs text-slate-500">Approved logistics providers are suggested — pick one from the directory.</div>');
+      box.appendChild(hint);
       const b = el('<button class="w-full border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm">Assign logistics provider</button>');
       b.onclick = async () => {
         try {

@@ -69,6 +69,8 @@ def partner_portal(request):
     if not wallet:
         return redirect("/?connect=1")
     partners = LogisticsPartner.objects.filter(owner_wallet=wallet)
+    if not partners.exists():
+        return render(request, "partner_gate.html", {"wallet_account": wallet})
     shipments = Shipment.objects.filter(provider__in=partners).select_related("provider")
     settlements = [
         {"escrow_id": s.escrow_id, "amount": s.logistics_amount, "state": s.state}

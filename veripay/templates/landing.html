@@ -1,14 +1,65 @@
 {% extends "base.html" %}
-{% block title %}VeriPay — escrow for physical commerce{% endblock %}
+{% block title %}VeriPay — safe trade on NEAR{% endblock %}
 {% block content %}
-<section class="max-w-3xl">
-  <h1 class="text-3xl font-bold tracking-tight">Escrow that follows the parcel.</h1>
-  <p class="text-slate-600 mt-3">
+<section class="max-w-4xl">
+  <h1 class="text-4xl font-bold tracking-tight">Trade safely, anywhere.</h1>
+  <p class="text-slate-600 mt-3 text-lg">
     VeriPay holds the buyer's funds in a NEAR smart contract and releases them along an agreed path:
-    the logistics provider is paid when carrier pickup is verified, the seller is paid when delivery is
-    verified by OutLayer's TEE and the buyer confirms receipt, and the platform fee is disclosed before funding.
+    logistics is paid when carrier pickup is verified, the seller when delivery is TEE-verified and
+    the buyer confirms. One wallet connects escrow, marketplace, logistics and your reputation.
   </p>
-  <div class="grid sm:grid-cols-3 gap-4 mt-8">
+
+  {% if wallet_account %}
+    <div class="mt-6 flex flex-wrap items-center gap-3">
+      <a href="/escrow/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-5 py-2.5 font-medium">Create an escrow</a>
+      <a href="/market/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-5 py-2.5">Browse the marketplace</a>
+      <span class="text-sm text-slate-500">Signed in as <code>{{ wallet_account }}</code></span>
+    </div>
+  {% else %}
+    <div class="mt-6">
+      <button onclick="VPApp.connect()" class="bg-slate-900 hover:bg-slate-700 text-white rounded-lg px-5 py-2.5 font-medium">Connect wallet to start</button>
+      <span class="text-sm text-slate-500 ml-3">Free sign-in — no gas, no transaction.</span>
+    </div>
+  {% endif %}
+</section>
+
+<section class="grid md:grid-cols-2 gap-5 mt-10">
+  <div class="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col">
+    <div class="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Direct escrow</div>
+    <h2 class="text-xl font-semibold mt-2">I already have a counterparty</h2>
+    <p class="text-sm text-slate-600 mt-2 flex-1">
+      You know who you're dealing with? Agree the deal, lock the funds, ship the goods.
+      Invite the other wallet by link if they don't have one yet — acceptance and funding stay
+      wallet-signed and enforced on-chain.
+    </p>
+    <ul class="text-sm text-slate-600 mt-3 space-y-1 list-disc list-inside">
+      <li>Fixed parties — nobody else can join</li>
+      <li>Logistics + platform fees disclosed before funding</li>
+      <li>Release only on verified delivery + your confirmation</li>
+    </ul>
+    <a href="/escrow/new/" class="mt-5 inline-block text-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Open an escrow →</a>
+  </div>
+
+  <div class="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col">
+    <div class="text-xs font-semibold text-sky-700 uppercase tracking-wide">Marketplace</div>
+    <h2 class="text-xl font-semibold mt-2">I'm looking for someone to trade with</h2>
+    <p class="text-sm text-slate-600 mt-2 flex-1">
+      Browse listings from sellers with an on-chain trust record: completed deals, volume,
+      disputes — all recomputable from the contract, nothing self-reported.
+      Every purchase runs through the same escrow.
+    </p>
+    <ul class="text-sm text-slate-600 mt-3 space-y-1 list-disc list-inside">
+      <li>Check a seller's wallet reputation before you deal</li>
+      <li>Goods and services, prices in test tUSD</li>
+      <li>Request to buy — the seller issues the escrow in one click</li>
+    </ul>
+    <a href="/market/" class="mt-5 inline-block text-center border border-slate-900 hover:bg-slate-900 hover:text-white rounded-lg px-4 py-2 text-sm font-medium">Explore the marketplace →</a>
+  </div>
+</section>
+
+<section class="mt-12">
+  <h2 class="text-lg font-semibold">How a trade runs</h2>
+  <div class="grid sm:grid-cols-4 gap-4 mt-4">
     <div class="bg-white rounded-xl border border-slate-200 p-4">
       <div class="text-sm font-semibold text-emerald-700">1 · Agree</div>
       <p class="text-sm text-slate-600 mt-1">Seller creates the agreement: product, price, logistics fee, platform fee, deadlines.</p>
@@ -18,26 +69,49 @@
       <p class="text-sm text-slate-600 mt-1">Buyer accepts and funds the exact total in tUSD — held by the contract, not by us.</p>
     </div>
     <div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-semibold text-emerald-700">3 · Settle</div>
-      <p class="text-sm text-slate-600 mt-1">Carrier pickup verified → logistics paid. Delivery verified + buyer confirms → seller & fee paid.</p>
+      <div class="text-sm font-semibold text-emerald-700">3 · Ship &amp; verify</div>
+      <p class="text-sm text-slate-600 mt-1">Logistics provider ships; OutLayer's TEE verifies the carrier report on-chain.</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-4">
+      <div class="text-sm font-semibold text-emerald-700">4 · Settle</div>
+      <p class="text-sm text-slate-600 mt-1">Verified pickup pays logistics. Delivery + buyer confirmation pays seller and platform fee.</p>
     </div>
   </div>
-  <div class="mt-8 flex flex-wrap gap-3">
-    {% if wallet_account %}
-      <a href="/escrow/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Create an agreement</a>
-      <a href="/dashboard/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Open dashboard</a>
-    {% else %}
-      <button onclick="VPApp.connect()" class="bg-slate-900 hover:bg-slate-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Connect wallet to start</button>
-      <a href="/logistics/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Logistics directory</a>
-    {% endif %}
+</section>
+
+<section class="grid md:grid-cols-3 gap-5 mt-10">
+  <div class="bg-slate-900 text-white rounded-2xl p-5">
+    <h3 class="font-semibold">Reputation you can verify</h3>
+    <p class="text-sm text-slate-300 mt-2">
+      Every completed deal moves on-chain counters on your wallet. Buyers see who delivers;
+      sellers see who pays. No stars to game — just contract facts.
+    </p>
+    <a class="inline-block mt-3 text-sm text-emerald-300" href="/u/seller.steepdata3968.testnet/">See a sample profile →</a>
   </div>
-  <div class="mt-10 bg-white rounded-xl border border-slate-200 p-5">
-    <h2 class="font-semibold">What is real (and what is simulated) in this MVP</h2>
+  <div class="bg-white border border-slate-200 rounded-2xl p-5">
+    <h3 class="font-semibold">Logistics partners</h3>
+    <p class="text-sm text-slate-600 mt-2">
+      Approved providers get paid when carrier pickup is verified — not when a label is printed.
+      Register your company and manage shipments from the partner portal.
+    </p>
+    <div class="mt-3 flex gap-3 text-sm">
+      <a class="text-emerald-700" href="/logistics/">Provider directory →</a>
+      <a class="text-emerald-700" href="/partners/register/">Become a partner →</a>
+    </div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-2xl p-5">
+    <h3 class="font-semibold">What is real (and what is simulated)</h3>
     <ul class="text-sm text-slate-600 mt-2 space-y-1 list-disc list-inside">
-      <li><b>Real:</b> NEAR testnet escrow contract, NEP-141 token funding, wallet-signed authorization, OutLayer TEE attestations.</li>
-      <li><b>Simulated:</b> Demo Carrier tracking data — clearly labelled wherever shown.</li>
-      <li><b>Boundary:</b> a carrier scan proves reporting, not parcel contents; buyer confirmation is a separate condition.</li>
+      <li><b>Real:</b> NEAR testnet escrow, NEP-141 funding, wallet-signed authorization, OutLayer TEE attestations.</li>
+      <li><b>Simulated:</b> Demo Carrier tracking — labelled everywhere it appears.</li>
     </ul>
   </div>
 </section>
+
+<footer class="mt-12 border-t border-slate-200 pt-5 text-xs text-slate-500 flex flex-wrap gap-4">
+  <span>Contract: <code>{{ VERIPAY_CONTRACT }}</code></span>
+  <span>Token: <code>{{ TUSD_CONTRACT }}</code></span>
+  <a class="text-emerald-700" href="/logistics/">Logistics directory</a>
+  <a class="text-emerald-700" href="/partners/register/">Become a logistics partner</a>
+</footer>
 {% endblock %}
