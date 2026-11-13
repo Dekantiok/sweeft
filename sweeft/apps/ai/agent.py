@@ -38,7 +38,7 @@ Rules:
 """
 
 ACCOUNT_RE = re.compile(r"([a-z0-9._-]+\.(?:testnet|near))\b", re.I)
-ESCROW_RE = re.compile(r"\b(VP-\d{6})\b", re.I)
+ESCROW_RE = re.compile(r"\b(SWFT-\d{6})\b", re.I)
 PRICE_RE = re.compile(r"(?:under|below|max(?:imum)?|less than|cheaper than)\s*(?:t?USD\s*)?([\d,.]+)", re.I)
 SLUG_RE = re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+)+)\b", re.I)
 PAY_VERB_RE = re.compile(r"\b(pay|paying|send|sending|transfer|tip)\b", re.I)
@@ -84,7 +84,7 @@ def keyword_route(message: str, wallet: str) -> dict:
                 return {"reply": f"I've prepared the dispute case file for {eid.group(1).upper()}. Review it and submit on-chain in your wallet — I can't file it for you.", "cards": cards, "tool_trace": trace}
             except ToolError as e:
                 return {"reply": f"I can't open that dispute: {e}", "cards": [], "tool_trace": trace}
-        return {"reply": "Tell me which escrow (e.g. VP-000006) and what went wrong, and I'll prepare the dispute form for you.", "cards": [], "tool_trace": trace}
+        return {"reply": "Tell me which escrow (e.g. SWFT-482913) and what went wrong, and I'll prepare the dispute form for you.", "cards": [], "tool_trace": trace}
 
     # Balance questions.
     if any(w in lowered for w in ("balance", "afford", "how much", "have i got")):
@@ -179,7 +179,7 @@ def keyword_route(message: str, wallet: str) -> dict:
         return {"reply": summary + " Ready to proceed? Send the purchase request from the listing page — the seller then issues the escrow and you accept + fund in your wallet.", "cards": cards, "tool_trace": trace}
 
     return {
-        "reply": "I'm your trade co-pilot. Try: “buy solar inverters under 1200 NEAR”, “check my balance”, “score for seller.steepdata3968.testnet”, or “dispute VP-000006 goods arrived damaged”. I find, evaluate and prepare — your wallet signs the money steps.",
+        "reply": "I'm your trade co-pilot. Try: “buy solar inverters under 1200 NEAR”, “check my balance”, “score for seller.steepdata3968.testnet”, or “dispute SWFT-000006 goods arrived damaged”. I find, evaluate and prepare — your wallet signs the money steps.",
         "cards": [],
         "tool_trace": trace,
     }

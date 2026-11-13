@@ -103,14 +103,14 @@ class ToolTests(TestCase):
         self.assertIn("seller", card)
 
     def test_funding_requires_buyer(self):
-        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "VP-1", "buyer": "other.testnet", "state": "Approved", "total_amount": "115000000"}):
+        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "SWFT-1", "buyer": "other.testnet", "state": "Approved", "total_amount": "115000000"}):
             with self.assertRaises(tools.ToolError):
-                tools.prepare_funding(escrow_id="VP-1", wallet="me.testnet")
+                tools.prepare_funding(escrow_id="SWFT-1", wallet="me.testnet")
 
     def test_dispute_requires_reason(self):
-        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "VP-1", "buyer": "me.testnet", "seller": "s.testnet", "state": "AwaitingBuyerConfirmation"}):
+        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "SWFT-1", "buyer": "me.testnet", "seller": "s.testnet", "state": "AwaitingBuyerConfirmation"}):
             with self.assertRaises(tools.ToolError):
-                tools.prepare_dispute(escrow_id="VP-1", wallet="me.testnet", reason="")
+                tools.prepare_dispute(escrow_id="SWFT-1", wallet="me.testnet", reason="")
 
 
 class KeywordRouteTests(TestCase):
@@ -140,8 +140,8 @@ class KeywordRouteTests(TestCase):
 
     @override_settings(AI_PROVIDER="echo")
     def test_dispute_route(self):
-        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "VP-000006", "buyer": "me.testnet", "seller": "s.testnet", "state": "AwaitingBuyerConfirmation"}):
-            result = agent.keyword_route("dispute VP-000006 goods arrived damaged", "me.testnet")
+        with mock.patch("apps.ai.tools.near.get_escrow", return_value={"id": "SWFT-000006", "buyer": "me.testnet", "seller": "s.testnet", "state": "AwaitingBuyerConfirmation"}):
+            result = agent.keyword_route("dispute SWFT-000006 goods arrived damaged", "me.testnet")
         self.assertEqual(result["cards"][0]["kind"], "dispute_proposal")
 
     @override_settings(AI_PROVIDER="echo")

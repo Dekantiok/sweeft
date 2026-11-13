@@ -9,7 +9,7 @@ from apps.escrow.models import Dispute, DisputeEvidence
 
 def chain_state(state="ReviewRequired", buyer="buyer.testnet", seller="seller.testnet"):
     return {
-        "id": "VP-000009",
+        "id": "SWFT-000009",
         "seller": seller,
         "buyer": buyer,
         "state": state,
@@ -29,7 +29,7 @@ class DisputeApiTests(TestCase):
 
     def test_open_dispute_records_case_file(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            res = self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "goods arrived damaged"})
+            res = self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "goods arrived damaged"})
         body = res.json()
         self.assertEqual(res.status_code, 200, body)
         self.assertTrue(body["ok"])
@@ -39,7 +39,7 @@ class DisputeApiTests(TestCase):
 
     def test_open_dispute_requires_review_state(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state(state="Shipped")):
-            res = self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "x"})
+            res = self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "x"})
         self.assertEqual(res.status_code, 400)
         self.assertIn("open the dispute on-chain first", res.json()["error"])
 
@@ -47,12 +47,12 @@ class DisputeApiTests(TestCase):
         self.session["wallet"] = "stranger.testnet"
         self.session.save()
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            res = self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "x"})
+            res = self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "x"})
         self.assertEqual(res.status_code, 403)
 
     def test_evidence_from_both_sides(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "damaged"})
+            self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
             buyer_ev = self._post(f"/api/v1/disputes/{d.id}/evidence/", {"text": "photos attached"})
             self.assertTrue(buyer_ev.json()["ok"])
@@ -68,7 +68,7 @@ class DisputeApiTests(TestCase):
     @override_settings(AI_PROVIDER="echo")
     def test_ai_review_is_advisory_and_labelled(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "damaged"})
+            self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
             res = self._post(f"/api/v1/disputes/{d.id}/ai-review/", {})
         body = res.json()
@@ -79,7 +79,7 @@ class DisputeApiTests(TestCase):
 
     def test_owner_only_resolution_recorded(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "damaged"})
+            self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
 
         # a party cannot resolve
@@ -102,7 +102,7 @@ class DisputeApiTests(TestCase):
     def test_resolution_requires_onchain_first(self):
         # The dispute is opened by a party first…
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
-            self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "damaged"})
+            self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
         # …then the owner attempts to record a resolution while the chain
         # still shows ReviewRequired: rejected until resolve_review is sent.

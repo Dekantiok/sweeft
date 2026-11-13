@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print a signed Demo Carrier payload for an escrow id (TEE-ready).
 
-Usage: python3 scripts/carrier_payload.py VP-000001
+Usage: python3 scripts/carrier_payload.py SWFT-482913
 """
 import json
 import os

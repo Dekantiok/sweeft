@@ -194,7 +194,7 @@
         tracking_number: tracking,
       });
       let escrowId = res.successValue;
-      if (typeof escrowId !== 'string' || !escrowId.startsWith('VP-')) {
+      if (typeof escrowId !== 'string' || !escrowId.startsWith('SWFT-')) {
         throw new Error('could not read escrow id from the transaction result');
       }
       status.textContent = 'Saving metadata…';

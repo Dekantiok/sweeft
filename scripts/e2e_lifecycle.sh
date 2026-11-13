@@ -8,7 +8,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
-SWEEFT="${SWEEFT:-sweeft-escrow.testnet}"
+SWEEFT="${SWEEFT:-sweeft.testnet}"
 SELLER="${SELLER:-seller.steepdata3968.testnet}"
 BUYER="${BUYER:-steepdata3968.testnet}"
 PROVIDER="${PROVIDER:-logistics.steepdata3968.testnet}"
@@ -38,7 +38,7 @@ TRACKING="DEMO-E2E-$(date +%s | tail -c 5)"
 echo "== create escrow (seller, native NEAR)"
 ESCROW_ID=$(call "$SELLER" "$SELLER_KEY" create_escrow \
   "{\"product_name\":\"E2E test goods\",\"product_desc_hash\":\"e2e\",\"seller_amount\":\"$SELLER_AMOUNT\",\"logistics_amount\":\"$LOGISTICS_AMOUNT\",\"buyer\":\"$BUYER\",\"invite_hash\":null,\"token\":\"near\",\"dispatch_deadline_ms\":$DL,\"inspection_period_ms\":172800000,\"terms_hash\":\"e2e-terms\",\"logistics_provider\":null,\"tracking_number\":null}" \
-  '0.1 NEAR' | grep -o 'VP-[0-9]*' | head -1)
+  '0.1 NEAR' | grep -o 'SWFT-[0-9]*' | head -1)
 echo "   escrow: $ESCROW_ID"
 
 echo "== accept (buyer)"; call "$BUYER" "$BUYER_KEY" accept_escrow "{\"escrow_id\":\"$ESCROW_ID\",\"invite_secret\":null}" '0 NEAR'
@@ -51,7 +51,8 @@ call "$SELLER" "$SELLER_KEY" register_shipment "{\"escrow_id\":\"$ESCROW_ID\",\"
 echo "== TEE verification via OutLayer"
 # Signed carrier payload (mandatory: the TEE verifies the carrier signature).
 PAYLOAD=$(python3 scripts/carrier_payload.py "$ESCROW_ID")
-call "$SELLER" "$SELLER_KEY" request_delivery_verification "{\"escrow_id\":\"$ESCROW_ID\",\"carrier_payload\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$PAYLOAD")}" '0.05 NEAR' 200 >/dev/null
+REQ_ARGS="{\"escrow_id\":\"$ESCROW_ID\",\"carrier_payload\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$PAYLOAD")}"
+call "$SELLER" "$SELLER_KEY" request_delivery_verification "$REQ_ARGS" '0.05 NEAR' 200 >/dev/null
 echo "   waiting for the OutLayer TEE callback (polling up to 4 minutes)…"
 for i in $(seq 1 24); do
   sleep 10
@@ -64,7 +65,7 @@ for i in $(seq 1 24); do
     | grep -o '"verification_pending": *[a-z]*' | awk '{print $2}' | head -1)
   if [ "$PENDING" = "false" ] && [ "$VERIFIED" != "true" ]; then
     echo "   TEE run returned no outcome — re-requesting (poll $i)"
-    call "$SELLER" "$SELLER_KEY" request_delivery_verification "$PAYLOAD" '0.05 NEAR' 200 >/dev/null || true
+    call "$SELLER" "$SELLER_KEY" request_delivery_verification "$REQ_ARGS" '0.05 NEAR' 200 >/dev/null || true
   fi
 done
 [ "${VERIFIED:-}" = "true" ] || { echo "TEE verification did not complete"; exit 1; }

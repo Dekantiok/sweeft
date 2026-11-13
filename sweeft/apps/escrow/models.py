@@ -2,7 +2,7 @@ from django.db import models
 
 
 class EscrowAgreement(models.Model):
-    """Off-chain metadata + projection of an on-chain escrow (VP-XXXXXX).
+    """Off-chain metadata + projection of an on-chain escrow (SWFT-XXXXXX).
 
     The contract is the source of truth for state and money; this row stores
     the descriptions, invitation bookkeeping and a cached chain snapshot.

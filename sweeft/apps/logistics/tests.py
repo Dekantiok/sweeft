@@ -28,7 +28,7 @@ def make_partner(**overrides):
 
 def make_shipment(partner=None, **overrides):
     data = {
-        "escrow_id": "VP-000001",
+        "escrow_id": "SWFT-100001",
         "provider": partner,
         "tracking_number": "DEMO-TEST-1",
         "status": "CREATED",
@@ -108,7 +108,7 @@ class PartnerApiTests(TestCase):
                 "/api/v1/partners/shipments/?include_escrow_state=1", HTTP_X_API_KEY=self.raw_key
             )
         self.assertEqual(res.json()["shipments"][0]["escrow_state"], "Shipped")
-        cached.assert_called_once_with("VP-000001")
+        cached.assert_called_once_with("SWFT-100001")
 
     def test_chain_read_failure_does_not_break_polling(self):
         with mock.patch("apps.logistics.views.near.get_escrow_cached", side_effect=RuntimeError("rpc down")):
@@ -135,7 +135,7 @@ class PartnerApiTests(TestCase):
 
     def test_other_partners_shipment_not_reachable(self):
         other = make_partner(company_name="Other Logistics", owner_wallet="other.testnet")
-        foreign = make_shipment(partner=other, tracking_number="DEMO-OTHER-1", escrow_id="VP-000002")
+        foreign = make_shipment(partner=other, tracking_number="DEMO-OTHER-1", escrow_id="SWFT-100002")
         res = self._post(f"/api/v1/partners/shipments/{foreign.id}/events/", {"status": "ACCEPTED"})
         self.assertEqual(res.status_code, 404)
 
@@ -152,7 +152,7 @@ class WalletShipmentApiTests(TestCase):
     @staticmethod
     def chain(**overrides):
         data = {
-            "id": "VP-000003",
+            "id": "SWFT-100003",
             "state": "Funded",
             "seller": "seller.testnet",
             "buyer": "buyer.testnet",
@@ -163,7 +163,7 @@ class WalletShipmentApiTests(TestCase):
 
     def test_create_shipment_stores_scenario(self):
         with mock.patch("apps.logistics.views.near.get_escrow", return_value=self.chain()):
-            res = self._post("/api/v1/shipments/", {"escrow_id": "VP-000003", "scenario": "failed"})
+            res = self._post("/api/v1/shipments/", {"escrow_id": "SWFT-100003", "scenario": "failed"})
         body = res.json()
         self.assertEqual(res.status_code, 200, body)
         self.assertEqual(body["scenario"], "failed")
@@ -171,25 +171,25 @@ class WalletShipmentApiTests(TestCase):
 
     def test_create_shipment_rejects_unknown_scenario(self):
         with mock.patch("apps.logistics.views.near.get_escrow", return_value=self.chain()):
-            res = self._post("/api/v1/shipments/", {"escrow_id": "VP-000003", "scenario": "explode"})
+            res = self._post("/api/v1/shipments/", {"escrow_id": "SWFT-100003", "scenario": "explode"})
         self.assertEqual(res.status_code, 400)
 
     def test_pre_registered_shipment_scenario_updated_at_dispatch(self):
         # Marketplace flow: the row exists from escrow creation; the scenario
         # chosen at dispatch must still take effect while the run hasn't started.
-        make_shipment(escrow_id="VP-000003", tracking_number="DEMO-PRE-1", simulation_scenario="delivered")
+        make_shipment(escrow_id="SWFT-100003", tracking_number="DEMO-PRE-1", simulation_scenario="delivered")
         with mock.patch("apps.logistics.views.near.get_escrow", return_value=self.chain()):
             res = self._post(
                 "/api/v1/shipments/",
-                {"escrow_id": "VP-000003", "tracking_number": "DEMO-PRE-1", "scenario": "lost"},
+                {"escrow_id": "SWFT-100003", "tracking_number": "DEMO-PRE-1", "scenario": "lost"},
             )
         self.assertEqual(res.status_code, 200, res.json())
         self.assertEqual(res.json()["scenario"], "lost")
         self.assertEqual(Shipment.objects.get(tracking_number="DEMO-PRE-1").simulation_scenario, "lost")
 
     def test_lookup_by_escrow_returns_timeline(self):
-        make_shipment(escrow_id="VP-000003", tracking_number="DEMO-LOOKUP-1")
-        res = self.client.get("/api/v1/shipments/by-escrow/VP-000003/")
+        make_shipment(escrow_id="SWFT-100003", tracking_number="DEMO-LOOKUP-1")
+        res = self.client.get("/api/v1/shipments/by-escrow/SWFT-100003/")
         body = res.json()
         self.assertTrue(body["ok"])
         self.assertEqual(body["shipment"]["tracking_number"], "DEMO-LOOKUP-1")
@@ -197,15 +197,15 @@ class WalletShipmentApiTests(TestCase):
         self.assertIn("simulation_scenario", body["shipment"])
 
     def test_lookup_missing_returns_null(self):
-        res = self.client.get("/api/v1/shipments/by-escrow/VP-NONE/")
+        res = self.client.get("/api/v1/shipments/by-escrow/SWFT-NONE/")
         self.assertEqual(res.json(), {"ok": True, "shipment": None})
 
     def test_verification_payload_matches_full_carrier_run(self):
-        shipment = make_shipment(escrow_id="VP-000004", tracking_number="DEMO-VERIFY-1")
+        shipment = make_shipment(escrow_id="SWFT-000004", tracking_number="DEMO-VERIFY-1")
         carrier = carriers.get_carrier()
         for status in HAPPY_FLOW_AFTER_CREATED:
             carrier.advance(shipment, to_status=status)
-        res = self._post("/api/v1/verification/payload/", {"escrow_id": "VP-000004"})
+        res = self._post("/api/v1/verification/payload/", {"escrow_id": "SWFT-000004"})
         body = res.json()
         self.assertTrue(body["ok"])
         self.assertTrue(body["simulated"])
@@ -227,7 +227,7 @@ class CarrierPayloadSigningTests(TestCase):
         return {
             "provider_id": "LOG-DEMO-001",
             "tracking_number": "DEMO-1",
-            "shipment_id": "SHIP-VP-000001",
+            "shipment_id": "SHIP-SWFT-100001",
             "status": "DELIVERED",
             "events": [{"status": "PICKED_UP"}, {"status": "DELIVERED"}],
         }
@@ -235,7 +235,7 @@ class CarrierPayloadSigningTests(TestCase):
     def test_canonical_message_matches_verifier_format(self):
         self.assertEqual(
             carriers.canonical_carrier_message(self._payload()),
-            "v1|LOG-DEMO-001|DEMO-1|SHIP-VP-000001|DELIVERED|PICKED_UP,DELIVERED",
+            "v1|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|PICKED_UP,DELIVERED",
         )
 
     @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)

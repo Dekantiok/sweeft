@@ -21,7 +21,7 @@ def make_shipment(**overrides):
         settlement_wallet="logistics.testnet",
         status="ACTIVE",
     )
-    data = {"escrow_id": "VP-000009", "provider": partner, "tracking_number": "DEMO-REL-1", "status": "DELIVERED"}
+    data = {"escrow_id": "SWFT-000009", "provider": partner, "tracking_number": "DEMO-REL-1", "status": "DELIVERED"}
     data.update(overrides)
     shipment = Shipment.objects.create(**data)
     for status in ["CREATED", "ACCEPTED", "PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"]:
@@ -31,7 +31,7 @@ def make_shipment(**overrides):
 
 def chain(**overrides):
     data = {
-        "id": "VP-000009",
+        "id": "SWFT-000009",
         "state": "Shipped",
         "verification_pending": False,
         "pickup_verified": False,
@@ -59,12 +59,12 @@ class RelayerTickTests(TestCase):
             "apps.escrow.relayer.call_function_as", return_value=OK
         ) as send:
             report = relayer.relayer_tick()
-        self.assertEqual(report.requested, ["VP-000009"])
+        self.assertEqual(report.requested, ["SWFT-000009"])
         self.assertEqual(send.call_args.kwargs["method_name"], "request_delivery_verification")
         self.assertEqual(send.call_args.kwargs["deposit"], 10_000_000_000_000_000_000_000)
         payload = json.loads(send.call_args.kwargs["args"]["carrier_payload"])
         self.assertEqual(payload["status"], "DELIVERED")
-        self.assertTrue(VerificationRequest.objects.filter(escrow_id="VP-000009", status="PENDING").exists())
+        self.assertTrue(VerificationRequest.objects.filter(escrow_id="SWFT-000009", status="PENDING").exists())
 
     def test_no_request_while_verification_pending(self):
         make_shipment()
@@ -82,7 +82,7 @@ class RelayerTickTests(TestCase):
             "apps.escrow.relayer.call_function_as", return_value=OK
         ) as send:
             report = relayer.relayer_tick()
-        self.assertEqual(report.requested, ["VP-000009"])
+        self.assertEqual(report.requested, ["SWFT-000009"])
         self.assertEqual(send.call_count, 1)
 
     def test_settles_logistics_after_verified_pickup(self):
@@ -98,7 +98,7 @@ class RelayerTickTests(TestCase):
             "apps.escrow.relayer.near.view_call", return_value=None
         ), mock.patch("apps.escrow.relayer.call_function_as", return_value=OK) as send:
             report = relayer.relayer_tick()
-        self.assertEqual(report.logistics_paid, ["VP-000009"])
+        self.assertEqual(report.logistics_paid, ["SWFT-000009"])
         self.assertEqual(send.call_args.kwargs["method_name"], "settle_logistics")
 
     def test_releases_after_inspection_window(self):
@@ -117,7 +117,7 @@ class RelayerTickTests(TestCase):
             "apps.escrow.relayer.call_function_as", return_value=OK
         ) as send:
             report = relayer.relayer_tick()
-        self.assertEqual(report.released, ["VP-000009"])
+        self.assertEqual(report.released, ["SWFT-000009"])
         self.assertEqual(send.call_args.kwargs["method_name"], "release_after_inspection")
 
     def test_waits_inside_the_inspection_window(self):
@@ -160,7 +160,7 @@ class RelayerTickTests(TestCase):
     def test_syncs_pending_verification_record(self):
         shipment = make_shipment()
         VerificationRequest.objects.create(
-            escrow_id="VP-000009", shipment=shipment, status="PENDING", requested_by="relayer.testnet"
+            escrow_id="SWFT-000009", shipment=shipment, status="PENDING", requested_by="relayer.testnet"
         )
         state = chain(
             state="AwaitingBuyerConfirmation",
@@ -173,8 +173,8 @@ class RelayerTickTests(TestCase):
             "apps.escrow.relayer.near.view_call", return_value=None
         ), mock.patch("apps.escrow.relayer.call_function_as", return_value=OK):
             report = relayer.relayer_tick()
-        self.assertEqual(report.synced, ["VP-000009"])
-        self.assertEqual(VerificationRequest.objects.get(escrow_id="VP-000009").status, "VERIFIED")
+        self.assertEqual(report.synced, ["SWFT-000009"])
+        self.assertEqual(VerificationRequest.objects.get(escrow_id="SWFT-000009").status, "VERIFIED")
 
     def test_reports_chain_failures_without_stopping(self):
         make_shipment()
