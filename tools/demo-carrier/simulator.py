@@ -7,7 +7,7 @@ HTTP only, API-key authenticated, no shared database, no Django imports.
 
     python3 manage.py seed_demo --issue-carrier-key        # prints the key once
     SWEEFT_BASE_URL=http://127.0.0.1:8000 \
-    DEMO_CARRIER_API_KEY=vp_... \
+    DEMO_CARRIER_API_KEY=swft_... \
     python3 tools/demo-carrier/simulator.py
 
 Timeline per shipment (scenario `delivered`), starting when the shipment is

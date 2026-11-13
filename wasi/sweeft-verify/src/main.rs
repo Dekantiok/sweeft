@@ -2,7 +2,7 @@
 //!
 //! Input (stdin, JSON):
 //! {
-//!   "escrow_id": "VP-000001",
+//!   "escrow_id": "SWFT-100185",
 //!   "expected": { "tracking_number": "...", "provider_wallet": "log.testnet", "shipment_id": "SHIP-..." },
 //!   "carrier":  { "provider_id": "LOG-001", "tracking_number": "...", "status": "DELIVERED",
 //!                 "events": [ { "status": "PICKED_UP", "timestamp": "..." }, ... ] }
@@ -340,7 +340,7 @@ mod tests {
         let message = canonical_carrier_message(provider_id, "DEMO-1", shipment_id, status, &event_statuses);
         let signature = sk.sign(message.as_bytes());
         serde_json::json!({
-            "escrow_id": "VP-000003",
+            "escrow_id": "SWFT-100185",
             "expected": {
                 "tracking_number": "DEMO-1",
                 "provider_wallet": "log.testnet",
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn missing_escrow_id_rejected() {
-        let raw = happy_input().replace("VP-000003", "");
+        let raw = happy_input().replace("SWFT-100185", "");
         let out = run(&raw);
         assert!(!out.verified);
         assert!(out.reason.contains("missing escrow_id"));

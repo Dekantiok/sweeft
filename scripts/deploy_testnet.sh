@@ -63,11 +63,6 @@ outlayer upload "$WASM"
 # capture the FastFS URL printed above, then:
 # outlayer deploy sweeft-verify <FastFS URL>
 
-# Optional legacy NEP-141 support for escrows created before the native migration:
-# (cd contracts/test-token && cargo near build non-reproducible-wasm --no-abi)
-# deploy contracts/test-token/target/near/test_token.wasm to tusd.${DEPLOYER} and
-# set TUSD_CONTRACT accordingly. New escrows do NOT need it.
-
 echo "== 7. IRREVERSIBLE: delete the contract account's full-access deploy key"
 # After this the contract code can never be changed — the strongest possible
 # "no platform key" guarantee. Skip with SKIP_KEY_DELETION=1 only for dev.
