@@ -1,6 +1,6 @@
 # Smart contract
 
-Rust, `near-sdk` 5.x, deployed at **`sweeft-escrow.testnet`**.
+Rust, `near-sdk` 5.x, deployed at **`sweeft.testnet`**.
 The contract is the financial and authorization source of truth.
 
 ## Methods

@@ -9,10 +9,10 @@ Both sessions were signed in through the app's NEP-413 login, verified against o
 access keys, and driven in a real browser (Chromium). On-chain steps were executed with the
 wallets' own keys; the UI was asserted and screenshotted at every stage.
 
-**Deployment history.** Sections 1–8 record runs against earlier testnet deployments of this
-project (superseded accounts; escrow ids were scoped per deployment). The current deployment —
-escrow `sweeft-escrow.testnet`, review board `sweeft-board.testnet`, both keyless — is
-section 9, where escrow ids restart at `VP-000001`.
+**Deployment history.** Sections 1–10 record runs against the predecessor testnet deployment
+(`sweeft-escrow.testnet`, escrow ids `VP-…`, kept as an audit trail). The current deployment —
+escrow `sweeft.testnet`, review board `sweeft-board.testnet`, both keyless — is section 11,
+which uses the `SWFT-XXXXXX` escrow code format.
 
 ## 1. Native-NEAR lifecycle — `VP-000020` → `Completed`
 
@@ -142,7 +142,7 @@ authoritative TEE proof).
   (e.g. 027 settle `FnYKtT9GwjAL7SEXmF8Jc89SuZwFGk1LkaGRxmzMWU6K`).
 
 
-## 9. Current deployment (2026-11-14, contract v14, verifier v4)
+## 9. Previous deployment (2026-11-14, contract v14, verifier v4)
 
 All repository addresses and links now point to this stack.
 
@@ -186,3 +186,26 @@ All repository addresses and links now point to this stack.
   `~/.near-credentials/testnet/steepdata3968.testnet.json` (mode 0600).
 - Reproducible via `scripts/rotate_key.py <account>`; the account's scoped FunctionCall key
   (0.25 NEAR allowance) is unaffected.
+
+## 11. Deployment under `sweeft.testnet` — SWFT- escrow codes (2026-11-14)
+
+Redeployed the final contract so escrow ids use the product code format: a random six-digit code,
+`SWFT-XXXXXX`, derived on-chain from block time + caller + creation counter (collision-checked).
+
+- **Contract `sweeft.testnet`**: deploy `G1oX2naj11NEKVjbpeAzJzuDDARWTvRPqWy83Fj3m25E`; `new(...)`
+  init `2BETaackYkgBRHKw3v5dxdDzz4wvfmUqafowhJrSiKxS` (owner `steepdata3968.testnet`, arbiter
+  `sweeft-board.testnet`, provider `LOG-DEMO-001`, carrier key registered, fee 500 bps);
+  treasury `set_treasury` `8gyr5oT9RbXmCMb4JUkqWRo1xCPbn1jP2XrE9c7GM6BD`.
+- **Keyless / immutable**: deploy key deleted — tx
+  `Eb8CqtNYt8zNK2RzfmqYcjzduRsTDcCBz3HZxqntaekX`; `view_access_key_list` returns `[]`.
+- **Lifecycle `SWFT-100185`** (0.115 NEAR; seller `seller.steepdata3968.testnet`, buyer
+  `steepdata3968.testnet`): create `bFB5W1NodeuLj1Dz213LwwA5gmhNuMwVYBRQNHjStAL` → accept
+  `AsarhniZo3mCAdWnGNEDT3qqySjyMWGdsXcgNcN4mvDL` → fund
+  `UWkMh74iWrfK8AkcnD6E8T7ohErk9EGHFyCops4G8Du` → assign
+  `CJVJdpc2wchpVeQ11Uh9x7VjqTPke96E38vNgNX7S6xL` → register
+  `PVAyY248s5QpXjVABtYnMMgWKgYu4mmTJnRdNPnJmJg` → signed-carrier TEE verification
+  `9QmhQesGSnzFAh9zjnpycFKsnxfjcEadPVMvu1mDXwM9` (verified on first poll) → settle logistics
+  `C8cFZWwnEjdy2hHnkRrhfdkUoxZizm8PY5LU491pJNpo` → confirm receipt
+  `7rHJAMq5qRTkJChH4qFb3g17MScVotvkepL9yK5haAA2` → `Completed`, flags `true/true/true`;
+  payout deltas seller **+0.1**, logistics **+0.01**, platform fee **+0.005 NEAR** to the board
+  treasury.

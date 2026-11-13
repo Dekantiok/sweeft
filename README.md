@@ -26,7 +26,7 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-escrow.testnet`) |
+| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -34,7 +34,7 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Carrier tracking data | **SIMULATED** — Demo Carrier; labelled `SIMULATED DATA` in the DB (`simulated=True`), API responses and UI |
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
 | AI co-pilot payments | **Real on-chain** — scoped, revocable native-NEAR budget (`budget.steepdata3968.testnet`); the agent pays only within the user's deposited limit |
-| Dispute arbitration pool | **Real** — any NEAR holder stakes NEAR to vote the split; quorum → permissionless settlement; voters reclaim stake |
+| Dispute arbitration pool | **Disabled** — no deployment with a review board exposes it (sockpuppet-votable, no slashing); disputes resolve ONLY through the board |
 | Review board (Sputnik DAO) | **Real, demo council** — disputes resolve ONLY via council-approved on-chain proposals (2-of-3). On testnet all three council members are operated by this project; production would use independent members with hardware/multisig keys |
 | Treasury (DAO multisig) | **Real** — platform fees accrue to the board account; spending requires a council-approved Transfer proposal |
 | Fiat payouts / real carriers | **Not implemented** (out of MVP scope) |
@@ -45,13 +45,30 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
-**Current deployment:** escrow contract `sweeft-escrow.testnet`, review board `sweeft-board.testnet`
-(both keyless/immutable), TEE project `steepdata3968.testnet/sweeft-verify`, carrier key registered
-on-chain. `VP-000001` on this deployment completed the full lifecycle — signed-carrier TEE
-verification (first poll), logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**, platform fee
-**+0.005 NEAR** to the board treasury, all payout flags true.
+**Current deployment:** escrow contract [`sweeft.testnet`](https://testnet.near.org/accounts/sweeft.testnet),
+review board `sweeft-board.testnet` (both keyless/immutable — deploy keys deleted), TEE project
+`steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
+six-digit codes: `SWFT-XXXXXX`. **`SWFT-100185`** completed the full lifecycle on this deployment —
+signed-carrier TEE verification (first poll), logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**,
+platform fee **+0.005 NEAR** to the board treasury, all payout flags true:
 
-### Native NEAR (current default)
+| `SWFT-100185` step | Tx |
+|---|---|
+| `create_escrow` (seller) | `bFB5W1NodeuLj1Dz213LwwA5gmhNuMwVYBRQNHjStAL` |
+| `accept_escrow` (buyer) | `AsarhniZo3mCAdWnGNEDT3qqySjyMWGdsXcgNcN4mvDL` |
+| `fund_escrow` 0.115 NEAR | `UWkMh74iWrfK8AkcnD6E8T7ohErk9EGHFyCops4G8Du` |
+| `assign_logistics_provider` | `CJVJdpc2wchpVeQ11Uh9x7VjqTPke96E38vNgNX7S6xL` |
+| `register_shipment` | `PVAyY248s5QpXjVABtYnMMgWKgYu4mmTJnRdNPnJmJg` |
+| TEE verification (signed carrier payload) | `9QmhQesGSnzFAh9zjnpycFKsnxfjcEadPVMvu1mDXwM9` |
+| `settle_logistics` | `C8cFZWwnEjdy2hHnkRrhfdkUoxZizm8PY5LU491pJNpo` |
+| `confirm_receipt` (buyer) | `7rHJAMq5qRTkJChH4qFb3g17MScVotvkepL9yK5haAA2` |
+
+### Earlier testnet runs (predecessor deployment)
+
+Runs below were executed on the predecessor contract (`sweeft-escrow.testnet`, id format `VP-…`,
+since superseded) and are kept as an audit trail of the hardening rounds.
+
+### Native NEAR
 
 - **`VP-000014`** — full lifecycle in native NEAR: buyer funded **0.115 NEAR** with the payable
   `fund_escrow`; OutLayer TEE verified delivery; seller received **0.1 NEAR**, logistics **0.01 NEAR**,
@@ -81,7 +98,8 @@ contract methods:
 
 > This run predates the hardening rounds: the contract now enforces a **1-hour minimum inspection
 > window** (the old 30s was before the floor), and completion itself settles any still-due logistics
-> allocation. `VP-000027`/`VP-000028` below are the current-build lifecycle evidence.
+> allocation. (`VP-000027`/`VP-000028` were that build's lifecycle evidence; the current
+> deployment's run is `SWFT-100185` above.)
 
 ### Counterparty acceptance policies (verified on-chain)
 
@@ -131,7 +149,7 @@ Board: [`sweeft-board.testnet`](https://testnet.near.org/accounts/sweeft-board.t
 The escrow contract's `get_gov_info` shows `arbiter`/`treasury` = the DAO; the platform owner can appoint the board
 but **cannot resolve disputes** — that power is gone by design.
 
-Explorer: <https://testnet.near.org/accounts/sweeft-escrow.testnet>
+Explorer: <https://testnet.near.org/accounts/sweeft.testnet>
 
 ## Architecture
 
@@ -246,6 +264,20 @@ outlayer deploy sweeft-verify <FastFS URL printed by upload>
 cd tools/web-bundle && npm install && npm run build   # writes sweeft/static/js/sweeft-wallet.js
 ```
 
+## Deploy on Render
+
+The repo ships a [Render blueprint](render.yaml): a Python web service plus a managed Postgres,
+with WhiteNoise serving static files and migrations applied during the build.
+
+1. Push this repo to GitHub, then in Render choose **New + → Blueprint** and pick the repo.
+2. Apply — Render creates the database, generates `DJANGO_SECRET_KEY`, and wires `DATABASE_URL`,
+   allowed hosts and TLS cookies. It prompts for the optional `sync: false` secrets
+   (carrier / co-pilot / relayer keys); paste them from `sweeft/.env` or leave blank.
+3. Open the service URL — the footer shows the live contract account.
+
+Free-plan notes: the web service spins down when idle (the first request warms it up), and the
+free Postgres is fine for the demo. Nothing secret lives in the repo — all keys come from env vars.
+
 ## Demo workflow
 
 1. Connect a wallet (Meteor / HERE / Nightly — sign the free NEP-413 message to sign in).
@@ -339,7 +371,7 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
 | Frozen funds if the board stalls | Buyer **long-stop refund**: if a shipment is registered but delivery is never TEE-verified, the buyer can reclaim the unspent balance after a 30-day grace period (`refund_buyer`), independent of any review outcome. |
-| Upgrade key could redeploy the contract | After the final deployment the deploy keys were deleted on **both** `sweeft-escrow.testnet` (tx `GEibn3MX…`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
+| Upgrade key could redeploy the contract | After the final deployments the deploy keys were deleted on **both** `sweeft.testnet` (tx `Eb8CqtNY…`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
 | Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
