@@ -54,8 +54,13 @@ inspection window — and a reported problem freezes them into the review path.
   `resolve_review(…, 60)` → seller **0.0414 NEAR**, buyer **0.0276 NEAR** (before gas).
 - **AI budget** — owner deposited **0.05 NEAR**; the co-pilot paid invoices in native NEAR and the
   budget's `spent`/`available` updated exactly on-chain. No token mint or registration anywhere.
+- **`VP-000027` / `VP-000028`** — final hardened build: signed-carrier TEE verification, then
+  `settle_logistics` + `confirm_receipt` (all payout flags true). Representative txs:
+  VP-000027 TEE-request `8fcf2M3t…`, settle `FnYKtT9G…`, confirm `7oSrmZiX…`;
+  VP-000028 settle `2D3K1WuP…`, confirm `EbaDUc8A…` (full hashes in the explorer under
+  `veripay.steepdata3968.testnet`).
 
-### Relayer: zero-signature happy path (`VP-000017`)
+### Relayer: zero-signature happy path (`VP-000017`, historical)
 
 Full lifecycle with **no wallet signatures after funding** — the platform relayer
 (`relayer.steepdata3968.testnet`, `manage.py run_relayer`) drove every step via the permissionless
@@ -65,9 +70,12 @@ contract methods:
 - Demo Carrier reported `DELIVERED` (simulated scan) → relayer called
   `request_delivery_verification`; OutLayer's TEE returned `verified: true`, `DELIVERED` in ~40s and
   the callback moved the escrow to `AwaitingBuyerConfirmation`
-- relayer paid logistics (`settle_logistics`) and, after the 30s inspection window elapsed with no
-  problem reported, released seller + platform (`release_after_inspection`) → state `Completed`,
-  all payout flags true
+- relayer paid logistics (`settle_logistics`) and released seller + platform
+  (`release_after_inspection`) → state `Completed`, all payout flags true
+
+> This run predates the hardening rounds: the contract now enforces a **1-hour minimum inspection
+> window** (the old 30s was before the floor), and completion itself settles any still-due logistics
+> allocation. `VP-000027`/`VP-000028` below are the current-build lifecycle evidence.
 
 ### Counterparty acceptance policies (verified on-chain)
 
@@ -255,8 +263,9 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
    wallets** — visible instantly on their profiles. Platform fees land in the **review-board treasury**.
 8. **Governance**: while an escrow is `ReviewRequired`, either party can **Escalate to the review board**
    from the escrow page — a wallet-signed DAO proposal (`resolve_review`); council members approve on
-   `/governance/`; at 2-of-3 the DAO executes the split on-chain. The arbitration pool stays as the
-   permissionless community tier, the board is the governed tier.
+   `/governance/`; at 2-of-3 the DAO executes the split on-chain. The arbitration pool is
+   **disabled in every deployment with a board** (it was exploitable via sockpuppet voting and
+   has no slashing); the review board is the only resolution path.
 
 Scripted version of the escrow path: `scripts/e2e_lifecycle.sh`.
 
@@ -322,7 +331,10 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR or the configured legacy token). |
 | TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline and pickup-before-delivery. |
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
-| Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period**; the timeout release can never skip a real buyer review window. |
+| Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
+| Frozen funds if the board stalls | Buyer **long-stop refund**: if a shipment is registered but delivery is never TEE-verified, the buyer can reclaim the unspent balance after a 30-day grace period (`refund_buyer`), independent of any review outcome. |
+| Upgrade key could redeploy the contract | After the final deployment the contract account's **full-access key was deleted** (`ed25519:51KXxJwb…`, tx `DJ7JTgyg…`); `view_access_key_list` on `veripay.steepdata3968.testnet` now returns **empty** — no key can deploy new code, ever. Code control sits with no one; owner actions (fees, config) remain separate accounts. |
+| Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
 | AI budget cap lived only in server settings | Enforced **on-chain** in the budget contract (`get_max_payment`/`set_max_payment`, default 0.1 NEAR per payment). |
@@ -338,6 +350,10 @@ Residual (disclosed) risks:
 - The arbitration pool has no slashing — which is why it is disabled in favour of the board.
 - OutLayer compute refunds accumulate in the contract unspent: there is deliberately no owner sweep,
   so they are dust on testnet rather than a drain vector.
+- **Signed carrier payloads carry no timestamp/nonce** (no replay window in this demo): production
+  would add a signed `issued_at` + nonce with a replay cache in the verifier.
+- The pending-invitation index is capped at 10 entries per account; filling a victim's list costs
+  ~0.2 NEAR. A production deployment would charge a reclaimable bond instead.
 
 ## Tests
 

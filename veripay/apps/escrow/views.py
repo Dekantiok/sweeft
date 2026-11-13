@@ -115,7 +115,9 @@ def escrow_new(request):
     wallet = current_wallet(request)
     if not wallet:
         return redirect("/?connect=1")
-    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "2", "terms": "", "product": "", "listing_slug": "", "listing_title": "", "provider": ""}
+    # 72h default inspection window: silent buyers keep a real review period
+    # before the permissionless timeout release can pay the seller.
+    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "3", "terms": "", "product": "", "listing_slug": "", "listing_title": "", "provider": ""}
     listing_id = request.GET.get("listing")
     if listing_id:
         from apps.market.models import Listing  # local import avoids app-loading cycle

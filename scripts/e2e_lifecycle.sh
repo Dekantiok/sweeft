@@ -57,7 +57,22 @@ print(json.dumps({"escrow_id":"$ESCROW_ID","carrier_payload":json.dumps(carrier)
 PY
 )
 call "$SELLER" "$SELLER_KEY" request_delivery_verification "$PAYLOAD" '0.05 NEAR' 200 >/dev/null
-sleep 22
+echo "   waiting for the OutLayer TEE callback (polling up to 4 minutes)…"
+for i in $(seq 1 24); do
+  sleep 10
+  VERIFIED=$(near contract call-function as-read-only "$VERIPAY" get_escrow \
+    json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>/dev/null \
+    | grep -o '"delivered_verified": *[a-z]*' | awk '{print $2}' | head -1)
+  if [ "$VERIFIED" = "true" ]; then echo "   TEE verified (poll $i)"; break; fi
+  PENDING=$(near contract call-function as-read-only "$VERIPAY" get_escrow \
+    json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>/dev/null \
+    | grep -o '"verification_pending": *[a-z]*' | awk '{print $2}' | head -1)
+  if [ "$PENDING" = "false" ] && [ "$VERIFIED" != "true" ]; then
+    echo "   TEE run returned no outcome — re-requesting (poll $i)"
+    call "$SELLER" "$SELLER_KEY" request_delivery_verification "$PAYLOAD" '0.05 NEAR' 200 >/dev/null || true
+  fi
+done
+[ "${VERIFIED:-}" = "true" ] || { echo "TEE verification did not complete"; exit 1; }
 echo "== settle logistics"
 echo "   logistics before: $(bal "$PROVIDER")"
 call "$SELLER" "$SELLER_KEY" settle_logistics "{\"escrow_id\":\"$ESCROW_ID\"}" '0 NEAR' >/dev/null

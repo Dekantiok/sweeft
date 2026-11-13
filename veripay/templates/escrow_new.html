@@ -35,7 +35,8 @@
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Buyer inspection period after delivery (days)</label>
-        <input id="f-inspection" type="number" min="0" value="{{ prefill.inspection_days }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        <input id="f-inspection" type="number" min="1" value="{{ prefill.inspection_days }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        <p class="text-xs text-slate-500 mt-1">On-chain minimum 1 hour; 72h (3 days) recommended — after this window the seller can be released without your confirmation.</p>
       </div>
     </div>
     <div>

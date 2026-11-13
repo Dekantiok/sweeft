@@ -53,7 +53,7 @@ const MAX_INVITE_HASH_LEN: usize = 128;
 /// Anti-spam caps for the per-account indexes (`pending_for` can otherwise be
 /// used to bloat any victim's storage).
 const MAX_IDS_PER_ACCOUNT: usize = 50;
-const MAX_PENDING_PER_ACCOUNT: usize = 20;
+const MAX_PENDING_PER_ACCOUNT: usize = 10;
 const MAX_ESCROWS: u64 = 1_000_000;
 /// Deals below this value still settle but do not move reputation counters
 /// (wash-trading friction).
@@ -61,6 +61,10 @@ const MIN_COUNTED_AMOUNT_YOCTO: u128 = 5_000_000_000_000_000_000_000; // 0.005 N
 /// Inspection window floor: a verified delivery plus the permissionless
 /// timeout release must leave the buyer a real window to inspect/dispute.
 const MIN_INSPECTION_PERIOD_MS: u64 = 3_600_000; // 1 hour
+/// Long-stop: if a shipment is registered but delivery is never verified, the
+/// buyer may reclaim the unspent balance after this grace period. Prevents
+/// frozen funds when dispute resolution stalls.
+const LONG_STOP_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -546,6 +550,10 @@ impl VeriPay {
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::Shipped, "escrow not shipped");
         require!(!escrow.verification_pending, "verification already pending");
+        // Carrier authenticity is mandatory end-to-end: the contract refuses
+        // to request verification until a carrier signing key is configured,
+        // independent of verifier version behaviour.
+        require!(self.get_carrier_pubkey().is_some(), "carrier key not configured");
         require!(
             env::attached_deposit() >= NearToken::from_yoctonear(MIN_VERIFICATION_DEPOSIT_YOCTO),
             "attach at least 0.001 NEAR for OutLayer compute"
@@ -1117,8 +1125,8 @@ impl VeriPay {
     pub fn set_allowed_token(&mut self, token: Option<AccountId>) {
         let caller = env::predecessor_account_id();
         require!(
-            caller == self.owner || Some(caller) == self.get_arbiter(),
-            "only the owner or board can set the allowed token"
+            Some(caller) == self.get_arbiter(),
+            "only the board can set the allowed token"
         );
         let value = token.unwrap_or_else(|| NATIVE_NEAR_TOKEN.parse().unwrap());
         gov_config_map().insert("allowed_token".to_string(), value);
@@ -1134,12 +1142,13 @@ impl VeriPay {
     }
 
     /// Carrier-registry provider id required in verification reports (e.g.
-    /// "LOG-DEMO-001"). Owner or board; None disables the equality check.
+    /// "LOG-DEMO-001"). Board-only: the verification trust root must never be
+    /// a single operator key.
     pub fn set_provider_id(&mut self, provider_id: Option<String>) {
         let caller = env::predecessor_account_id();
         require!(
-            caller == self.owner || Some(caller) == self.get_arbiter(),
-            "only the owner or board can set the provider id"
+            Some(caller) == self.get_arbiter(),
+            "only the board can set the provider id"
         );
         if let Some(p) = &provider_id {
             require!(p.len() <= 64, "provider_id too long");
@@ -1162,8 +1171,8 @@ impl VeriPay {
     pub fn set_carrier_pubkey(&mut self, pubkey: Option<String>) {
         let caller = env::predecessor_account_id();
         require!(
-            caller == self.owner || Some(caller) == self.get_arbiter(),
-            "only the owner or board can set the carrier key"
+            Some(caller) == self.get_arbiter(),
+            "only the board can set the carrier key"
         );
         if let Some(p) = &pubkey {
             require!(p.len() == 64 && p.chars().all(|c| c.is_ascii_hexdigit()), "pubkey must be 64 hex chars");
@@ -1309,23 +1318,30 @@ impl VeriPay {
         );
     }
 
-    /// Buyer refund path: seller never dispatched. Only after the dispatch
-    /// deadline and only if no shipment was registered. Logistics forfeits.
+    /// Buyer refund path. Two cases:
+    ///  1. Seller never dispatched: after the dispatch deadline with no
+    ///     shipment registered (logistics forfeits).
+    ///  2. Long-stop: a shipment was registered but delivery was never
+    ///     TEE-verified within `LONG_STOP_MS` after the dispatch deadline —
+    ///     frozen funds can always find their way back, even if dispute
+    ///     resolution stalls. Nothing can be paid twice: the payout is
+    ///     flag-guarded and logistics is deducted if already settled.
     pub fn refund_buyer(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer can claim this refund");
-        require!(
-            escrow.state == EscrowState::Funded || escrow.state == EscrowState::ShipmentPending,
-            "wrong state"
-        );
-        require!(!escrow.shipment_registered, "shipment already registered");
-        require!(
-            env::block_timestamp() / 1_000_000 >= escrow.dispatch_deadline_ms,
-            "dispatch deadline not reached"
-        );
+        let now = env::block_timestamp() / 1_000_000;
+        let no_dispatch = (escrow.state == EscrowState::Funded || escrow.state == EscrowState::ShipmentPending)
+            && !escrow.shipment_registered
+            && now >= escrow.dispatch_deadline_ms;
+        let long_stop = escrow.state == EscrowState::Shipped
+            && !escrow.delivered_verified
+            && !escrow.problem_reported
+            && now >= escrow.dispatch_deadline_ms.saturating_add(LONG_STOP_MS);
+        require!(no_dispatch || long_stop, "refund not available yet");
+        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let amount = U128(escrow.total_amount.0 - logistics_deduction);
         escrow.state = EscrowState::Refunded;
         let buyer = escrow.buyer.clone().unwrap();
-        let amount = escrow.total_amount;
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
         if !counted(&escrow_id, COUNTED_REFUND) {
@@ -1616,7 +1632,7 @@ mod tests {
             500,
             accounts(1), // review board is REQUIRED at init — pool is never exposed
             Some("LOG-DEMO-001".to_string()),
-            None,
+            Some("ab".repeat(32)), // carrier key required before verification
         )
     }
 
@@ -1800,6 +1816,7 @@ mod tests {
     fn native_fund_rejects_ft_escrow() {
         let mut c = setup();
         // Legacy FT is opt-in via the allowlist; otherwise only native NEAR.
+        testing_env!(as_account(accounts(1)).build()); // board-only setter
         c.set_allowed_token(Some(accounts(3)));
         testing_env!(as_account(accounts(1))
             .block_timestamp(1)
@@ -1865,6 +1882,23 @@ mod tests {
             .build());
         c.request_delivery_verification(id.clone(), "{\"status\":\"DELIVERED\"}".to_string());
         assert!(c.get_escrow(id).unwrap().verification_pending);
+    }
+
+    #[test]
+    #[should_panic(expected = "carrier key not configured")]
+    fn verification_requires_a_configured_carrier_key() {
+        // Fresh deployments must never run unsigned verification: with no
+        // carrier key on-chain, requests revert.
+        let mut c = VeriPay::new(
+            accounts(0), accounts(5), "test-project".to_string(), 500,
+            accounts(1), None, None,
+        );
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id, "{}".to_string());
     }
 
     #[test]
@@ -2112,7 +2146,7 @@ mod tests {
     #[test]
     fn callback_rejects_provider_mismatch_when_configured() {
         let mut c = setup();
-        c.set_provider_id(Some("LOG-DEMO-001".to_string()));
+        // provider id is already set at init (board config)
         let id = shipped_native(&mut c);
         testing_env!(as_account(accounts(0))
             .current_account_id(accounts(0))
@@ -2165,6 +2199,67 @@ mod tests {
         c.escrows.insert(id.clone(), escrow);
         testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
         c.confirm_receipt(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "only the board can set the carrier key")]
+    fn owner_cannot_rotate_carrier_key() {
+        let mut c = setup();
+        c.set_carrier_pubkey(Some("ab".repeat(32)));
+    }
+
+    #[test]
+    fn board_can_rotate_carrier_key() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1)).build());
+        c.set_carrier_pubkey(Some("ab".repeat(32)));
+        assert_eq!(c.get_carrier_pubkey(), Some("ab".repeat(32)));
+    }
+
+    #[test]
+    #[should_panic(expected = "only the board can set the provider id")]
+    fn owner_cannot_set_provider_id() {
+        let mut c = setup();
+        c.set_provider_id(Some("LOG-X".to_string()));
+    }
+
+    #[test]
+    fn long_stop_refunds_the_buyer_after_grace() {
+        let mut c = setup();
+        let id = shipped_native(&mut c); // shipment registered, never delivered
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_592_001_001_000_000) // deadline (1s) + 30d + 1s
+            .build());
+        c.refund_buyer(id.clone());
+        let escrow = c.get_escrow(id).unwrap();
+        assert_eq!(escrow.state, EscrowState::Refunded);
+        // Logistics was never paid → full total is refunded.
+        assert!(!escrow.logistics_paid);
+    }
+
+    #[test]
+    #[should_panic(expected = "refund not available yet")]
+    fn long_stop_blocked_before_grace() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        c.refund_buyer(id);
+    }
+
+    #[test]
+    fn no_dispatch_refund_still_works() {
+        let mut c = setup();
+        let id = create_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(10_000_000).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(10_000_000)
+            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        c.refund_buyer(id.clone());
+        assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
     }
 
     #[test]

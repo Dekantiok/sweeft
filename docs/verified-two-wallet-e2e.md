@@ -119,3 +119,19 @@ authoritative TEE proof).
   escalate earlier from `Funded`/`ShipmentPending` — this run exercised both.
 - The public `rpc.testnet.near.org` endpoint now returns “deprecated” throttling; the app
   uses `https://test.rpc.fastnear.com` (set in `.env`).
+
+## 8. Fourth review round — upgrade key, board-only carrier config, long-stop refunds (contract v13/v14)
+
+- **Upgrade key deleted**: `veripay.steepdata3968.testnet` had its single full-access key
+  (`ed25519:51KXxJwbQuRLrZEdjsNCAokbgbeCKtcsJrixS5jbVuMS`) removed on-chain
+  (tx `DJ7JTgygJ7mTLQZ7Fnow6VSj8SSfpxueJguGpcMdSqg9`). The account now has **no keys** —
+  the contract code is immutable and the "no platform key" claim is literally true.
+- **Carrier config is board-only**: `set_carrier_pubkey`, `set_provider_id` and
+  `set_allowed_token` revert for the owner; only the review board can rotate them.
+- **Long-stop refund**: 30 days after the dispatch deadline, an unverified shipment lets the
+  buyer reclaim the unspent balance regardless of board activity (unit-tested before/after grace).
+- **Verification requires a configured carrier key at request time** (contract guard), so no
+  deployment can run unsigned checks even if the TEE verifier were older.
+- Final lifecycle on this build: `VP-000027` / `VP-000028` — signed-carrier TEE verification,
+  logistics settled, confirmation completed, all payout flags true
+  (e.g. 027 settle `FnYKtT9GwjAL7SEXmF8Jc89SuZwFGk1LkaGRxmzMWU6K`).
