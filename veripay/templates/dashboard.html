@@ -2,14 +2,14 @@
 {% block title %}Dashboard — VeriPay{% endblock %}
 {% block content %}
 {% if not wallet_account %}
-  <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg">
+  <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg mx-auto text-center">
     <h1 class="text-xl font-semibold">Connect your wallet</h1>
     <p class="text-slate-600 text-sm mt-2">Your NEAR wallet is your identity. Sign a message (free, no transaction) to sign in.</p>
     <button onclick="VPApp.connect()" class="mt-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
   </div>
 {% else %}
-  <h1 class="text-2xl font-semibold">Dashboard</h1>
-  <p class="text-sm text-slate-500 mt-1">Signed in as <code>{{ wallet_account }}</code> · <a class="text-emerald-700" href="/u/{{ wallet_account }}/">view trust profile →</a></p>
+  <h1 class="text-2xl font-semibold text-center">Dashboard</h1>
+  <p class="text-sm text-slate-500 mt-1 text-center">Signed in as <code>{{ wallet_account }}</code> · <a class="text-emerald-700" href="/u/{{ wallet_account }}/">view trust profile →</a></p>
 
   {% if chain_error %}
     <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-900 text-sm px-4 py-2">
@@ -66,7 +66,7 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}<p class="text-sm text-slate-500 mt-2">No purchases yet — open an invitation link or accept a request.</p>{% endif %}
+      {% else %}<p class="text-sm text-slate-500 mt-2 text-center">No purchases yet — open an invitation link or accept a request.</p>{% endif %}
     </section>
 
     <section class="bg-white border border-slate-200 rounded-xl p-4">
@@ -84,7 +84,7 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}<p class="text-sm text-slate-500 mt-2">No sales yet — create an agreement or list an item in the marketplace.</p>{% endif %}
+      {% else %}<p class="text-sm text-slate-500 mt-2 text-center">No sales yet — create an agreement or list an item in the marketplace.</p>{% endif %}
     </section>
 
     <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
@@ -98,7 +98,7 @@
             </li>
           {% endfor %}
         </ul>
-      {% else %}<p class="text-sm text-slate-500 mt-2">No pending invitations for this wallet.</p>{% endif %}
+      {% else %}<p class="text-sm text-slate-500 mt-2 text-center">No pending invitations for this wallet.</p>{% endif %}
     </section>
   </div>
 {% endif %}

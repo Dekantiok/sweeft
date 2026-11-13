@@ -33,6 +33,15 @@
     return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  function csrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : '';
+  }
+
+  function postJson(url) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() } });
+  }
+
   function ensurePanel() {
     let panel = document.getElementById(PANEL_ID);
     if (panel) return panel;
@@ -123,7 +132,7 @@
     btns.style.display = 'none';
     setStatus(node, 'Co-pilot is settling from your budget…');
     try {
-      const res = await fetch(`/api/v1/ai/payments/${intentId}/execute/`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const res = await postJson(`/api/v1/ai/payments/${intentId}/execute/`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'payment failed');
       txLink(node, data.tx_hash, data.explorer);
@@ -230,7 +239,7 @@
     try {
       const res = await fetch('/api/v1/ai/chat/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
         body: JSON.stringify({ message }),
       });
       const data = await res.json();

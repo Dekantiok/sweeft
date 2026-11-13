@@ -1,22 +1,20 @@
 {% extends "base.html" %}
 {% block title %}Marketplace — VeriPay{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between flex-wrap gap-3">
-  <div>
-    <h1 class="text-2xl font-semibold">Marketplace</h1>
-    <p class="text-sm text-slate-500 mt-1">Safe trade starts here: every listing trades through the on-chain escrow. Check the seller's wallet reputation before you deal.</p>
-  </div>
+<div class="text-center">
+  <h1 class="text-2xl font-semibold">Marketplace</h1>
+  <p class="text-sm text-slate-500 mt-1 max-w-2xl mx-auto">Safe trade starts here: every listing trades through the on-chain escrow. Check the seller's wallet reputation before you deal.</p>
   {% if wallet_account %}
-    <div class="flex gap-2">
+    <div class="mt-4 flex flex-wrap justify-center gap-2">
       <a href="/market/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">List an item or service</a>
       <a href="/market/mine/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">My listings</a>
     </div>
   {% else %}
-    <button onclick="VPApp.connect()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet to trade</button>
+    <button onclick="VPApp.connect()" class="mt-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet to trade</button>
   {% endif %}
 </div>
 
-<form class="mt-5 flex flex-wrap gap-2" method="get">
+<form class="mt-5 flex flex-wrap justify-center gap-2" method="get">
   <input name="q" value="{{ q }}" placeholder="Search listings…" class="border border-slate-300 rounded-lg px-3 py-2 text-sm w-64">
   <select name="kind" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
     <option value="">Goods &amp; services</option>
@@ -42,7 +40,7 @@
       <div class="mt-2 text-xs text-slate-500">by <code>{{ l.seller_account }}</code></div>
     </a>
   {% empty %}
-    <div class="bg-white border border-slate-200 rounded-xl p-6 text-sm text-slate-500 md:col-span-3">
+    <div class="bg-white border border-slate-200 rounded-xl p-6 text-sm text-slate-500 md:col-span-3 text-center">
       No listings yet. Connect a wallet and publish the first one — it takes a minute, and sellers with on-chain history stand out.
     </div>
   {% endfor %}

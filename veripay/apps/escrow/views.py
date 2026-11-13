@@ -9,7 +9,6 @@ from django.contrib import messages
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.wallets.views import current_wallet
@@ -201,6 +200,19 @@ def escrow_detail(request, escrow_id: str):
         except Exception:  # noqa: BLE001
             arbitration = None
 
+    # Inspection window: once delivery is TEE-verified, the seller allocation
+    # auto-releases after `inspection_period_ms` unless a problem is reported
+    # first (permissionless `release_after_inspection`, driven by the relayer).
+    auto_release_ms = None
+    if chain and chain.get("state") == "AwaitingBuyerConfirmation" and not chain.get("seller_paid"):
+        try:
+            delivered_ms = near.view_call(settings.VERIPAY_CONTRACT, "delivery_time_ms", {"escrow_id": escrow_id})
+        except Exception:  # noqa: BLE001 — pre-upgrade escrows have no clock
+            delivered_ms = None
+        if delivered_ms:
+            auto_release_ms = int(delivered_ms) + int(chain.get("inspection_period_ms") or 0)
+    relayer_enabled = bool(settings.RELAYER_ENABLED and settings.RELAYER_ACCOUNT and settings.RELAYER_PRIVATE_KEY)
+
     # Review board (governed dispute resolution). Shown while a dispute is
     # open — proposals, votes and the escalation form live here.
     gov_ctx = None
@@ -238,6 +250,8 @@ def escrow_detail(request, escrow_id: str):
             "dispute": dispute,
             "arbitration": arbitration,
             "gov": gov_ctx,
+            "auto_release_ms": auto_release_ms,
+            "relayer_enabled": relayer_enabled,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
             "fmt": near.format_token,
@@ -290,7 +304,6 @@ def api_config(request):
     )
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_register_agreement(request):
@@ -395,10 +408,13 @@ def api_agreement(request, escrow_id: str):
     )
 
 
-@csrf_exempt
 @require_POST
 def api_sync_agreement(request, escrow_id: str):
     """Re-read chain state into the projection; record settlement rows."""
+    from apps.wallets import ratelimit
+
+    if not ratelimit.allow(f"sync:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_SYNC_PER_MIN):
+        return JsonResponse({"ok": False, "error": "too many sync requests — slow down"}, status=429)
     agreement = EscrowAgreement.objects.filter(escrow_id=escrow_id).first()
     if not agreement:
         return JsonResponse({"ok": False, "error": "unknown escrow"}, status=404)
@@ -450,7 +466,6 @@ def api_invitation(request, token: str):
     )
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_invitation_accept(request, token: str):

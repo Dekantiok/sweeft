@@ -79,8 +79,9 @@ The only money-moving agent capability, bounded twice over:
 1. The user deposits exactly the NEAR the agent may spend
    (`deposit()` on `budget.steepdata3968.testnet`). The budget contract tracks
    `allowance`, `spent`, and `available` on-chain.
-2. The platform enforces a **per-payment cap** (`AI_AGENT_MAX_PAYMENT`, default
-   0.1 NEAR) before signing anything. Over-cap requests are refused, not split.
+2. A **per-payment cap is enforced on-chain** by the budget contract
+   (`get_max_payment`/`set_max_payment`, default 0.1 NEAR) — the server setting
+   (`AI_AGENT_MAX_PAYMENT`) only mirrors it for UX. Over-cap requests are refused, not split.
 
 - Only the configured agent account may call `pay(owner, receiver, amount)`.
 - `spent` rolls back through a private callback if the NEAR transfer fails.

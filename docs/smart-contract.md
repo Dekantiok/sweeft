@@ -31,32 +31,52 @@ no state migration is required.
 ### Settlement
 | Method | Who | Effect |
 |---|---|---|
-| `settle_logistics(escrow_id)` | seller/provider | pays logistics after verified pickup |
-| `confirm_receipt(escrow_id)` | buyer | pays seller, then platform fee |
-| `report_problem(escrow_id, reason_hash)` | buyer | `ReviewRequired`, funds locked |
-| `resolve_review(escrow_id, seller_pct)` | review board (DAO) only | splits remaining balance; owner has no resolution key |
-| `refund_buyer(escrow_id)` | buyer | after dispatch deadline, no shipment |
-| `withdraw(amount, to)` | owner | NEAR-only sweep (verification deposits / compute refunds) |
-| `retry_platform_payout(escrow_id)` | anyone | re-attempt a failed platform-fee payout |
-| `update_platform_fee_bps(bps)` | owner | future agreements only |
+| `settle_logistics(escrow_id)` | permissionless | pays logistics after verified pickup; state-gated (never in review/settled states) |
+| `confirm_receipt(escrow_id)` | buyer | pays seller, then platform fee (exactly once) |
+| `release_after_inspection(escrow_id)` | permissionless | pays seller + platform after the inspection window elapses with no problem reported |
+| `report_problem(escrow_id, reason_hash)` / `open_dispute(...)` | buyer/seller | `ReviewRequired`, funds locked |
+| `resolve_review(escrow_id, seller_pct)` | review board (DAO) only | splits remaining balance; marks folded logistics paid; stores the buyer remainder |
+| `retry_review_buyer_payout(escrow_id)` | permissionless | re-attempts only the stored buyer remainder after a failed leg |
+| `refund_buyer(escrow_id)` | buyer | after dispatch deadline, no shipment (exactly-once reputation) |
+| `retry_platform_payout(escrow_id)` | permissionless | re-attempts a failed platform-fee payout |
+| `update_platform_fee_bps(bps)` | owner or board | future agreements only |
 
-> There is deliberately **no `withdraw_ft`**: a fungible-token sweep would let the
-> owner drain balances held for active escrows. FT leaves the contract only through
-> escrow settlement, arbitration, or board resolution.
+> There is deliberately **no `withdraw` and no `withdraw_ft`**: any owner sweep could
+> drain balances held for active escrows. Value leaves the contract only through
+> settlement, review-board resolution, or (legacy cases) arbitration.
+
+### Governance / configuration
+| Method | Who | Effect |
+|---|---|---|
+| `set_arbiter(account)` | owner (bootstrap only) / current board | review board; **disables the arbitration pool** |
+| `set_treasury(account)` | owner (bootstrap only) / treasury or board | platform-fee destination |
+| `set_provider_id(id)` | owner or board | carrier-registry id enforced in verification outcomes |
+| `set_allowed_token(token?)` | owner or board | legacy FT allowlist (native NEAR always allowed) |
+| `vote_dispute` / `finalize_arbitration` | — | **revert while a review board is set** |
+| `claim_stake(escrow_id)` | voters | reclaim stake once a case is finalized (board resolution finalizes open cases) |
 
 ### Views
-`get_escrow(id)`, `escrows_for(account)`, `pending_for(account)`, `get_config()`.
+`get_escrow(id)`, `escrows_for(account)`, `pending_for(account)`, `get_config()`,
+`get_gov_info()`, `get_provider_id()`, `get_allowed_token()`, `arbitration_status(id)`,
+`delivery_time_ms(id)`, `reputation_of(account)`, `escrows_range(start, limit)`.
 
 ## Security properties
 
 - Every state transition validated; permissions enforced on-chain; beneficiary addresses immutable
   after funding.
 - Verification flags are written **only** by the `#[private]` OutLayer callback.
-- Idempotency: `*_paid` flags + state checks prevent double settlement; failed native or FT
-  transfers roll their flags back (`on_payout_result`) so a payout is never falsely reported.
-- No keys or secrets in the contract; no backend endpoint can release funds.
+- Idempotency: per-leg flags + state checks prevent double settlement; failed native or FT
+  transfers roll their flags back (`on_payout_result`) so a payout is never falsely reported, and
+  a failed buyer leg never un-marks a paid seller leg.
+- Creation requires a storage deposit and bounded strings; per-account indexes and pending lists
+  are capped; the token field is an allowlist. Reputation counters are exactly-once and
+  value-filtered (anti-wash).
+- No keys or secrets in the contract; no backend endpoint can release funds; no owner withdraw.
 - Duplicate funding rejected by state (`Approved` → `Funded` once); wrong token / amount / buyer
   refunded by `ft_on_transfer`.
+- Honest TEE scope: the callback records the attested outcome, the contract enforces tracking and
+  carrier-provider identity, and the verifier enforces shipment identity + timeline consistency;
+  carrier authenticity itself needs signed carrier reports (roadmap).
 
 ## Build & deploy
 

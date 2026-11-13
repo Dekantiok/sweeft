@@ -5,8 +5,6 @@ import json
 from django.contrib import messages
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.escrow import near
@@ -15,6 +13,7 @@ from apps.wallets.views import current_wallet
 
 from . import carriers
 from .models import LogisticsPartner, PartnerApiCredential, Shipment, ShipmentEvent, VerificationRequest
+from .services import sync_verification_from_chain
 
 
 def wallet_required_json(view):
@@ -95,7 +94,6 @@ def partner_portal(request):
 # ---------------------------------------------------------------------------
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_create_shipment(request):
@@ -169,7 +167,11 @@ def api_shipment(request, shipment_id: int):
 
 @require_GET
 def api_shipment_for_escrow(request, escrow_id: str):
-    """Latest shipment for an escrow — powers live tracking on the escrow page."""
+    """Latest shipment for an escrow — powers live tracking on the escrow page.
+
+    Includes the escrow's on-chain state (cached read) so the page can detect
+    when verification/settlement moves the escrow forward and refresh itself.
+    """
     shipment = Shipment.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
     if not shipment:
         return JsonResponse({"ok": True, "shipment": None})
@@ -177,10 +179,14 @@ def api_shipment_for_escrow(request, escrow_id: str):
     payload = carrier.tracking(shipment.tracking_number)
     payload["id"] = shipment.id
     payload["simulation_scenario"] = shipment.simulation_scenario
+    try:
+        chain = near.get_escrow_cached(escrow_id)
+        payload["escrow_state"] = (chain or {}).get("state")
+    except Exception:  # noqa: BLE001 — tracking must render even if RPC hiccups
+        payload["escrow_state"] = None
     return JsonResponse({"ok": True, "shipment": payload})
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_shipment_event(request, shipment_id: int):
@@ -198,7 +204,6 @@ def api_shipment_event(request, shipment_id: int):
     return JsonResponse({"ok": True, "status": event.status, "simulated": True})
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_verification_payload(request):
@@ -211,6 +216,13 @@ def api_verification_payload(request):
         return JsonResponse({"ok": False, "error": "no shipment registered for this escrow"}, status=404)
     carrier = carriers.get_carrier()
     payload = carrier.tracking(shipment.tracking_number)
+    # The verifier and the contract check the carrier's shipment identity
+    # against the on-chain shipment id, so include it in the payload.
+    try:
+        chain = near.get_escrow(escrow_id) or {}
+        payload["shipment_id"] = chain.get("shipment_id")
+    except Exception:  # noqa: BLE001
+        payload["shipment_id"] = None
     vr = VerificationRequest.objects.create(
         escrow_id=escrow_id,
         shipment=shipment,
@@ -222,30 +234,16 @@ def api_verification_payload(request):
     return JsonResponse({"ok": True, "verification_id": vr.id, "carrier_payload": json.dumps(payload), "simulated": True})
 
 
-@csrf_exempt
 @require_POST
 @wallet_required_json
 def api_verification_sync(request):
     """Re-read the escrow and update the verification record from chain."""
     body = json.loads(request.body or "{}")
     escrow_id = (body.get("escrow_id") or "").strip()
-    vr = VerificationRequest.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
-    if not vr:
+    if not VerificationRequest.objects.filter(escrow_id=escrow_id).exists():
         return JsonResponse({"ok": False, "error": "no verification request recorded"}, status=404)
     chain = near.get_escrow(escrow_id)
-    last = (chain or {}).get("last_verification")
-    if last:
-        vr.result = last
-        vr.tx_hash = body.get("tx_hash", "")
-        vr.status = "VERIFIED" if last.get("verified") else "FAILED"
-        vr.completed_at = timezone.now()
-        vr.save()
-        ContractEvent.objects.create(
-            escrow_id=escrow_id,
-            event_type="verification_recorded",
-            tx_hash=vr.tx_hash,
-            payload=last,
-        )
+    vr = sync_verification_from_chain(escrow_id, tx_hash=body.get("tx_hash", ""), chain=chain)
     return JsonResponse({"ok": True, "status": vr.status, "result": vr.result, "escrow_state": (chain or {}).get("state")})
 
 
@@ -298,7 +296,6 @@ def api_partner_shipments(request):
     return JsonResponse({"ok": True, "simulated": True, "shipments": rows})
 
 
-@csrf_exempt
 @require_POST
 def api_partner_event(request, shipment_id: int):
     partner = _api_partner(request)

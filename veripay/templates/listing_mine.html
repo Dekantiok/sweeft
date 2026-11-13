@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}My listings — VeriPay Marketplace{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between flex-wrap gap-3">
+<div class="flex items-center justify-center flex-wrap gap-3">
   <h1 class="text-2xl font-semibold">My listings</h1>
   <a href="/market/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">New listing</a>
 </div>
@@ -34,7 +34,7 @@
       </div>
     {% endif %}
   {% empty %}
-    <p class="text-sm text-slate-500 mt-2">No purchase requests yet.</p>
+    <p class="text-sm text-slate-500 mt-2 text-center">No purchase requests yet.</p>
   {% endfor %}
 </section>
 
@@ -61,7 +61,7 @@
         </div>
       </div>
     {% empty %}
-      <p class="text-sm text-slate-500 md:col-span-3">Nothing listed yet.</p>
+      <p class="text-sm text-slate-500 md:col-span-3 text-center">Nothing listed yet.</p>
     {% endfor %}
   </div>
 </section>

@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ profile_account }} — VeriPay trust profile{% endblock %}
 {% block content %}
-<div class="flex items-center gap-3 flex-wrap">
+<div class="flex items-center gap-3 flex-wrap justify-center">
   <div class="h-12 w-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-xl font-bold">{{ profile_account|slice:":1"|upper }}</div>
-  <div>
+  <div class="text-center">
     <h1 class="text-2xl font-semibold"><code>{{ profile_account }}</code></h1>
     <p class="text-xs text-slate-500">Wallet identity · on-chain trust record below is read live from the contract</p>
   </div>
-  <div class="flex-1"></div>
   {% if wallet_account == profile_account %}
     <a href="/market/new/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm">New listing</a>
   {% endif %}
@@ -40,7 +39,7 @@
   </div>
 </div>
 
-<p class="text-xs text-slate-500 mt-3">
+<p class="text-xs text-slate-500 mt-3 text-center">
   Deal counts move only when a funded escrow completes (never on creation). Disputes stay neutral until resolved.
   {% if rep.first_seen_ms %}<span class="ml-2">Member since {{ rep.first_seen_ms }}</span>{% endif %}
   <a class="text-emerald-700 ml-2" href="{{ explorer_tx }}/accounts/{{ profile_account }}" target="_blank" rel="noreferrer">View wallet on explorer →</a>

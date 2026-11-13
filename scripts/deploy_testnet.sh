@@ -10,6 +10,7 @@ DEPLOYER_KEY="${DEPLOYER_KEY:?set DEPLOYER_KEY=ed25519:...}"
 VERIPAY_ACCOUNT="${VERIPAY_ACCOUNT:-veripay.${DEPLOYER}}"
 BUDGET_ACCOUNT="${BUDGET_ACCOUNT:-budget.${DEPLOYER}}"
 AGENT_ACCOUNT="${AGENT_ACCOUNT:-agent.${DEPLOYER}}"
+RELAYER_ACCOUNT="${RELAYER_ACCOUNT:-relayer.${DEPLOYER}}"
 OUTLAYER_CONTRACT="${OUTLAYER_CONTRACT:-outlayer.testnet}"
 OUTLAYER_PROJECT="${OUTLAYER_PROJECT:-${DEPLOYER}/veripay-verify}"
 PLATFORM_FEE_BPS="${PLATFORM_FEE_BPS:-500}"
@@ -24,7 +25,7 @@ echo "== 2. Build the OutLayer verification module (WASI Preview 2)"
 (cd wasi/veripay-verify && cargo build --target wasm32-wasip2 --release)
 
 echo "== 3. Create subaccounts (skip if they exist)"
-for acct in "$VERIPAY_ACCOUNT" "$BUDGET_ACCOUNT" "$AGENT_ACCOUNT"; do
+for acct in "$VERIPAY_ACCOUNT" "$BUDGET_ACCOUNT" "$AGENT_ACCOUNT" "$RELAYER_ACCOUNT"; do
   if ! near account view-account "$acct" network-config testnet now >/dev/null 2>&1; then
     near account create-account fund-myself "$acct" '2 NEAR' autogenerate-new-keypair save-to-keychain \
       sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
@@ -57,4 +58,5 @@ outlayer upload "$WASM"
 # deploy contracts/test-token/target/near/test_token.wasm to tusd.${DEPLOYER} and
 # set TUSD_CONTRACT accordingly. New escrows do NOT need it.
 
-echo "Done. Set VERIPAY_CONTRACT=$VERIPAY_ACCOUNT AI_BUDGET_CONTRACT=$BUDGET_ACCOUNT OUTLAYER_PROJECT=$OUTLAYER_PROJECT in veripay/.env"
+echo "Done. Set VERIPAY_CONTRACT=$VERIPAY_ACCOUNT AI_BUDGET_CONTRACT=$BUDGET_ACCOUNT OUTLAYER_PROJECT=$OUTLAYER_PROJECT"
+echo "      RELAYER_ACCOUNT=$RELAYER_ACCOUNT RELAYER_ENABLED=1 (key at ~/.near-credentials/testnet/) in veripay/.env"

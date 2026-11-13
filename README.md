@@ -3,8 +3,10 @@
 **Wallet-based escrow, logistics verification, settlement — and a reputation marketplace — for physical commerce on NEAR testnet.**
 
 Buyers do not send money to an unknown seller before goods ship. Sellers know the buyer funded the
-deal. Logistics gets paid only when carrier pickup is verified, the seller only after TEE-verified
-delivery plus explicit buyer confirmation, and the platform fee is disclosed before funding.
+deal. Logistics gets paid only when carrier pickup is TEE-verified; the seller releases on explicit
+buyer confirmation — or, if the buyer stays silent, when the on-chain inspection window elapses. The
+platform fee is disclosed before funding, and the platform relayer runs this pipeline with no wallet
+signatures in the happy path.
 
 One wallet connects the whole ecosystem: **marketplace listings → on-chain trust profile → escrow →
 verified logistics → settlement → reputation**. Every reputation number is contract-derived and
@@ -12,7 +14,7 @@ recomputable by anyone — the marketplace is discovery, the chain is the truth.
 
 ```
 CONNECT WALLET → BROWSE / LIST → CHECK TRUST PROFILE → ESCROW
-→ ACCEPT → FUND (native NEAR) → SHIP → TEE-VERIFY DELIVERY → CONFIRM RECEIPT
+→ ACCEPT → FUND (native NEAR) → SHIP → TEE-VERIFY (AUTOMATIC)
 → SETTLE (seller + logistics + platform) → REPUTATION MOVES
 ```
 
@@ -26,8 +28,9 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 |---|---|
 | Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`veripay.steepdata3968.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
-| Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action is wallet-signed |
-| Delivery verification | **Real TEE** — OutLayer (Intel TDX) executes our published WASM verifier; result returns on-chain via the contract callback |
+| Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
+| Delivery verification | **Real TEE execution, honesty-scoped claim** — OutLayer (Intel TDX) runs our published verifier on the caller-supplied carrier payload; the contract enforces tracking + carrier-provider identity, and the verifier enforces shipment id, timeline and pickup-before-delivery consistency. It cannot prove a lying carrier (signed carrier reports are the roadmap) |
+| Verification & settlement automation | **Real on-chain** — the platform relayer (`manage.py run_relayer`) triggers permissionless TEE verification, the logistics payout, and the inspection-window release; the contract state machine gates every call and fixes every destination/amount |
 | Carrier tracking data | **SIMULATED** — Demo Carrier; labelled `SIMULATED DATA` in the DB (`simulated=True`), API responses and UI |
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
 | AI co-pilot payments | **Real on-chain** — scoped, revocable native-NEAR budget (`budget.steepdata3968.testnet`); the agent pays only within the user's deposited limit |
@@ -36,8 +39,9 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Treasury (DAO multisig) | **Real** — platform fees accrue to the board account; spending requires a council-approved Transfer proposal |
 | Fiat payouts / real carriers | **Not implemented** (out of MVP scope) |
 
-Boundaries we state plainly: a carrier scan does not prove parcel contents; buyer confirmation is a
-separate settlement condition; a silent buyer never auto-releases funds.
+Boundaries we state plainly: a carrier scan does not prove parcel contents; the buyer can confirm
+receipt early or report a problem at any time; a silent buyer's funds release only after the on-chain
+inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
@@ -50,6 +54,27 @@ separate settlement condition; a silent buyer never auto-releases funds.
   `resolve_review(…, 60)` → seller **0.0414 NEAR**, buyer **0.0276 NEAR** (before gas).
 - **AI budget** — owner deposited **0.05 NEAR**; the co-pilot paid invoices in native NEAR and the
   budget's `spent`/`available` updated exactly on-chain. No token mint or registration anywhere.
+
+### Relayer: zero-signature happy path (`VP-000017`)
+
+Full lifecycle with **no wallet signatures after funding** — the platform relayer
+(`relayer.steepdata3968.testnet`, `manage.py run_relayer`) drove every step via the permissionless
+contract methods:
+
+- seller created + buyer funded **0.0625 NEAR**, provider assigned, shipment registered → `Shipped`
+- Demo Carrier reported `DELIVERED` (simulated scan) → relayer called
+  `request_delivery_verification`; OutLayer's TEE returned `verified: true`, `DELIVERED` in ~40s and
+  the callback moved the escrow to `AwaitingBuyerConfirmation`
+- relayer paid logistics (`settle_logistics`) and, after the 30s inspection window elapsed with no
+  problem reported, released seller + platform (`release_after_inspection`) → state `Completed`,
+  all payout flags true
+
+### Counterparty acceptance policies (verified on-chain)
+
+- `VP-000018` — preassigned to `steepdata3968.testnet`: `logistics.steepdata3968.testnet` was
+  rejected on-chain (`only the preassigned buyer can accept`); the named wallet accepted.
+- `VP-000019` — invite-link escrow: a wrong secret was rejected (`invalid invite secret`);
+  the wallet presenting the correct secret accepted and became the buyer.
 
 ### Legacy FT verification (historical tUSD escrows)
 
@@ -103,7 +128,7 @@ contracts/near-budget/ Native-NEAR co-pilot budget (deposit / agent pay / withdr
 wasi/veripay-verify/   TEE verification program → wasm32-wasip2, published on OutLayer
 veripay/               Django modular monolith (product coordinator + projection)
   apps/wallets/        NEP-413 challenge/verify, sessions
-  apps/escrow/         agreements, invitations, contract reads, settlement projection
+  apps/escrow/         agreements, invitations, contract reads, settlement projection, relayer
   apps/logistics/      partners, Demo Carrier, shipments, verification records
   apps/market/         listings, purchase requests, trust profiles (/u/<wallet>/)
   apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) + co-pilot payments — see docs/ai-copilot.md
@@ -152,7 +177,28 @@ Environment variables (`.env`, never commit real values):
 | `AI_BUDGET_CONTRACT` | native-NEAR co-pilot budget account |
 | `TUSD_CONTRACT` | legacy NEP-141 token account (old escrows only) |
 | `OUTLAYER_CONTRACT` / `OUTLAYER_PROJECT` | OutLayer receiver + published verification project |
+| `RELAYER_ENABLED` / `RELAYER_ACCOUNT` / `RELAYER_PRIVATE_KEY` | platform relayer (see below) |
 | `NEAR_NETWORK`, `NEAR_RPC_URL`, `DJANGO_DEBUG`, `DJANGO_SECRET_KEY` | standard config |
+
+### Run the verification relayer (second terminal)
+
+The relayer (`apps/escrow/relayer.py`) drives the **permissionless** happy path on-chain: TEE
+verification of the carrier report → logistics payout → inspection-window release. It calls only
+methods whose destinations and amounts are fixed by the escrow, so the key can never redirect
+funds. Fund a dedicated testnet account and set it in `.env`:
+
+```bash
+# in veripay/.env
+RELAYER_ENABLED=1
+RELAYER_ACCOUNT=relayer.<your>.testnet
+RELAYER_PRIVATE_KEY=ed25519:…
+RELAYER_POLL_SECONDS=5              # optional
+
+python3 manage.py run_relayer       # loop; or --once for a single pass / cron
+```
+
+Without it, the escrow page keeps manual fallback buttons (wallet-signed) — the flow degrades
+gracefully. Testnet MVP only: on mainnet the key would live inside a TEE/KMS.
 
 ### Contracts
 
@@ -192,16 +238,20 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
 2. **Marketplace**: browse `/market/`, open a listing, inspect the seller's **trust profile**
    (`/u/<wallet>/` — live contract reputation), then "Request to buy via escrow".
 3. The seller sees the purchase request under `/market/mine/` and creates the escrow — prefilled
-   from the listing — with a wallet-signed `create_escrow`.
+   from the listing — with a wallet-signed `create_escrow`. When creating directly, the seller
+   explicitly picks the acceptance policy: **only a specific wallet** (the contract rejects every
+   other account) or **an invite link** (only its sha256 is committed on-chain).
 4. Buyer accepts, then **funds** the exact total in native NEAR. Logistics is assigned and the Demo
    Carrier tracking number is registered.
 5. **Dispatch starts the carrier run**: at "Mark dispatched" pick a scenario (`delivered` in ~60s,
    or `failed` / `lost` for dispute demos). The standalone Demo Carrier simulator plays
    receive → transport → deliver over the partner API; the escrow page shows the live timeline.
-6. Any party requests **TEE delivery verification** — OutLayer runs the published verifier and the
-   contract callback records the attested result.
-7. Seller/provider **settle logistics** (verified pickup); buyer **confirms receipt** → seller +
-   platform payouts settle, the listing flips to `sold`, and **reputation moves on-chain for both
+6. **The platform relayer runs the settlement pipeline automatically** (start it once:
+   `python3 manage.py run_relayer`): when the carrier reports delivery it requests the OutLayer TEE
+   verification; when the attested result lands it pays logistics; after the inspection window it
+   releases seller + platform — **no wallet signatures in the happy path**. The buyer can confirm
+   receipt early, or **report a problem** at any moment: that freezes the funds into the review path.
+7. With settlement complete the listing flips to `sold` and **reputation moves on-chain for both
    wallets** — visible instantly on their profiles. Platform fees land in the **review-board treasury**.
 8. **Governance**: while an escrow is `ReviewRequired`, either party can **Escalate to the review board**
    from the escrow page — a wallet-signed DAO proposal (`resolve_review`); council members approve on
@@ -258,17 +308,39 @@ Over-cap and no-budget paths refused correctly.
 - Contract — `get_gov_info`, `set_arbiter`, `set_treasury` (+ 7 Rust unit tests for the authorization
   rules) and permissionless `retry_platform_payout` for failed fee transfers.
 
+## Security & trust boundaries (post-review hardening)
+
+A pre-submission review surfaced real exploit paths; all critical findings are fixed and verified
+on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the commits):
+
+| Finding | Fix |
+|---|---|
+| Seller sockpuppet arbitration (open dispute → fake vote → settle → reclaim stake) | The arbitration pool is **disabled whenever a review board is set** (`vote_dispute`/`finalize_arbitration` revert); the board is the only resolution path. Votes are one-per-wallet and board resolutions finalize open cases so stakes stay claimable. Tie-break is buyer-favourable. |
+| Owner could drain escrowed NEAR via `withdraw` | **Removed.** No owner sweep exists; value leaves only through settlement/board paths. |
+| Owner could retake dispute power via `set_arbiter(owner)` | `set_arbiter`/`set_treasury` are **bootstrap-only for the owner**; afterwards only the current board/treasury can rotate them. Verified live: owner call reverts. |
+| Double payouts from failed buyer legs / folded logistics | Independent per-leg settlement: the buyer remainder is stored and retried via permissionless `retry_review_buyer_payout`; resolution paths mark folded logistics paid; `settle_logistics` is state-gated; reputation counters are exactly-once and value-filtered. |
+| Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR or the configured legacy token). |
+| TEE input controlled by caller | The claim is scoped honestly: the TEE attests *this code ran on this input*; the contract enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline consistency and pickup-before-delivery. **Signed carrier payloads / TEE-side carrier fetch remain the roadmap** for carrier authenticity. |
+| Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
+| AI budget cap lived only in server settings | Enforced **on-chain** in the budget contract (`get_max_payment`/`set_max_payment`, default 0.1 NEAR per payment). |
+
+Residual (disclosed) risks: the review-board council keys are operator-held on testnet (multisig/hardware
+on mainnet), the demo agent key is server-side (allowance/on-chain cap bounds it), and the arbitration
+pool has no slashing — which is why it is disabled in favour of the board.
+
 ## Tests
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
   asserting exact token balances at each settlement step.
 - Django: `python3 manage.py test` — carrier state-machine guards (forward-only, idempotent,
-  failure-terminal), partner API auth + event round-trips, escrow tracking lookup, and the
-  verification payload matching the OutLayer invariants.
+  failure-terminal), partner API auth + event round-trips, escrow tracking lookup, the
+  verification payload matching the OutLayer invariants, and the relayer (chain-conditioned
+  actions, inspection-window gating, failure isolation).
 - Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
-- Rust unit tests: `cargo test` in `contracts/veripay` (state-machine helpers).
+- Rust unit tests: `cargo test` in `contracts/veripay` — state machine, permissionless
+  verification/settlement/release gates, inspection-clock behavior (22 tests).
 
 ## Known limitations / roadmap
 

@@ -46,13 +46,20 @@ Checks performed inside the TEE:
 
 ## On-chain integration
 
-1. `request_delivery_verification(escrow_id, carrier_payload)` — any party; attaches NEAR for
-   compute; the contract marks `verification_pending` and calls
+1. `request_delivery_verification(escrow_id, carrier_payload)` — **permissionless**: the state
+   machine (`Shipped`, no pending verification) and the attached compute deposit gate it. The
+   platform relayer fires it automatically when the carrier reports delivery; any party can fire it
+   manually as a fallback. The contract marks `verification_pending` and calls
    `outlayer.testnet::request_execution` (`source = Project{…}`, `response_format = Json`).
 2. OutLayer executes the module in the TEE and returns the result via the promise callback.
 3. `on_verification_result` ( `#[private]` — only reachable from the contract's own promise chain )
    validates the escrow id, then records `pickup_verified`, `delivered_verified`, state
-   `AwaitingBuyerConfirmation`, and stores the full `last_verification` outcome.
+   `AwaitingBuyerConfirmation`, and starts the inspection clock (`delivery_time_ms`).
+4. Settlement is permissionless too — destinations and amounts are fixed by the escrow, so the
+   relayer (or anyone) can call `settle_logistics` once pickup is verified, and
+   `release_after_inspection` once the inspection window elapses with no problem reported. The
+   buyer's `confirm_receipt` remains the explicit early-release path; a reported problem blocks the
+   timeout release and routes the escrow to review.
 
 No ordinary Django request can record a verification: the only method that writes the flags is
 callable exclusively by the contract itself. Testnet run ids are visible in

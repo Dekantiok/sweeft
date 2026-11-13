@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Partner portal — VeriPay{% endblock %}
 {% block content %}
-<div class="max-w-xl bg-white border border-slate-200 rounded-xl p-6">
+<div class="max-w-xl bg-white border border-slate-200 rounded-xl p-6 mx-auto text-center">
   <h1 class="text-xl font-semibold">You are not registered as a logistics partner</h1>
   <p class="text-sm text-slate-600 mt-2">
     The partner portal is for approved logistics providers: manage your profile and coverage,
@@ -10,7 +10,7 @@
   <p class="text-sm text-slate-600 mt-2">
     Connected wallet: <code>{{ wallet_account }}</code>
   </p>
-  <div class="mt-5 flex flex-wrap gap-3">
+  <div class="mt-5 flex flex-wrap gap-3 justify-center">
     <a href="/partners/register/" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Apply as a logistics partner</a>
     <a href="/logistics/" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Browse the provider directory</a>
   </div>

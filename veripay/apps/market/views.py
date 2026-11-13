@@ -6,7 +6,6 @@ from django.conf import settings
 from django.contrib import messages
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.escrow import near
@@ -137,7 +136,6 @@ def listing_mine(request):
     )
 
 
-@csrf_exempt
 @require_POST
 def listing_status(request, slug: str):
     wallet = current_wallet(request)
@@ -153,7 +151,6 @@ def listing_status(request, slug: str):
     return JsonResponse({"ok": True, "status": listing.status})
 
 
-@csrf_exempt
 @require_POST
 def purchase_request(request, slug: str):
     wallet = current_wallet(request)
@@ -172,7 +169,6 @@ def purchase_request(request, slug: str):
     return JsonResponse({"ok": True, "request_id": req.id, "created": created})
 
 
-@csrf_exempt
 @require_POST
 def purchase_request_decline(request, request_id: int):
     wallet = current_wallet(request)

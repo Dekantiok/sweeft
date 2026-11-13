@@ -14,7 +14,6 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.ai import services as ai_services
@@ -75,7 +74,6 @@ def _dispute_json(d: Dispute) -> dict:
     }
 
 
-@csrf_exempt
 @require_POST
 @_wallet_required
 def api_open_dispute(request):
@@ -112,7 +110,6 @@ def api_open_dispute(request):
     return JsonResponse({"ok": True, "created": created, "dispute": _dispute_json(dispute)})
 
 
-@csrf_exempt
 @require_POST
 @_wallet_required
 def api_add_evidence(request, dispute_id: int):
@@ -135,7 +132,6 @@ def api_add_evidence(request, dispute_id: int):
     return JsonResponse({"ok": True, "evidence_id": ev.id})
 
 
-@csrf_exempt
 @require_POST
 @_wallet_required
 def api_ai_review(request, dispute_id: int):
@@ -163,7 +159,6 @@ def api_ai_review(request, dispute_id: int):
     return JsonResponse({"ok": True, "recommendation": rec})
 
 
-@csrf_exempt
 @require_POST
 @_wallet_required
 def api_resolve_dispute(request, dispute_id: int):

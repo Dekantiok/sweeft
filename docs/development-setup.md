@@ -37,6 +37,18 @@ VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
 Without it, shipments simply wait at `CREATED` — the escrow page shows “waiting for carrier”.
 Its unit tests run standalone: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 
+### Run the verification relayer (third terminal)
+
+The platform relayer drives the permissionless happy path on-chain (TEE verification → logistics
+payout → inspection-window release). Set a dedicated funded testnet account in `.env`
+(`RELAYER_ENABLED=1`, `RELAYER_ACCOUNT`, `RELAYER_PRIVATE_KEY`) and run:
+
+```bash
+python3 manage.py run_relayer        # loop; --once for a single pass / cron
+```
+
+Without it, the escrow page keeps manual fallback buttons (wallet-signed) — nothing else breaks.
+
 Pages: `/` (landing), `/dashboard/`, `/escrow/new/`, `/escrow/<id>/`, `/invitations/<token>/`,
 `/logistics/`, `/partners/register/`, `/partners/portal/`, `/admin/`.
 
@@ -62,9 +74,9 @@ See `veripay/.env.example`. Never commit real values; the repo contains none.
 
 ```bash
 python3 manage.py check                                # Django system check
-python3 manage.py test                                # Django unit tests (logistics state machine + partner API)
+python3 manage.py test                                # Django unit tests (logistics + relayer + API)
 (cd tools/demo-carrier && python3 -m unittest test_simulator -v)   # carrier simulator schedule
-(cd contracts/veripay && cargo test)                   # contract unit tests
+(cd contracts/veripay && cargo test)                   # contract unit tests (22: state machine + permissionless gates)
 SELLER_KEY=... BUYER_KEY=... scripts/e2e_lifecycle.sh  # full testnet lifecycle
 ```
 

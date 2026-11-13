@@ -37,6 +37,9 @@ struct Expected {
     provider_wallet: Option<String>,
     #[serde(default)]
     shipment_id: Option<String>,
+    /// Carrier-registry provider id (e.g. LOG-DEMO-001) configured on-chain.
+    #[serde(default)]
+    provider_id: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -136,9 +139,29 @@ fn run(raw: &str) -> Output {
         return fail("escrow has no registered tracking number".into());
     }
 
-    // 2. Provider identity must be present when the escrow records one.
+    // 2. Provider identity: must be present, and must equal the carrier id
+    //    configured on-chain when one is set.
     if input.expected.provider_wallet.is_some() && provider_id.is_empty() {
         return fail("carrier payload has no provider_id".into());
+    }
+    if let Some(expected_provider) = &input.expected.provider_id {
+        if &provider_id != expected_provider {
+            return fail(format!(
+                "provider mismatch: on-chain {expected_provider}, carrier reported {provider_id}"
+            ));
+        }
+    }
+
+    // 2b. Shipment identity must match the on-chain shipment id.
+    let carrier_shipment = carrier.get("shipment_id").and_then(|v| v.as_str()).unwrap_or_default();
+    match &input.expected.shipment_id {
+        Some(expected_shipment) if carrier_shipment == expected_shipment => {}
+        Some(expected_shipment) => {
+            return fail(format!(
+                "shipment mismatch: on-chain {expected_shipment}, carrier reported {carrier_shipment:?}"
+            ))
+        }
+        None => return fail("escrow has no shipment_id".into()),
     }
 
     // 3. Status must normalize into the supported set.
@@ -186,8 +209,9 @@ fn run(raw: &str) -> Output {
         }
     }
 
-    // 5. A DELIVERED report without any pickup evidence is implausible.
-    if status == "DELIVERED" && !events.is_empty() && !seen_pickup {
+    // 5. A DELIVERED report requires pickup evidence — an empty timeline is
+    //    not evidence, so it is rejected too.
+    if status == "DELIVERED" && !seen_pickup {
         return fail("DELIVERED reported but the timeline has no PICKED_UP event".into());
     }
 
@@ -215,21 +239,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
-    fn happy_input() -> String {
+    fn input(status: &str, events: serde_json::Value, provider_id: &str, shipment_id: &str) -> String {
         serde_json::json!({
             "escrow_id": "VP-000003",
-            "expected": { "tracking_number": "DEMO-1", "provider_wallet": "log.testnet", "shipment_id": "SHIP-1" },
-            "carrier": {
-                "provider_id": "LOG-DEMO-001",
+            "expected": {
                 "tracking_number": "DEMO-1",
-                "status": "DELIVERED",
-                "events": [
-                    {"status": "PICKED_UP"}, {"status": "IN_TRANSIT"},
-                    {"status": "OUT_FOR_DELIVERY"}, {"status": "DELIVERED"}
-                ]
+                "provider_wallet": "log.testnet",
+                "shipment_id": "SHIP-1",
+                "provider_id": "LOG-DEMO-001"
+            },
+            "carrier": {
+                "provider_id": provider_id,
+                "tracking_number": "DEMO-1",
+                "shipment_id": shipment_id,
+                "status": status,
+                "events": events
             }
         })
         .to_string()
+    }
+
+    fn happy_input() -> String {
+        input(
+            "DELIVERED",
+            serde_json::json!([{"status":"PICKED_UP"},{"status":"IN_TRANSIT"},
+                               {"status":"OUT_FOR_DELIVERY"},{"status":"DELIVERED"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        )
+    }
+
+    #[test]
+    fn delivered_with_empty_events_rejected() {
+        let out = run(&input("DELIVERED", serde_json::json!([]), "LOG-DEMO-001", "SHIP-1"));
+        assert!(!out.verified);
+        assert!(out.reason.contains("no PICKED_UP"));
+    }
+
+    #[test]
+    fn provider_mismatch_rejected() {
+        let out = run(&input(
+            "DELIVERED",
+            serde_json::json!([{"status":"PICKED_UP"},{"status":"DELIVERED"}]),
+            "LOG-EVIL-999",
+            "SHIP-1",
+        ));
+        assert!(!out.verified);
+        assert!(out.reason.contains("provider mismatch"));
+    }
+
+    #[test]
+    fn shipment_mismatch_rejected() {
+        let out = run(&input(
+            "DELIVERED",
+            serde_json::json!([{"status":"PICKED_UP"},{"status":"DELIVERED"}]),
+            "LOG-DEMO-001",
+            "SHIP-WRONG",
+        ));
+        assert!(!out.verified);
+        assert!(out.reason.contains("shipment mismatch"));
     }
 
     #[test]
@@ -241,56 +309,47 @@ mod tests {
 
     #[test]
     fn tracking_mismatch_rejected() {
-        let raw = serde_json::json!({
-            "escrow_id": "VP-1",
-            "expected": { "tracking_number": "REGISTERED-1" },
-            "carrier": { "tracking_number": "CARRIER-9", "status": "DELIVERED",
-                          "events": [ {"status": "PICKED_UP"}, {"status": "DELIVERED"} ] }
-        })
-        .to_string();
-        let out = run(&raw);
+        // Expected (on-chain) says DEMO-1; the carrier report says CARRIER-9.
+        let mut v: serde_json::Value = serde_json::from_str(&input(
+            "DELIVERED",
+            serde_json::json!([{"status":"PICKED_UP"},{"status":"DELIVERED"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ))
+        .unwrap();
+        v["carrier"]["tracking_number"] = serde_json::json!("CARRIER-9");
+        let out = run(&v.to_string());
         assert!(!out.verified);
         assert!(out.reason.contains("tracking mismatch"));
     }
 
     #[test]
     fn backwards_timeline_rejected() {
-        let raw = serde_json::json!({
-            "escrow_id": "VP-1",
-            "expected": { "tracking_number": "T-1" },
-            "carrier": { "tracking_number": "T-1", "status": "PICKED_UP",
-                          "events": [ {"status": "DELIVERED"}, {"status": "PICKED_UP"} ] }
-        })
-        .to_string();
-        let out = run(&raw);
+        let out = run(&input(
+            "PICKED_UP",
+            serde_json::json!([{"status":"DELIVERED"},{"status":"PICKED_UP"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
         assert!(!out.verified);
         assert!(out.reason.contains("backwards") || out.reason.contains("behind"));
     }
 
     #[test]
     fn delivered_without_pickup_rejected() {
-        let raw = serde_json::json!({
-            "escrow_id": "VP-1",
-            "expected": { "tracking_number": "T-1" },
-            "carrier": { "tracking_number": "T-1", "status": "DELIVERED",
-                          "events": [ {"status": "ACCEPTED"}, {"status": "DELIVERED"} ] }
-        })
-        .to_string();
-        let out = run(&raw);
+        let out = run(&input(
+            "DELIVERED",
+            serde_json::json!([{"status":"ACCEPTED"},{"status":"DELIVERED"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
         assert!(!out.verified);
         assert!(out.reason.contains("no PICKED_UP"));
     }
 
     #[test]
     fn unknown_status_rejected() {
-        let raw = serde_json::json!({
-            "escrow_id": "VP-1",
-            "expected": { "tracking_number": "T-1" },
-            "carrier": { "tracking_number": "T-1", "status": "SOMEWHERE",
-                          "events": [ {"status": "PICKED_UP"} ] }
-        })
-        .to_string();
-        let out = run(&raw);
+        let out = run(&input("SOMEWHERE", serde_json::json!([{"status":"PICKED_UP"}]), "LOG-DEMO-001", "SHIP-1"));
         assert!(!out.verified);
     }
 
@@ -304,14 +363,12 @@ mod tests {
 
     #[test]
     fn failure_status_must_be_last() {
-        let raw = serde_json::json!({
-            "escrow_id": "VP-1",
-            "expected": { "tracking_number": "T-1" },
-            "carrier": { "tracking_number": "T-1", "status": "PICKED_UP",
-                          "events": [ {"status": "LOST"}, {"status": "PICKED_UP"} ] }
-        })
-        .to_string();
-        let out = run(&raw);
+        let out = run(&input(
+            "PICKED_UP",
+            serde_json::json!([{"status":"LOST"},{"status":"PICKED_UP"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
         assert!(!out.verified);
     }
 }

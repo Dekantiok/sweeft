@@ -57,6 +57,24 @@ Final state `Completed`; seller, logistics and platform payout flags all true.
 - Governance console shows the proposals and approvals; co-pilot chat renders the payment
   card and status with zero JS errors across all pages.
 
+## 5. Post-review hardening verification (2026-11-13, contract v10)
+
+Exploit paths from the pre-submission review, rejected live on `veripay.steepdata3968.testnet`:
+
+| Attempt | On-chain result |
+|---|---|
+| `vote_dispute` / `finalize_arbitration` with a review board set (seller-sockpuppet path) | reverted: `arbitration pool is disabled while a review board is set` |
+| Owner retaking the board via `set_arbiter(owner)` | reverted: `board already set — only the current board can change it` |
+| `withdraw(amount, to)` (owner drain) | `MethodNotFound` — method removed |
+| `create_escrow` without a storage deposit | reverted: `attach at least 0.02 NEAR storage deposit` |
+| `create_escrow` with an unlisted token | reverted: `token not allowed` |
+
+Hardened end-to-end: **`VP-000022`** completed the full lifecycle through the new TEE verifier
+(active hash `e5b1a7aa…`) with all payout flags; **`VP-000023`** exercised the tampered-provider
+rejection path (contract-side identity checks + verifier unit tests; OutLayer executions were
+intermittently timing out at the RPC layer during the run — the positive path above is the
+authoritative TEE proof).
+
 ## Notes / follow-ups
 
 - The buyer-dispute state gate is intentional (disputes open at `Shipped`); sellers can

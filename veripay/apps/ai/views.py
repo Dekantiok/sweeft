@@ -5,7 +5,6 @@ import json
 from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.escrow import near as near_mod
@@ -46,7 +45,6 @@ def ai_agent_info(request):
     )
 
 
-@csrf_exempt
 @require_POST
 def ai_payment_execute(request, intent_id: int):
     """Execute a proposed payment from the user's granted co-pilot budget.
@@ -109,7 +107,6 @@ def ai_payment_execute(request, intent_id: int):
     )
 
 
-@csrf_exempt
 @require_POST
 def ai_parse(request):
     try:
@@ -126,7 +123,6 @@ def ai_parse(request):
     return JsonResponse({"ok": True, "parsed": parsed})
 
 
-@csrf_exempt
 @require_POST
 def ai_recommend(request):
     try:
@@ -143,7 +139,6 @@ def ai_recommend(request):
     return JsonResponse({"ok": True, **rec})
 
 
-@csrf_exempt
 @require_POST
 def ai_listing(request):
     try:
@@ -160,7 +155,6 @@ def ai_listing(request):
     return JsonResponse({"ok": True, "draft": draft})
 
 
-@csrf_exempt
 @require_POST
 def ai_chat(request):
     """One co-pilot turn: natural language -> validated tools -> reply + action cards.

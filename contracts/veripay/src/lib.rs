@@ -11,6 +11,14 @@
 //!   (`on_verification_result`), which is `#[private]` and therefore only
 //!   reachable from this contract's own promise chain back from
 //!   `outlayer.testnet`. Nothing else may set the verification flags.
+//! - Verification requests and logistics settlement are permissionless: the
+//!   contract state machine gates them (`Shipped`, `verification_pending`,
+//!   `pickup_verified`, payout flags), so a platform relayer can run the
+//!   happy path to completion without user signatures. Funds can only ever
+//!   move to the beneficiaries fixed at creation/funding time.
+//! - The seller allocation releases on explicit buyer confirmation or, once
+//!   the inspection window elapses with no problem reported, through the
+//!   permissionless `release_after_inspection`.
 //! - Beneficiaries are fixed at creation/funding time; no method changes them.
 //! - Carrier tracking status alone never releases the seller allocation.
 
@@ -32,6 +40,24 @@ const NATIVE_NEAR_TOKEN: &str = "near";
 const MIN_VOTE_STAKE_YOCTO: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR per vote
 const MIN_ARBITRATION_STAKE_YOCTO: u128 = 50_000_000_000_000_000_000_000; // 0.05 NEAR quorum
 const MAX_ARBITRATION_VOTES: usize = 24;
+/// Storage deposit required at creation: escrow bookkeeping is paid up front
+/// instead of being funded out of pooled escrow balances (storage-drain fix).
+const MIN_CREATE_DEPOSIT_YOCTO: u128 = 20_000_000_000_000_000_000_000; // 0.02 NEAR
+/// Bounded strings: `create_escrow` is free to call, so unbounded input is a
+/// storage-exhaustion vector.
+const MAX_NAME_LEN: usize = 120;
+const MAX_HASH_LEN: usize = 128;
+const MAX_TERMS_LEN: usize = 256;
+const MAX_TRACKING_LEN: usize = 64;
+const MAX_INVITE_HASH_LEN: usize = 128;
+/// Anti-spam caps for the per-account indexes (`pending_for` can otherwise be
+/// used to bloat any victim's storage).
+const MAX_IDS_PER_ACCOUNT: usize = 50;
+const MAX_PENDING_PER_ACCOUNT: usize = 20;
+const MAX_ESCROWS: u64 = 1_000_000;
+/// Deals below this value still settle but do not move reputation counters
+/// (wash-trading friction).
+const MIN_COUNTED_AMOUNT_YOCTO: u128 = 5_000_000_000_000_000_000_000; // 0.005 NEAR
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -241,6 +267,29 @@ impl VeriPay {
     ) -> String {
         let seller = env::predecessor_account_id();
         require!(seller_amount.0 > 0, "seller amount must be > 0");
+        // Creation carries its own storage deposit; escrowed balances are
+        // never spent on bookkeeping.
+        require!(
+            env::attached_deposit().as_yoctonear() >= MIN_CREATE_DEPOSIT_YOCTO,
+            "attach at least 0.02 NEAR storage deposit"
+        );
+        require!(self.next_id <= MAX_ESCROWS, "escrow capacity reached");
+        require!(product_name.len() <= MAX_NAME_LEN, "product_name too long");
+        require!(product_desc_hash.len() <= MAX_HASH_LEN, "product_desc_hash too long");
+        require!(terms_hash.len() <= MAX_TERMS_LEN, "terms_hash too long");
+        if let Some(t) = &tracking_number {
+            require!(t.len() <= MAX_TRACKING_LEN, "tracking_number too long");
+        }
+        if let Some(h) = &invite_hash {
+            require!(h.len() <= MAX_INVITE_HASH_LEN, "invite_hash too long");
+        }
+        // Currency allowlist: native NEAR, or the single configured legacy
+        // token (if one is still enabled). Sellers cannot pick arbitrary tokens.
+        let allowed_token = self.get_allowed_token();
+        require!(
+            token.as_str() == NATIVE_NEAR_TOKEN || Some(&token) == allowed_token.as_ref(),
+            "token not allowed"
+        );
         if let Some(b) = &buyer {
             require!(b != &seller, "buyer must differ from seller");
         } else {
@@ -250,6 +299,12 @@ impl VeriPay {
             require!(p != &seller, "provider must differ from seller");
         }
         require!(dispatch_deadline_ms > env::block_timestamp() / 1_000_000, "dispatch deadline in the past");
+        let seller_ids = self.seller_index.get(&seller).cloned().unwrap_or_default();
+        require!(seller_ids.len() < MAX_IDS_PER_ACCOUNT, "seller escrow index full");
+        if let Some(b) = &buyer {
+            let pending = self.pending_index.get(b).cloned().unwrap_or_default();
+            require!(pending.len() < MAX_PENDING_PER_ACCOUNT, "counterparty pending index full");
+        }
 
         let platform_fee = seller_amount.0 * self.platform_fee_bps as u128 / 10_000;
         let total_amount = seller_amount.0 + logistics_amount.0 + platform_fee;
@@ -317,6 +372,8 @@ impl VeriPay {
                 escrow.buyer = Some(caller.clone());
             }
         }
+        let buyer_ids = self.buyer_index.get(&caller).cloned().unwrap_or_default();
+        require!(buyer_ids.len() < MAX_IDS_PER_ACCOUNT, "buyer escrow index full");
         escrow.state = EscrowState::Approved;
         self.escrows.insert(escrow_id.clone(), escrow);
         push_index(&mut self.buyer_index, &caller, &escrow_id);
@@ -451,19 +508,13 @@ impl VeriPay {
     // ------------------------------------------------------------------
 
     /// Requests TEE verification of the carrier-reported delivery data.
-    /// Permissionless among the parties; the carrier payload is supplied by
-    /// the caller (the backend passes the Demo Carrier response). Attach the
-    /// OutLayer compute deposit; unused funds are refunded to this contract.
+    /// Permissionless: the state machine and the deposit gate it, so the
+    /// platform relayer (or any party) can trigger it — the TEE result is the
+    /// only thing that can set the verification flags. Attach the OutLayer
+    /// compute deposit; unused funds are refunded to this contract.
     #[payable]
     pub fn request_delivery_verification(&mut self, escrow_id: String, carrier_payload: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
-        let caller = env::predecessor_account_id();
-        require!(
-            caller == escrow.seller
-                || Some(&caller) == escrow.logistics_provider.as_ref()
-                || Some(&caller) == escrow.buyer.as_ref(),
-            "not authorized"
-        );
         require!(escrow.state == EscrowState::Shipped, "escrow not shipped");
         require!(!escrow.verification_pending, "verification already pending");
         require!(
@@ -480,6 +531,7 @@ impl VeriPay {
                 "tracking_number": escrow.tracking_number,
                 "provider_wallet": escrow.logistics_provider,
                 "shipment_id": escrow.shipment_id,
+                "provider_id": self.get_provider_id(),
             },
             "carrier": carrier,
         })
@@ -526,11 +578,33 @@ impl VeriPay {
         let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return None };
         escrow.verification_pending = false;
         match result {
-            Ok(Some(outcome)) => {
+            Ok(Some(mut outcome)) => {
                 if outcome.escrow_id != escrow.id {
                     log!("verification escrow mismatch: {} != {}", outcome.escrow_id, escrow.id);
                     self.escrows.insert(escrow_id, escrow);
                     return None;
+                }
+                // The verifier must have checked the carrier report against the
+                // tracking number committed on-chain; a mismatch invalidates
+                // the outcome regardless of what the caller supplied.
+                if let Some(expected) = escrow.tracking_number.as_ref() {
+                    if &outcome.tracking_number != expected {
+                        outcome.verified = false;
+                        outcome.reason = format!(
+                            "tracking mismatch: report '{}' vs on-chain '{}'",
+                            outcome.tracking_number, expected
+                        );
+                    }
+                }
+                // Same for the carrier-registry provider id, when configured.
+                if let Some(expected_provider) = self.get_provider_id() {
+                    if outcome.provider_id != expected_provider {
+                        outcome.verified = false;
+                        outcome.reason = format!(
+                            "provider mismatch: report '{}' vs configured '{}'",
+                            outcome.provider_id, expected_provider
+                        );
+                    }
                 }
                 if outcome.verified {
                     match outcome.reported_status.as_str() {
@@ -542,6 +616,9 @@ impl VeriPay {
                     if outcome.reported_status == "DELIVERED" && escrow.state == EscrowState::Shipped {
                         escrow.delivered_verified = true;
                         escrow.state = EscrowState::AwaitingBuyerConfirmation;
+                        // Start the inspection-window clock (the permissionless
+                        // timeout release reads this timestamp).
+                        self.note_delivery_time(&escrow_id);
                     }
                     log!("verified {} status {} for {}", outcome.escrow_id, outcome.reported_status, escrow.id);
                 } else {
@@ -569,17 +646,21 @@ impl VeriPay {
     // ------------------------------------------------------------------
 
     /// Pays the logistics allocation once carrier pickup is TEE-verified.
-    /// Callable by seller or provider. A failed FT transfer rolls the flag
-    /// back (see `on_payout_result`) so the payout can be retried.
+    /// Permissionless: the amount and the beneficiary are fixed by the escrow,
+    /// so anyone (seller, provider, or the platform relayer) can trigger the
+    /// payout. A failed FT transfer rolls the flag back (see
+    /// `on_payout_result`) so the payout can be retried.
     pub fn settle_logistics(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
-        let caller = env::predecessor_account_id();
-        require!(
-            caller == escrow.seller || Some(&caller) == escrow.logistics_provider.as_ref(),
-            "only seller or provider settles logistics"
-        );
         require!(escrow.pickup_verified, "pickup not verified yet");
         require!(!escrow.logistics_paid, "logistics already paid");
+        // Disputed or settled escrows must not pay logistics again: resolution
+        // paths fold an unpaid logistics allocation into the split and mark
+        // this flag, so a later call here would double-pay from pooled funds.
+        require!(
+            escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+            "escrow not in a settleable state"
+        );
         let provider = escrow.logistics_provider.clone().expect("provider not assigned");
         escrow.logistics_paid = true;
         let amount = escrow.logistics_amount;
@@ -609,14 +690,64 @@ impl VeriPay {
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
         // Trust record: completion counts for both sides; volume is deal value.
-        bump_reputation(&seller, |r| {
-            r.completed_as_seller += 1;
-            r.volume.0 += seller_amount.0;
-        });
-        bump_reputation(&buyer, |r| {
-            r.completed_as_buyer += 1;
-            r.volume.0 += seller_amount.0;
-        });
+        // Counted once per escrow (retries after a failed payout must not
+        // inflate counters) and only above the anti-wash minimum.
+        if !counted(&escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
+            mark_counted(&escrow_id, COUNTED_COMPLETION);
+            bump_reputation(&seller, |r| {
+                r.completed_as_seller += 1;
+                r.volume.0 += seller_amount.0;
+            });
+            bump_reputation(&buyer, |r| {
+                r.completed_as_buyer += 1;
+                r.volume.0 += seller_amount.0;
+            });
+        }
+        payout(token, seller, seller_amount).then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                .finish_platform(escrow_id),
+        )
+    }
+
+    /// Permissionless timeout release: once delivery is TEE-verified and the
+    /// inspection window has elapsed with no problem reported, anyone (e.g.
+    /// the platform relayer) can release the seller and platform allocations.
+    /// `confirm_receipt` remains the buyer's explicit early-release path; the
+    /// shared `seller_paid` flag guarantees exactly-once settlement.
+    pub fn release_after_inspection(&mut self, escrow_id: String) -> Promise {
+        let mut escrow = self.internal_get(&escrow_id);
+        require!(escrow.state == EscrowState::AwaitingBuyerConfirmation, "wrong state");
+        require!(escrow.delivered_verified, "delivery not verified");
+        require!(!escrow.problem_reported, "problem reported; resolve review first");
+        require!(!escrow.seller_paid, "already settled");
+        let times = delivery_times_map();
+        let delivered_ms = *times.get(&escrow_id).expect("delivery time not recorded");
+        require!(
+            env::block_timestamp() / 1_000_000 >= delivered_ms.saturating_add(escrow.inspection_period_ms),
+            "inspection window not elapsed"
+        );
+        escrow.state = EscrowState::Completed;
+        escrow.seller_paid = true;
+        escrow.platform_paid = true;
+        let seller_amount = escrow.seller_amount;
+        let seller = escrow.seller.clone();
+        let buyer = escrow.buyer.clone().expect("buyer set");
+        let token = escrow.token.clone();
+        self.escrows.insert(escrow_id.clone(), escrow);
+        // Trust record: a timeout release is still a completed deal, counted
+        // once per escrow and only above the anti-wash minimum.
+        if !counted(&escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
+            mark_counted(&escrow_id, COUNTED_COMPLETION);
+            bump_reputation(&seller, |r| {
+                r.completed_as_seller += 1;
+                r.volume.0 += seller_amount.0;
+            });
+            bump_reputation(&buyer, |r| {
+                r.completed_as_buyer += 1;
+                r.volume.0 += seller_amount.0;
+            });
+        }
         payout(token, seller, seller_amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -668,10 +799,15 @@ impl VeriPay {
         )
     }
 
-    /// Rolls a payout flag back when its FT transfer failed (idempotency guard).
+    /// Rolls a payout flag back when its transfer failed (idempotency guard).
+    /// Each leg is independent: a failed buyer leg never un-marks the seller
+    /// leg, so a resolved dispute can retry only what is still owed.
     #[private]
     pub fn on_payout_result(&mut self, escrow_id: String, party: String) {
         if payout_ok(0) {
+            if party == "due_buyer" {
+                review_due_map().insert(escrow_id, U128(0));
+            }
             return;
         }
         let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return };
@@ -679,9 +815,9 @@ impl VeriPay {
             "logistics" => escrow.logistics_paid = false,
             "platform" => escrow.platform_paid = false,
             "refund" => escrow.state = EscrowState::Funded,
-            "review" => {
-                escrow.seller_paid = false;
-                escrow.platform_paid = false;
+            "due_buyer" => {
+                // Seller/platform stay marked paid; only the buyer remainder
+                // is outstanding and retryable via `retry_review_buyer_payout`.
                 escrow.state = EscrowState::ReviewRequired;
             }
             _ => {}
@@ -750,11 +886,13 @@ impl VeriPay {
     // finalization (pull pattern, no mass payout loops).
     // ------------------------------------------------------------------
 
-    /// Any NEAR holder may stake NEAR to arbitrate a dispute. Votes choose the
-    /// seller's share of the remaining balance. One vote per voter per case;
-    /// re-voting replaces it.
+    /// DEPRECATED pool path. Disabled whenever a review board is set: with an
+    /// open pool, a seller could sockpuppet-vote and settle without shipping,
+    /// recovering the stake afterwards. The review board is the only
+    /// resolution path once `set_arbiter` has been called.
     #[payable]
     pub fn vote_dispute(&mut self, escrow_id: String, seller_pct: u8) {
+        require!(self.get_arbiter().is_none(), "arbitration pool is disabled while a review board is set");
         require!(seller_pct <= 100, "pct must be 0..=100");
         let escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
@@ -778,33 +916,34 @@ impl VeriPay {
             winning_pct: 0,
         });
         require!(!case.finalized, "arbitration already finalized");
-
-        if let Some(existing) = case.votes.iter_mut().find(|v| v.voter == voter) {
-            case.total_stake.0 -= existing.stake.0;
-            existing.seller_pct = seller_pct;
-            existing.stake = stake;
-            existing.voted_ms = env::block_timestamp() / 1_000_000;
-            existing.claimed = false;
-        } else {
-            require!(case.votes.len() < MAX_ARBITRATION_VOTES, "vote limit reached");
-            case.votes.push(ArbitrationVote {
-                voter,
-                seller_pct,
-                stake,
-                voted_ms: env::block_timestamp() / 1_000_000,
-                claimed: false,
-            });
-        }
+        // One vote per wallet. Re-voting used to overwrite the stake and lose
+        // the previous deposit; now the first vote is final until the case is
+        // resolved and claimed.
+        require!(
+            !case.votes.iter().any(|v| v.voter == voter),
+            "already voted — stake is locked until the case resolves"
+        );
+        require!(case.votes.len() < MAX_ARBITRATION_VOTES, "vote limit reached");
+        case.votes.push(ArbitrationVote {
+            voter,
+            seller_pct,
+            stake,
+            voted_ms: env::block_timestamp() / 1_000_000,
+            claimed: false,
+        });
         case.total_stake.0 += stake.0;
         map.insert(escrow_id, case);
     }
 
-    /// Settlement is permissionless once the stake quorum is met: pays the
-    /// stake-weighted majority's seller share and refunds the buyer the rest.
+    /// Settlement is permissionless once the stake quorum is met. Disabled
+    /// while a review board is set (see `vote_dispute`). Ties choose the
+    /// buyer-favourable (lower) seller share.
     pub fn finalize_arbitration(&mut self, escrow_id: String) -> Promise {
+        require!(self.get_arbiter().is_none(), "arbitration pool is disabled while a review board is set");
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
         require!(!escrow.seller_paid, "already settled");
+        require!(review_due(&escrow_id) == 0, "buyer payout pending retry");
 
         let mut map = arbitration_map();
         let mut case = map.get(&escrow_id).cloned().expect("no arbitration votes for this dispute");
@@ -816,16 +955,23 @@ impl VeriPay {
         for v in &case.votes {
             *tally.entry(v.seller_pct).or_insert(0) += v.stake.0;
         }
-        let winning_pct = tally
-            .into_iter()
-            .max_by(|a, b| a.1.cmp(&b.1))
-            .map(|(pct, _)| pct)
-            .unwrap_or(0);
+        // Buyer-favourable tie-break: on equal stake the lower seller share wins.
+        let mut winning_pct = 0u8;
+        let mut best_stake = 0u128;
+        for (pct, stake) in tally {
+            if stake > best_stake || (stake == best_stake && pct < winning_pct) {
+                best_stake = stake;
+                winning_pct = pct;
+            }
+        }
 
         case.finalized = true;
         case.winning_pct = winning_pct;
         map.insert(escrow_id.clone(), case);
 
+        if !escrow.logistics_paid {
+            escrow.logistics_paid = true;
+        }
         let remaining = escrow.total_amount.0 - if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
         let seller_part = remaining * winning_pct as u128 / 100;
         let buyer_part = remaining - seller_part;
@@ -835,31 +981,28 @@ impl VeriPay {
         let seller = escrow.seller.clone();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        review_due_map().insert(escrow_id.clone(), U128(buyer_part));
         log!("arbitration finalized for {} with {}% to seller", escrow_id, winning_pct);
         payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                .finish_arbitration_payout(escrow_id, U128(buyer_part)),
+                .finish_arbitration_payout(escrow_id),
         )
     }
 
     #[private]
-    pub fn finish_arbitration_payout(&mut self, escrow_id: String, buyer_part: U128) {
+    pub fn finish_arbitration_payout(&mut self, escrow_id: String) {
         if !payout_ok(0) {
-            self.on_payout_result(escrow_id, "review".to_string());
+            review_due_map().insert(escrow_id.clone(), U128(0));
+            let mut escrow = self.internal_get(&escrow_id);
+            escrow.seller_paid = false;
+            escrow.platform_paid = false;
+            escrow.state = EscrowState::ReviewRequired;
+            self.escrows.insert(escrow_id, escrow);
+            log!("arbitration seller payout failed — returned to ReviewRequired");
             return;
         }
-        let escrow = self.internal_get(&escrow_id);
-        if buyer_part.0 == 0 {
-            return;
-        }
-        let buyer = escrow.buyer.clone().expect("no buyer");
-        let promise = payout(escrow.token.clone(), buyer, buyer_part);
-        let _ = promise.then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                .on_payout_result(escrow_id, "review".to_string()),
-        );
+        self.pay_review_due(&escrow_id);
     }
 
     /// Voters reclaim their stake after finalization. Each stake is claimable
@@ -895,16 +1038,63 @@ impl VeriPay {
     // fees accrue to a treasury account instead of the owner EOA.
     // ------------------------------------------------------------------
 
-    /// Appoint the review board. Callable by the owner (bootstrap) or by the
-    /// current board (handoff). Once set, ONLY the board can resolve disputes.
+    /// Appoint the review board. The owner can only BOOTSTRAP it (while unset);
+    /// once a board exists, only the board itself can rotate it — the owner
+    /// can no longer take resolution power back.
     pub fn set_arbiter(&mut self, account_id: AccountId) {
         let caller = env::predecessor_account_id();
-        let current = self.get_arbiter();
-        require!(
-            caller == self.owner || Some(caller) == current,
-            "only the owner or the current board can appoint the board"
-        );
+        match self.get_arbiter() {
+            Some(current) => require!(
+                caller == current,
+                "board already set — only the current board can change it"
+            ),
+            None => require!(caller == self.owner, "only the owner can bootstrap the board"),
+        }
         gov_config_map().insert("arbiter".to_string(), account_id);
+    }
+
+    /// Allowed legacy token (None = native NEAR only). Settable by the owner
+    /// or the board; escrow creators can never pick an arbitrary token.
+    pub fn set_allowed_token(&mut self, token: Option<AccountId>) {
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner || Some(caller) == self.get_arbiter(),
+            "only the owner or board can set the allowed token"
+        );
+        let value = token.unwrap_or_else(|| NATIVE_NEAR_TOKEN.parse().unwrap());
+        gov_config_map().insert("allowed_token".to_string(), value);
+    }
+
+    /// The configured legacy token, if any (only meaningful for old escrows).
+    pub fn get_allowed_token(&self) -> Option<AccountId> {
+        let stored = gov_config_map().get(&"allowed_token".to_string()).cloned();
+        match stored {
+            Some(t) if t.as_str() != NATIVE_NEAR_TOKEN => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Carrier-registry provider id required in verification reports (e.g.
+    /// "LOG-DEMO-001"). Owner or board; None disables the equality check.
+    pub fn set_provider_id(&mut self, provider_id: Option<String>) {
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner || Some(caller) == self.get_arbiter(),
+            "only the owner or board can set the provider id"
+        );
+        if let Some(p) = &provider_id {
+            require!(p.len() <= 64, "provider_id too long");
+        }
+        let mut map = str_config_map();
+        match provider_id {
+            Some(p) => map.insert("provider_id".to_string(), p),
+            None => map.remove(&"provider_id".to_string()),
+        };
+    }
+
+    /// Configured carrier provider id, if any.
+    pub fn get_provider_id(&self) -> Option<String> {
+        str_config_map().get(&"provider_id".to_string()).cloned()
     }
 
     /// Review board account (None = owner bootstrap mode).
@@ -912,16 +1102,18 @@ impl VeriPay {
         gov_config_map().get(&"arbiter".to_string()).cloned()
     }
 
-    /// Set where platform fees accrue (e.g. a Trezu multisig treasury).
-    /// Callable by the owner or the current treasury/board.
+    /// Set where platform fees accrue (e.g. a Trezu multisig treasury). The
+    /// owner can only bootstrap it while unset; afterwards only the current
+    /// treasury or the board can rotate it.
     pub fn set_treasury(&mut self, account_id: AccountId) {
         let caller = env::predecessor_account_id();
-        let current = self.get_treasury();
-        let board = self.get_arbiter();
-        require!(
-            caller == self.owner || Some(caller.clone()) == current || Some(caller) == board,
-            "only the owner, board or current treasury can change the treasury"
-        );
+        match self.get_treasury() {
+            Some(current) => require!(
+                caller == current || Some(caller) == self.get_arbiter(),
+                "treasury already set — only the treasury or board can change it"
+            ),
+            None => require!(caller == self.owner, "only the owner can bootstrap the treasury"),
+        }
         gov_config_map().insert("treasury".to_string(), account_id);
     }
 
@@ -958,6 +1150,14 @@ impl VeriPay {
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::ReviewRequired, "wrong state");
         require!(!escrow.seller_paid, "already settled");
+        require!(review_due(&escrow_id) == 0, "buyer payout pending retry");
+        // An unpaid logistics allocation is folded into this split — mark it
+        // paid so `settle_logistics` can never pay it a second time.
+        if !escrow.logistics_paid {
+            escrow.logistics_paid = true;
+        }
+        // Unlock any open arbitration stakes (the case is closed by the board).
+        close_arbitration_case(&escrow_id, seller_pct);
         let remaining = escrow.total_amount.0 - if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
         let seller_part = remaining * seller_pct as u128 / 100;
         let buyer_part = remaining - seller_part;
@@ -967,29 +1167,59 @@ impl VeriPay {
         let seller = escrow.seller.clone();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        review_due_map().insert(escrow_id.clone(), U128(buyer_part));
         payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                .finish_review_payout(escrow_id, U128(buyer_part)),
+                .finish_review_payout(escrow_id),
         )
     }
 
+    /// Buyer leg of a review/arbitration split. The due amount is read from a
+    /// side map (not the callback argument), so a failure can always be
+    /// retried without re-splitting or double-paying the seller.
     #[private]
-    pub fn finish_review_payout(&mut self, escrow_id: String, buyer_part: U128) {
+    pub fn finish_review_payout(&mut self, escrow_id: String) {
         if !payout_ok(0) {
-            self.on_payout_result(escrow_id, "review".to_string());
+            // Seller leg failed: nothing was paid; release the due slot and
+            // return to review so the board can split again.
+            review_due_map().insert(escrow_id.clone(), U128(0));
+            let mut escrow = self.internal_get(&escrow_id);
+            escrow.seller_paid = false;
+            escrow.platform_paid = false;
+            escrow.state = EscrowState::ReviewRequired;
+            self.escrows.insert(escrow_id, escrow);
+            log!("review seller payout failed — returned to ReviewRequired");
             return;
         }
+        self.pay_review_due(&escrow_id);
+    }
+
+    /// Permissionless retry for the buyer leg of a resolved dispute. Funds can
+    /// only ever go to the recorded buyer; the due amount is cleared on
+    /// success.
+    pub fn retry_review_buyer_payout(&mut self, escrow_id: String) {
         let escrow = self.internal_get(&escrow_id);
-        if buyer_part.0 == 0 {
+        require!(escrow.seller_paid, "seller leg not settled");
+        require!(review_due(&escrow_id) > 0, "no buyer payout due");
+        self.pay_review_due(&escrow_id);
+    }
+
+    /// Pays the stored buyer due (if any) and keeps the due entry until the
+    /// callback confirms success.
+    fn pay_review_due(&mut self, escrow_id: &str) {
+        let due = review_due(escrow_id);
+        if due == 0 {
+            review_due_map().insert(escrow_id.to_string(), U128(0));
             return;
         }
+        let escrow = self.internal_get(escrow_id);
         let buyer = escrow.buyer.clone().expect("no buyer");
-        let promise = payout(escrow.token.clone(), buyer, buyer_part);
+        let promise = payout(escrow.token.clone(), buyer, U128(due));
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                .on_payout_result(escrow_id, "review".to_string()),
+                .on_payout_result(escrow_id.to_string(), "due_buyer".to_string()),
         );
     }
 
@@ -1012,7 +1242,10 @@ impl VeriPay {
         let amount = escrow.total_amount;
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        bump_reputation(&buyer, |r| r.refunds_claimed += 1);
+        if !counted(&escrow_id, COUNTED_REFUND) {
+            mark_counted(&escrow_id, COUNTED_REFUND);
+            bump_reputation(&buyer, |r| r.refunds_claimed += 1);
+        }
         payout(token, buyer, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -1020,19 +1253,18 @@ impl VeriPay {
         )
     }
 
-    /// Platform owner sweep for OutLayer refund credits and dust (native NEAR).
-    pub fn withdraw(&mut self, amount: U128, to: AccountId) -> Promise {
-        require!(env::predecessor_account_id() == self.owner, "only the owner can withdraw");
-        Promise::new(to).transfer(NearToken::from_yoctonear(amount.0))
-    }
-
-    // NOTE: there is deliberately no `withdraw_ft`. A fungible-token sweep
-    // would let the owner drain balances held for active escrows, defeating
-    // the escrow and governance guarantees. FT leaves this contract only
-    // through escrow settlement paths (or arbitration/board resolution).
+    // NOTE: there is deliberately NO `withdraw` and NO `withdraw_ft`. Escrowed
+    // NEAR/tokens share the contract balance, so any owner sweep would be able
+    // to drain funds held for active escrows — it would contradict the
+    // "no platform key" guarantee. Value leaves only through settlement,
+    // arbitration (when enabled), or board resolution paths.
 
     pub fn update_platform_fee_bps(&mut self, bps: u16) {
-        require!(env::predecessor_account_id() == self.owner, "only the owner can update the fee");
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner || Some(caller) == self.get_arbiter(),
+            "only the owner or board can update the fee"
+        );
         require!(bps <= 2_000, "fee bps too high");
         self.platform_fee_bps = bps;
     }
@@ -1043,6 +1275,13 @@ impl VeriPay {
 
     pub fn get_escrow(&self, escrow_id: String) -> Option<Escrow> {
         self.escrows.get(&escrow_id).cloned()
+    }
+
+    /// Unix ms when delivery was first TEE-verified — the inspection-window
+    /// clock start. `None` for escrows that never reached verified delivery.
+    pub fn delivery_time_ms(&self, escrow_id: String) -> Option<u64> {
+        let times = delivery_times_map();
+        times.get(&escrow_id).copied()
     }
 
     pub fn escrows_for(&self, account_id: AccountId) -> Vec<Escrow> {
@@ -1112,6 +1351,16 @@ impl VeriPay {
     fn internal_get(&self, escrow_id: &str) -> Escrow {
         self.escrows.get(&escrow_id.to_string()).cloned().expect("unknown escrow")
     }
+
+    /// Starts the inspection-window clock exactly once — the first time
+    /// delivery is TEE-verified. Kept in a side map (`delivery_times_map`).
+    fn note_delivery_time(&mut self, escrow_id: &str) {
+        let mut times = delivery_times_map();
+        let key = escrow_id.to_string();
+        if times.get(&key).is_none() {
+            times.insert(key, env::block_timestamp() / 1_000_000);
+        }
+    }
 }
 
 fn pop_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &str) {
@@ -1161,6 +1410,14 @@ fn reputation_map() -> LookupMap<AccountId, Reputation> {
     LookupMap::new(b"r1".to_vec())
 }
 
+/// Inspection-window clock: escrow id -> ms when delivery was first verified.
+/// Kept OUT of the contract state struct for the same upgrade-safety reason as
+/// reputation (Borsh is positional): a local collection under its own storage
+/// prefix needs no state migration on upgrade.
+fn delivery_times_map() -> LookupMap<String, u64> {
+    LookupMap::new(b"dt1".to_vec())
+}
+
 /// Read-modify-write a wallet's reputation, initialising `first_seen_ms`.
 fn bump_reputation(account: &AccountId, f: impl FnOnce(&mut Reputation)) {
     let mut map = reputation_map();
@@ -1178,11 +1435,63 @@ fn arbitration_map() -> LookupMap<String, ArbitrationCase> {
     LookupMap::new(b"ar1".to_vec())
 }
 
+/// Outstanding buyer payout for a resolved dispute (review board or pool).
+/// Kept in a side map so a failed buyer transfer is retryable without
+/// re-splitting — and can never double-pay the seller leg.
+fn review_due_map() -> LookupMap<String, U128> {
+    LookupMap::new(b"rd1".to_vec())
+}
+
+fn review_due(escrow_id: &str) -> u128 {
+    review_due_map().get(&escrow_id.to_string()).copied().unwrap_or(U128(0)).0
+}
+
+/// Marks any open arbitration case as finalized so voter stakes become
+/// claimable after the board resolves the dispute directly.
+fn close_arbitration_case(escrow_id: &str, winning_pct: u8) {
+    let mut map = arbitration_map();
+    if let Some(mut case) = map.get(&escrow_id.to_string()).cloned() {
+        case.finalized = true;
+        case.winning_pct = winning_pct;
+        map.insert(escrow_id.to_string(), case);
+    }
+}
+
+/// Reputation idempotency + anti-wash filters. Bits: 1 = completion counted,
+/// 2 = refund counted. Side map again, for upgrade safety.
+fn counted_map() -> LookupMap<String, u8> {
+    LookupMap::new(b"rc1".to_vec())
+}
+
+const COUNTED_COMPLETION: u8 = 1;
+const COUNTED_REFUND: u8 = 2;
+
+fn counted(escrow_id: &str, bit: u8) -> bool {
+    counted_map()
+        .get(&escrow_id.to_string())
+        .copied()
+        .unwrap_or(0)
+        & bit
+        != 0
+}
+
+fn mark_counted(escrow_id: &str, bit: u8) {
+    let mut map = counted_map();
+    let key = escrow_id.to_string();
+    let value = map.get(&key).copied().unwrap_or(0) | bit;
+    map.insert(key, value);
+}
+
 /// Governance configuration (review board + treasury) lives under its own
 /// prefix — never a state-struct field — so upgrades need no migration.
 /// While unset, the platform owner is the bootstrap resolver/fee recipient.
 fn gov_config_map() -> LookupMap<String, AccountId> {
     LookupMap::new(b"gov".to_vec())
+}
+
+/// String-valued config (carrier provider id), same upgrade-safe pattern.
+fn str_config_map() -> LookupMap<String, String> {
+    LookupMap::new(b"cfg1".to_vec())
 }
 
 /// Governance snapshot for UIs (single call).
@@ -1205,8 +1514,10 @@ mod tests {
 
     fn as_account(account: AccountId) -> VMContextBuilder {
         let mut b = VMContextBuilder::new();
+        // 1_000 NEAR so promise transfers (seller/logistics/platform payouts)
+        // pass the mock's balance check.
         b.predecessor_account_id(account)
-            .account_balance(NearToken::from_near(50));
+            .account_balance(NearToken::from_near(1_000));
         b
     }
 
@@ -1227,11 +1538,30 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only the owner or the current board")]
+    #[should_panic(expected = "only the owner can bootstrap the board")]
     fn stranger_cannot_appoint_board() {
         let mut c = setup();
         testing_env!(as_account(accounts(5)).build());
         c.set_arbiter(accounts(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "board already set")]
+    fn owner_cannot_retake_the_board() {
+        let mut c = setup();
+        c.set_arbiter(accounts(1));
+        // Owner tries to claw resolution power back — refused.
+        testing_env!(as_account(accounts(0)).build());
+        c.set_arbiter(accounts(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "arbitration pool is disabled while a review board is set")]
+    fn pool_is_disabled_once_board_is_set() {
+        let mut c = setup();
+        c.set_arbiter(accounts(1));
+        testing_env!(as_account(accounts(5)).attached_deposit(NearToken::from_millinear(10)).build());
+        c.vote_dispute("VP-000001".to_string(), 100);
     }
 
     #[test]
@@ -1249,7 +1579,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "only the owner, board or current treasury")]
+    #[should_panic(expected = "only the owner can bootstrap the treasury")]
     fn stranger_cannot_change_treasury() {
         let mut c = setup();
         testing_env!(as_account(accounts(5)).build());
@@ -1288,7 +1618,10 @@ mod tests {
     }
 
     fn create_native(c: &mut VeriPay) -> String {
-        testing_env!(as_account(accounts(1)).block_timestamp(1).build());
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
         c.create_escrow(
             "Native escrow".to_string(),
             "hash".to_string(),
@@ -1330,10 +1663,57 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "only the preassigned buyer can accept")]
+    fn preassigned_escrow_rejects_other_wallets() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        let id = c.create_escrow(
+            "Known counterparty".to_string(), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
+        // A different wallet tries to accept — the contract refuses.
+        testing_env!(as_account(accounts(3)).build());
+        c.accept_escrow(id, None);
+    }
+
+    #[test]
+    fn invite_link_requires_the_secret_and_binds_the_first_signer() {
+        let mut c = setup();
+        let secret = "high-entropy-invite-secret";
+        let hash = sha256_hex(secret.as_bytes());
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        let id = c.create_escrow(
+            "Invite link".to_string(), "hash".to_string(), U128(100), U128(10),
+            None, Some(hash), "near".parse().unwrap(), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
+        testing_env!(as_account(accounts(3)).build());
+        let wrong = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.accept_escrow(id.clone(), Some("wrong-secret".to_string()));
+        }));
+        assert!(wrong.is_err(), "wrong invite secret must be rejected");
+
+        c.accept_escrow(id.clone(), Some(secret.to_string()));
+        assert_eq!(c.get_escrow(id).unwrap().buyer, Some(accounts(3)));
+    }
+
+    #[test]
     #[should_panic(expected = "not a native NEAR escrow")]
     fn native_fund_rejects_ft_escrow() {
         let mut c = setup();
-        testing_env!(as_account(accounts(1)).block_timestamp(1).build());
+        // Legacy FT is opt-in via the allowlist; otherwise only native NEAR.
+        c.set_allowed_token(Some(accounts(3)));
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
         let id = c.create_escrow(
             "Legacy FT".to_string(), "hash".to_string(), U128(100), U128(10), Some(accounts(2)), None,
             accounts(3), 1_000, 1_000, "terms".to_string(), None, None,
@@ -1342,5 +1722,316 @@ mod tests {
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(115)).build());
         c.fund_escrow(id);
+    }
+
+    // ------------------------------------------------------------------
+    // Permissionless relayer path: verification, logistics, timeout release
+    // ------------------------------------------------------------------
+
+    /// Funded + shipped native escrow: seller=accounts(1), buyer=accounts(2),
+    /// provider=accounts(4), tracking "DEMO-1".
+    fn shipped_native(c: &mut VeriPay) -> String {
+        let total = 115_000_000_000_000_000_000_000_000u128;
+        let id = create_native(c);
+        testing_env!(as_account(accounts(2)).block_timestamp(10_000_000).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(10_000_000)
+            .attached_deposit(NearToken::from_yoctonear(total))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(1)).block_timestamp(20_000_000).build());
+        c.assign_logistics_provider(id.clone(), accounts(4));
+        testing_env!(as_account(accounts(1)).block_timestamp(30_000_000).build());
+        c.register_shipment(id.clone(), "DEMO-1".to_string());
+        id
+    }
+
+    /// Shipped escrow promoted to the post-verification state directly (the
+    /// `#[private]` callback cannot be invoked from a unit test).
+    fn delivered_native(c: &mut VeriPay) -> String {
+        let id = shipped_native(c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.state = EscrowState::AwaitingBuyerConfirmation;
+        escrow.pickup_verified = true;
+        escrow.delivered_verified = true;
+        c.escrows.insert(id.clone(), escrow);
+        c.note_delivery_time(&id);
+        id
+    }
+
+    fn verification_deposit() -> NearToken {
+        NearToken::from_yoctonear(MIN_VERIFICATION_DEPOSIT_YOCTO)
+    }
+
+    #[test]
+    fn stranger_can_request_delivery_verification() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id.clone(), "{\"status\":\"DELIVERED\"}".to_string());
+        assert!(c.get_escrow(id).unwrap().verification_pending);
+    }
+
+    #[test]
+    #[should_panic(expected = "attach at least 0.001 NEAR for OutLayer compute")]
+    fn verification_request_still_requires_deposit() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5)).block_timestamp(40_000_000).build());
+        c.request_delivery_verification(id, "{}".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "verification already pending")]
+    fn pending_verification_blocks_a_second_request() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id.clone(), "{}".to_string());
+        c.request_delivery_verification(id, "{}".to_string());
+    }
+
+    #[test]
+    fn stranger_can_settle_logistics_after_verified_pickup() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.pickup_verified = true;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        c.settle_logistics(id.clone());
+        assert!(c.get_escrow(id).unwrap().logistics_paid);
+    }
+
+    #[test]
+    fn inspection_clock_records_only_once() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        let first = c.delivery_time_ms(id.clone()).unwrap();
+        assert_eq!(first, 30); // shipped_native's last block timestamp, in ms
+        testing_env!(as_account(accounts(0)).block_timestamp(999_000_000).build());
+        c.note_delivery_time(&id);
+        assert_eq!(c.delivery_time_ms(id).unwrap(), first);
+    }
+
+    #[test]
+    fn buyer_confirmation_releases_before_the_window() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
+        c.confirm_receipt(id.clone());
+        let escrow = c.get_escrow(id).unwrap();
+        assert!(escrow.seller_paid);
+        assert!(escrow.platform_paid);
+    }
+
+    #[test]
+    #[should_panic(expected = "inspection window not elapsed")]
+    fn timeout_release_waits_for_the_window() {
+        let mut c = setup();
+        let id = delivered_native(&mut c); // clock at 30 ms, window 1000 ms
+        testing_env!(as_account(accounts(5)).block_timestamp(100_000_000).build()); // 100 ms
+        c.release_after_inspection(id);
+    }
+
+    #[test]
+    fn timeout_release_settles_after_the_window() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build()); // 2000 ms
+        c.release_after_inspection(id.clone());
+        let escrow = c.get_escrow(id).unwrap();
+        assert!(escrow.seller_paid);
+        assert!(escrow.platform_paid);
+        assert_eq!(escrow.state, EscrowState::Completed);
+        // trust record moves for both sides on a timeout release too
+        assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 1);
+        assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "problem reported")]
+    fn timeout_release_blocked_when_problem_reported() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.problem_reported = true;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build());
+        c.release_after_inspection(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "already settled")]
+    fn confirmation_and_timeout_release_are_mutually_exclusive() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build());
+        c.release_after_inspection(id.clone());
+        testing_env!(as_account(accounts(2)).block_timestamp(2_100_000_000).build());
+        c.confirm_receipt(id);
+    }
+
+    // ------------------------------------------------------------------
+    // Hardening: storage deposit, caps, pool/board separation, payout safety
+    // ------------------------------------------------------------------
+
+    #[test]
+    #[should_panic(expected = "attach at least 0.02 NEAR storage deposit")]
+    fn creation_requires_a_storage_deposit() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1)).block_timestamp(1).build());
+        c.create_escrow(
+            "No deposit".to_string(), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "product_name too long")]
+    fn creation_caps_string_lengths() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        c.create_escrow(
+            "x".repeat(MAX_NAME_LEN + 1), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "token not allowed")]
+    fn creation_rejects_unlisted_tokens() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        c.create_escrow(
+            "Arbitrary token".to_string(), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, accounts(3), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
+    }
+
+    /// Shipped native escrow escalated by the seller to `ReviewRequired`.
+    fn disputed_native(c: &mut VeriPay) -> String {
+        let id = shipped_native(c);
+        testing_env!(as_account(accounts(1)).block_timestamp(40_000_000).build());
+        c.open_dispute(id.clone(), "buyer unresponsive".to_string());
+        id
+    }
+
+    #[test]
+    fn board_resolution_folds_logistics_and_unlocks_stakes() {
+        let mut c = setup();
+        c.set_arbiter(accounts(5));
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        // Logistics was unpaid and is folded into the split — marked paid so it
+        // can never be settled twice.
+        assert!(escrow.logistics_paid);
+        assert_eq!(escrow.state, EscrowState::Refunded);
+        // 115 total - 10 logistics folded = 105 remaining; 60% seller.
+        assert_eq!(review_due(&id), 42_000_000_000_000_000_000_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "logistics already paid")]
+    fn logistics_cannot_be_paid_again_after_resolution() {
+        let mut c = setup();
+        c.set_arbiter(accounts(5));
+        let id = disputed_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.pickup_verified = true; // would qualify for logistics payout
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
+        c.settle_logistics(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "escrow not in a settleable state")]
+    fn logistics_cannot_settle_in_review_state() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.pickup_verified = true;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
+        c.settle_logistics(id);
+    }
+
+    fn outcome(escrow_id: &str, tracking: &str, provider_id: &str) -> VerificationOutcome {
+        VerificationOutcome {
+            escrow_id: escrow_id.to_string(),
+            tracking_number: tracking.to_string(),
+            provider_id: provider_id.to_string(),
+            reported_status: "DELIVERED".to_string(),
+            verified: true,
+            reason: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn callback_rejects_tracking_mismatch() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        // Pretend the OutLayer callback runs on the contract's own account.
+        testing_env!(as_account(accounts(0))
+            .current_account_id(accounts(0))
+            .block_timestamp(40_000_000)
+            .build());
+        let out = c.on_verification_result(id.clone(), Ok(Some(outcome(&id, "WRONG-TRACK", "LOG-DEMO-001"))));
+        // The rejection is recorded as evidence (verified=false), never applied.
+        assert!(out.is_some());
+        assert!(!out.unwrap().verified);
+        let escrow = c.get_escrow(id).unwrap();
+        assert!(!escrow.delivered_verified, "mismatched tracking must not verify");
+        assert_eq!(escrow.state, EscrowState::Shipped);
+    }
+
+    #[test]
+    fn callback_rejects_provider_mismatch_when_configured() {
+        let mut c = setup();
+        c.set_provider_id(Some("LOG-DEMO-001".to_string()));
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(0))
+            .current_account_id(accounts(0))
+            .block_timestamp(40_000_000)
+            .build());
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        let track = escrow.tracking_number.clone().unwrap();
+        let out = c.on_verification_result(id.clone(), Ok(Some(outcome(&id, &track, "LOG-EVIL-999"))));
+        // Outcome is returned but invalidated: verified false, no state advance.
+        assert!(out.is_some());
+        assert!(!out.unwrap().verified);
+        let escrow = c.get_escrow(id).unwrap();
+        assert!(!escrow.delivered_verified);
+        assert_eq!(escrow.state, EscrowState::Shipped);
+    }
+
+    #[test]
+    #[should_panic(expected = "already settled")]
+    fn confirm_receipt_is_exactly_once() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
+        c.confirm_receipt(id.clone());
+        c.confirm_receipt(id);
     }
 }

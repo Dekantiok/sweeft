@@ -2,11 +2,13 @@ import base64
 import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from . import ratelimit
 from .models import WalletChallenge, WalletIdentity
 from .nep413 import verify_nep413
 
@@ -22,7 +24,9 @@ def account_has_public_key(account_id: str, public_key: str) -> bool:
 
     NEP-413 proves possession of *a* private key. Without this on-chain check,
     anyone could sign with their own key while claiming another account. We
-    fail closed on RPC errors: identity is never granted on an unverified key.
+    fail closed on RPC errors, and require the key to be a FULL-ACCESS key:
+    function-call keys are scoped to a single contract and must not be able
+    to mint a platform session.
     """
     from apps.escrow.near import _rpc
 
@@ -41,12 +45,21 @@ def account_has_public_key(account_id: str, public_key: str) -> bool:
     if "error" in result:
         return False
     keys = (result.get("result") or {}).get("keys") or []
-    return any(k.get("public_key") == public_key for k in keys)
+    return any(
+        k.get("public_key") == public_key
+        and (k.get("access_key") or {}).get("permission") == "FullAccess"
+        for k in keys
+    )
 
 
+@ensure_csrf_cookie
 @require_GET
 def challenge(request):
     """Create a single-use challenge bound to an optional account and domain."""
+    if not ratelimit.allow(
+        f"challenge:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_CHALLENGE_PER_MIN
+    ):
+        return JsonResponse({"ok": False, "error": "too many challenges — slow down"}, status=429)
     account_id = (request.GET.get("account_id") or "").strip()
     nonce = base64.b64encode(secrets.token_bytes(32)).decode()
     recipient = request.get_host()
@@ -67,10 +80,12 @@ def challenge(request):
     return JsonResponse({"nonce": nonce, "message": message, "recipient": recipient})
 
 
-@csrf_exempt
 @require_POST
 def verify(request):
     import json
+
+    if not ratelimit.allow(f"verify:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_LOGIN_PER_MIN):
+        return JsonResponse({"ok": False, "error": "too many login attempts — slow down"}, status=429)
 
     body = json.loads(request.body or "{}")
     account_id = (body.get("account_id") or "").strip()
@@ -115,6 +130,9 @@ def verify(request):
     identity.last_login = timezone.now()
     identity.save(update_fields=["last_login"])
 
+    # Rotate the session identifier on privilege change (fixation defence).
+    if hasattr(request.session, "cycle_key"):
+        request.session.cycle_key()
     request.session["wallet"] = account_id
     return JsonResponse({"ok": True, "account_id": account_id})
 
@@ -134,7 +152,6 @@ def me(request):
     )
 
 
-@csrf_exempt
 @require_POST
 def logout(request):
     request.session.pop("wallet", None)

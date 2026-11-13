@@ -26,6 +26,11 @@
     return true;
   }
 
+  function csrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : '';
+  }
+
   async function connect() {
     try {
       const c = await cfg();
@@ -52,7 +57,7 @@
       const signed = await VPWallet.signLogin(ch.message, ch.recipient, nonceBytes);
       const res = await fetch('/api/v1/wallet/verify/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
         body: JSON.stringify({
           account_id: signed.accountId || accountId,
           public_key: signed.publicKey,
@@ -74,7 +79,7 @@
   async function disconnect() {
     // 1. Clear the server session.
     try {
-      await fetch('/api/v1/wallet/logout/', { method: 'POST' });
+      await fetch('/api/v1/wallet/logout/', { method: 'POST', headers: { 'X-CSRFToken': csrfToken() } });
     } catch (e) {}
     // 2. Disconnect the wallet module. The selector is only initialised by
     //    connect() on a fresh page load, so initialise it here first —
@@ -122,7 +127,7 @@
   async function jsonPost(url, body) {
     const r = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
       body: JSON.stringify(body || {}),
     });
     const text = await r.text();

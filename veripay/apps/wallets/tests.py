@@ -191,10 +191,41 @@ class AccountKeyBindingTests(SimpleTestCase):
     def test_matches_live_onchain_key(self):
         from apps.wallets.views import account_has_public_key
 
-        response = {"result": {"keys": [{"public_key": "ed25519:abc"}, {"public_key": "ed25519:def"}]}}
+        response = {
+            "result": {
+                "keys": [
+                    {"public_key": "ed25519:abc", "access_key": {"permission": "FullAccess"}},
+                    {"public_key": "ed25519:def", "access_key": {"permission": "FullAccess"}},
+                ]
+            }
+        }
         with mock.patch("apps.escrow.near._rpc", return_value=response):
             self.assertTrue(account_has_public_key("alice.testnet", "ed25519:abc"))
             self.assertFalse(account_has_public_key("alice.testnet", "ed25519:zzz"))
+
+    def test_function_call_keys_cannot_log_in(self):
+        """Scoped contract keys must not mint a platform session."""
+        from apps.wallets.views import account_has_public_key
+
+        response = {
+            "result": {
+                "keys": [
+                    {
+                        "public_key": "ed25519:scoped",
+                        "access_key": {
+                            "permission": {
+                                "FunctionCall": {
+                                    "receiver_id": "veripay.testnet",
+                                    "method_names": ["pay"],
+                                }
+                            }
+                        },
+                    }
+                ]
+            }
+        }
+        with mock.patch("apps.escrow.near._rpc", return_value=response):
+            self.assertFalse(account_has_public_key("alice.testnet", "ed25519:scoped"))
 
     def test_rpc_failure_fails_closed(self):
         from apps.wallets.views import account_has_public_key

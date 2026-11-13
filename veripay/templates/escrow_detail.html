@@ -3,14 +3,13 @@
 {% block title %}{{ agreement.escrow_id|default:escrow_id }} — VeriPay{% endblock %}
 {% block content %}
 {% with chain_state=chain.state|default:agreement.state %}
-<div class="flex items-center gap-3 flex-wrap">
+<div class="flex items-center gap-3 flex-wrap justify-center">
   <h1 class="text-2xl font-semibold">{{ agreement.escrow_id|default:escrow_id }}</h1>
   <span class="text-xs rounded-full px-3 py-1 bg-slate-900 text-white">{{ chain_state }}</span>
   {% if chain.problem_reported %}<span class="text-xs rounded-full px-3 py-1 bg-rose-100 text-rose-800">problem reported</span>{% endif %}
-  <div class="flex-1"></div>
   <button onclick="syncFromChain()" class="text-xs border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-100">Refresh from chain</button>
 </div>
-<p class="text-sm text-slate-500 mt-1">{{ agreement.product_name }}{% if agreement.product_description %} — {{ agreement.product_description }}{% endif %}</p>
+<p class="text-sm text-slate-500 mt-1 text-center">{{ agreement.product_name }}{% if agreement.product_description %} — {{ agreement.product_description }}{% endif %}</p>
 
 {% if chain_error %}
   <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-900 text-sm px-4 py-2">Chain read error: {{ chain_error }}</div>
@@ -244,7 +243,11 @@
       <div class="mt-2 text-sm">
         <div>Status reported: <b>{{ chain.last_verification.reported_status }}</b> — verified: <b>{{ chain.last_verification.verified }}</b></div>
         <div class="text-slate-500">{{ chain.last_verification.reason }}</div>
-        <div class="text-xs text-slate-400 mt-1">Attested by OutLayer TEE for code hash pinned in the published project; carrier data is simulated.</div>
+        <div class="text-xs text-slate-400 mt-1">
+          Attested by OutLayer TEE for the published project code hash. The verifier checks the carrier
+          report's identity, tracking, shipment and timeline for consistency — it cannot prove the carrier
+          itself told the truth: carrier data is simulated here, and signed carrier payloads are the roadmap upgrade.
+        </div>
       </div>
     {% elif relayer_enabled %}
       <p class="text-sm text-slate-500 mt-2">No verification recorded yet. This runs automatically: once the carrier reports delivery, the platform relayer submits the report to OutLayer for TEE attestation — no wallet action needed.</p>

@@ -89,4 +89,5 @@ at `DELIVERED` it prompts the connected party to request the TEE verification (w
 - Rate limiting/replay protection for webhooks is future work (polling is the MVP mechanism);
   the demo adapter is not exposed as a public webhook.
 - Partner-reported events never trigger payouts by themselves: on-chain settlement requires the
-  TEE-verified carrier report and, for the seller allocation, explicit buyer confirmation.
+  TEE-verified carrier report; the seller allocation releases on buyer confirmation or, if the
+  buyer is silent, after the on-chain inspection window (`release_after_inspection`).

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block title %}New listing — VeriPay Marketplace{% endblock %}
 {% block content %}
-<div class="max-w-2xl">
-  <h1 class="text-2xl font-semibold">List an item or service</h1>
-  <p class="text-sm text-slate-500 mt-1">Listings are the discovery layer; trading always happens through the on-chain escrow, and your wallet reputation carries across every deal.</p>
+<div class="max-w-2xl mx-auto">
+  <h1 class="text-2xl font-semibold text-center">List an item or service</h1>
+  <p class="text-sm text-slate-500 mt-1 text-center">Listings are the discovery layer; trading always happens through the on-chain escrow, and your wallet reputation carries across every deal.</p>
 
   <form method="post" class="bg-white border border-slate-200 rounded-xl p-5 mt-5 space-y-4">
     {% csrf_token %}

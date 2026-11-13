@@ -28,8 +28,15 @@
 - **Django (modular monolith)** — product coordination: wallet challenge/verify (NEP-413),
   agreement metadata, invitation locators, partner applications/approval, shipment simulation,
   verification orchestration, marketplace listings + purchase requests, projections and audit
-  records. It cannot move funds: payouts are triggered by wallet-signed calls to permissioned
-  contract methods.
+  records. It cannot move funds outside the escrow's fixed paths: payouts execute only through
+  contract methods whose state-machine conditions and beneficiaries are set at creation —
+  triggered by wallet-signed calls, or by the platform relayer's permissionless calls.
+- **Relayer (`apps/escrow/relayer.py`, `manage.py run_relayer`)** — platform-side automation:
+  requests TEE verification when the carrier reports delivery, syncs the attested result, pays the
+  logistics allocation on verified pickup, and releases seller + platform after the inspection
+  window (unless a problem was reported). Every call is permissionless but state-machine gated;
+  the relayer key can never redirect funds. Testnet MVP: the key lives on the demo server (mainnet:
+  TEE/KMS).
 - **Marketplace (`apps/market`)** — discovery layer only: listings reference seller wallets, trust
   profiles read live contract counters, and "trade via escrow" prefills the on-chain agreement.
   The catalog can be rebuilt by anyone from chain data (`escrows_range`, `reputation_of`).
@@ -49,7 +56,7 @@
 | Authorization / permissions | NEAR contract (mirrored in Django for UX only) |
 | Agreement descriptions, invitations | Django (hash/ref committed on-chain) |
 | Shipment events | Carrier (real integrations) / Demo Carrier (simulated, labelled) |
-| Delivery verification | OutLayer TEE attestation, recorded by the contract callback |
+| Delivery verification | OutLayer TEE attestation, recorded by the contract callback (permissionless request — typically the platform relayer) |
 
 Django must reconcile its projection with contract state and must never treat its database as
 authoritative for funds (`POST /api/v1/agreements/<id>/sync/` refreshes the projection from chain).
