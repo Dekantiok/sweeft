@@ -96,6 +96,23 @@ authoritative TEE proof).
   demo council operated by this project on testnet.
 - OutLayer compute refunds accumulate unspent by design (no owner sweep exists); documented as dust.
 
+## 7. Third review round — completion settles logistics, mandatory signatures (2026-11-13, contract v12)
+
+- **Completion never strands logistics**: `confirm_receipt` and
+  `release_after_inspection` now pay a still-due logistics allocation first
+  (requires a recorded provider), then seller, then platform fee — per-leg
+  rollback guards. Live proof on **`VP-000026`**: logistics was unpaid when the
+  buyer confirmed; final `Completed` with flags `true/true/true`, provider
+  **+0.01 NEAR**, treasury **+0.005 NEAR**.
+- **Inspection floor**: `create_escrow` with a 1-second window reverts live
+  (`inspection period below the 1 hour floor`).
+- **Mandatory carrier signatures**: verifier v4 (`e584e8df…`) fails closed when
+  no carrier key is configured on-chain; unsigned payloads never verify.
+  The signed happy path above ran through v4 (verified true).
+- **Init-time board**: `new(..., arbiter, provider_id, carrier_pubkey)` — a
+  fresh deployment can no longer expose the pool or run unsigned; the deploy
+  script requires `BOARD_ACCOUNT` and `CARRIER_PUBKEY`.
+
 ## Notes / follow-ups
 
 - The buyer-dispute state gate is intentional (disputes open at `Shipped`); sellers can
