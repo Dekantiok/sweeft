@@ -64,7 +64,7 @@ def ai_payment_execute(request, intent_id: int):
                 "ok": True,
                 "status": "executed",
                 "tx_hash": intent.tx_hash,
-                "explorer": f"{settings.EXPLORER_URL}/tx/{intent.tx_hash}",
+                "explorer": f"{settings.EXPLORER_URL}/txns/{intent.tx_hash}",
             }
         )
     units = int(intent.amount)
@@ -102,7 +102,7 @@ def ai_payment_execute(request, intent_id: int):
             "ok": True,
             "status": "executed",
             "tx_hash": intent.tx_hash,
-            "explorer": f"{settings.EXPLORER_URL}/tx/{intent.tx_hash}",
+            "explorer": f"{settings.EXPLORER_URL}/txns/{intent.tx_hash}",
         }
     )
 

@@ -45,7 +45,7 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
-**Current deployment:** escrow contract [`sweeft-market.testnet`](https://testnet.near.org/accounts/sweeft-market.testnet),
+**Current deployment:** escrow contract [`sweeft-market.testnet`](https://testnet.nearblocks.io/address/sweeft-market.testnet),
 review board `sweeft-board.testnet` (both keyless/immutable — deploy keys deleted), TEE project
 `steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
 six-digit codes: `SWFT-XXXXXX`. **`SWFT-611104`** completed the full lifecycle on this deployment —
@@ -72,7 +72,7 @@ deadline (`B8HT4jcxXTmLghMRig9d1zQWNr4xHyBtMeEuGf15o2vC`). Deploy key deletion:
 
 ### Governance (Sputnik DAO review board)
 
-Board: [`sweeft-board.testnet`](https://testnet.near.org/accounts/sweeft-board.testnet) — council 2-of-3
+Board: [`sweeft-board.testnet`](https://testnet.nearblocks.io/address/sweeft-board.testnet) — council 2-of-3
 (`steepdata3968` + `seller.steepdata3968` + `logistics.steepdata3968`; a demo council operated by this
 project on testnet). Disputes resolve only through council-approved `resolve_review` proposals; platform
 fees accrue to the board treasury, and spending requires a council-approved Transfer proposal.

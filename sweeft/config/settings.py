@@ -160,7 +160,7 @@ NEAR_RPC_URL = os.environ.get(
 )
 EXPLORER_URL = os.environ.get(
     "NEAR_EXPLORER_URL",
-    "https://testnet.near.org" if NEAR_NETWORK == "testnet" else "https://near.org",
+    "https://testnet.nearblocks.io" if NEAR_NETWORK == "testnet" else "https://nearblocks.io",
 )
 
 # Deployed contract accounts (filled by scripts/deploy_*.sh output)

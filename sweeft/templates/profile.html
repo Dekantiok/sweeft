@@ -42,7 +42,7 @@
 <p class="text-xs text-slate-500 mt-3 text-center">
   Deal counts move only when a funded escrow completes (never on creation). Disputes stay neutral until resolved.
   {% if rep.first_seen_ms %}<span class="ml-2">Member since {{ rep.first_seen_ms }}</span>{% endif %}
-  <a class="text-emerald-700 ml-2" href="{{ explorer_tx }}/accounts/{{ profile_account }}" target="_blank" rel="noreferrer">View wallet on explorer →</a>
+  <a class="text-emerald-700 ml-2" href="{{ explorer_tx }}/address/{{ profile_account }}" target="_blank" rel="noreferrer">View wallet on explorer →</a>
 </p>
 
 <div class="grid lg:grid-cols-2 gap-5 mt-6">

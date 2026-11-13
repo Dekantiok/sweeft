@@ -111,7 +111,7 @@
     s.innerHTML = 'Paid ✓ ';
     if (hash) {
       const a = document.createElement('a');
-      a.href = explorer || `https://testnet.near.org/tx/${hash}`;
+      a.href = explorer || `https://testnet.nearblocks.io/txns/${hash}`;
       a.target = '_blank';
       a.rel = 'noreferrer';
       a.textContent = `tx ${String(hash).slice(0, 12)}…`;

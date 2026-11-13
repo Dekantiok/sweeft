@@ -114,3 +114,11 @@ class DisputeApiTests(TestCase):
             res = self._post(f"/api/v1/disputes/{d.id}/resolve/", {"release_pct": 70})
         self.assertEqual(res.status_code, 400)
         self.assertIn("resolve on-chain first", res.json()["error"])
+
+
+class ExplorerConfigTests(TestCase):
+    @override_settings(EXPLORER_URL="https://testnet.nearblocks.io")
+    def test_public_config_uses_resolvable_nearblocks_explorer(self):
+        res = self.client.get("/api/v1/config/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["explorer"], "https://testnet.nearblocks.io")

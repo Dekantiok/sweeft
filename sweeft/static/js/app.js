@@ -114,7 +114,7 @@
   }
 
   function explorerTx(hash) {
-    return hash ? `${state.explorer}/tx/${hash}` : null;
+    return hash ? `${state.explorer}/txns/${hash}` : null;
   }
 
   async function jsonPost(url, body) {
