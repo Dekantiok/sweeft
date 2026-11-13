@@ -102,9 +102,11 @@
           <span class="hidden sm:inline text-[11px] text-emerald-300 border border-emerald-800/60 bg-emerald-900/40 rounded-full px-2 py-0.5">testnet</span>
         </a>
         <nav class="hidden md:flex items-center gap-5 text-sm text-slate-300 ml-5">
-          <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/market/">Marketplace</a>
-          {% if wallet_account %}<a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/dashboard/">Dashboard</a>{% endif %}
-          <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/logistics/">Logistics</a>
+          {% if wallet_account %}
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/market/">Marketplace</a>
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/dashboard/">Dashboard</a>
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/logistics/">Logistics</a>
+          {% endif %}
         </nav>
         <div class="flex-1"></div>
         <div id="wallet-box" class="flex items-center gap-2">
