@@ -16,8 +16,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-not-secret-change-me")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+# Secure by default: DEBUG only when explicitly enabled (DJANGO_DEBUG=1),
+# and hosts are restricted unless DJANGO_ALLOWED_HOSTS says otherwise.
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
+    if h.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -31,7 +37,6 @@ INSTALLED_APPS = [
     "apps.logistics",
     "apps.market",
     "apps.ai",
-    "apps.intents",
 ]
 
 MIDDLEWARE = [
@@ -144,18 +149,6 @@ AI_AGENT_ACCOUNT = os.environ.get("AI_AGENT_ACCOUNT", "")
 AI_AGENT_PRIVATE_KEY = os.environ.get("AI_AGENT_PRIVATE_KEY", "")
 AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000"))  # 100 tUSD per payment
 AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000"))  # 250 tUSD suggested budget (UI)
-
-# ---------------------------------------------------------------------------
-# NEAR Intents infrastructure (cross-chain settlement — wire later)
-#
-#   dry       offline simulated quotes/deposits, clearly labelled (default)
-#   oneclick  real 1Click (Intent Swap) HTTP API — requires network + review
-#             of the current docs before enabling in production
-# ---------------------------------------------------------------------------
-INTENTS_PROVIDER = os.environ.get("INTENTS_PROVIDER", "dry")
-INTENTS_BASE_URL = os.environ.get("INTENTS_BASE_URL", "https://1click.chaindefuser.com")
-INTENTS_API_KEY = os.environ.get("INTENTS_API_KEY", "")
-INTENTS_TIMEOUT_SECONDS = int(os.environ.get("INTENTS_TIMEOUT_SECONDS", "30"))
 
 # Platform owner hint for UI affordances (nav links). Authorization is always
 # checked against the on-chain config — this is display only.

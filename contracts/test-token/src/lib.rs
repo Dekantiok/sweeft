@@ -50,9 +50,19 @@ impl TestToken {
     }
 
     /// TESTNET DEMO ONLY: open mint so any demo wallet can get tUSD.
+    /// Repeat mints to the same account are fine (the faucet depends on it):
+    /// registration happens only when the account is not registered yet —
+    /// `internal_register_account` panics for existing accounts.
     pub fn mint(&mut self, account_id: AccountId, amount: U128) {
-        self.token.internal_register_account(&account_id);
+        self.ensure_registered(&account_id);
         self.token.internal_deposit(&account_id, amount.0);
+    }
+
+    /// Register `account_id` unless it already holds an account record.
+    fn ensure_registered(&mut self, account_id: &AccountId) {
+        if !self.token.accounts.contains_key(account_id) {
+            self.token.internal_register_account(account_id);
+        }
     }
 
     pub fn ft_metadata(&self) -> FungibleTokenMetadata {
@@ -99,6 +109,10 @@ impl TestToken {
         let current = *map.get(&(owner.clone(), spender.clone())).unwrap_or(&0);
         require!(current >= amount.0, "allowance exceeded");
         map.insert((owner.clone(), spender), current - amount.0);
+        // Fresh wallets are not registered in the token yet and a plain
+        // internal transfer would panic on them; this demo token subsidises
+        // the one-time registration so agent payments just work.
+        self.ensure_registered(&receiver_id);
         self.token
             .internal_transfer(&owner, &receiver_id, amount.0, memo);
     }
@@ -258,5 +272,32 @@ mod tests {
             c.ft_transfer_from(accounts(1), accounts(3), U128(1), None);
         }));
         assert!(result.is_err(), "spend after revoke must fail");
+    }
+
+    #[test]
+    fn repeat_mint_same_account_works() {
+        // Regression: internal_register_account panics for existing accounts,
+        // which used to break the faucet on its second use.
+        let mut c = setup();
+        c.mint(accounts(1), U128(100));
+        c.mint(accounts(1), U128(50));
+        assert_eq!(c.ft_balance_of(accounts(1)).0, 150);
+        assert_eq!(c.ft_total_supply().0, 150);
+    }
+
+    #[test]
+    fn transfer_from_registers_fresh_receiver() {
+        let mut c = setup();
+        c.mint(accounts(1), U128(1_000));
+        testing_env!(as_account(accounts(1)).build());
+        c.approve(accounts(2), U128(400));
+
+        let mut ctx = as_account(accounts(2));
+        ctx.attached_deposit(NearToken::from_yoctonear(1));
+        testing_env!(ctx.build());
+        // accounts(3) was never registered before this call.
+        c.ft_transfer_from(accounts(1), accounts(3), U128(150), None);
+        assert_eq!(c.ft_balance_of(accounts(3)).0, 150);
+        assert_eq!(c.ft_allowance(accounts(1), accounts(2)).0, 250);
     }
 }

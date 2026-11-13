@@ -997,12 +997,10 @@ impl VeriPay {
         Promise::new(to).transfer(NearToken::from_yoctonear(amount.0))
     }
 
-    /// Platform owner sweep for NEP-141 balances (e.g. to recover a stuck
-    /// escrow in an explicit operator action, disclosed in the README).
-    pub fn withdraw_ft(&mut self, token: AccountId, amount: U128, to: AccountId) -> Promise {
-        require!(env::predecessor_account_id() == self.owner, "only the owner can withdraw");
-        ft_transfer(token, to, amount)
-    }
+    // NOTE: there is deliberately no `withdraw_ft`. A fungible-token sweep
+    // would let the owner drain balances held for active escrows, defeating
+    // the escrow and governance guarantees. FT leaves this contract only
+    // through escrow settlement paths (or arbitration/board resolution).
 
     pub fn update_platform_fee_bps(&mut self, bps: u16) {
         require!(env::predecessor_account_id() == self.owner, "only the owner can update the fee");

@@ -29,10 +29,15 @@ The contract is the financial and authorization source of truth.
 | `settle_logistics(escrow_id)` | seller/provider | pays logistics after verified pickup |
 | `confirm_receipt(escrow_id)` | buyer | pays seller, then platform fee |
 | `report_problem(escrow_id, reason_hash)` | buyer | `ReviewRequired`, funds locked |
-| `resolve_review(escrow_id, seller_pct)` | owner (disclosed) | splits remaining balance |
+| `resolve_review(escrow_id, seller_pct)` | review board (DAO) only | splits remaining balance; owner has no resolution key |
 | `refund_buyer(escrow_id)` | buyer | after dispatch deadline, no shipment |
-| `withdraw(amount, to)` / `withdraw_ft(token, amount, to)` | owner | sweep compute refunds / recover stuck FT |
+| `withdraw(amount, to)` | owner | NEAR-only sweep (verification deposits / compute refunds) |
+| `retry_platform_payout(escrow_id)` | anyone | re-attempt a failed platform-fee payout |
 | `update_platform_fee_bps(bps)` | owner | future agreements only |
+
+> There is deliberately **no `withdraw_ft`**: a fungible-token sweep would let the
+> owner drain balances held for active escrows. FT leaves the contract only through
+> escrow settlement, arbitration, or board resolution.
 
 ### Views
 `get_escrow(id)`, `escrows_for(account)`, `pending_for(account)`, `get_config()`.

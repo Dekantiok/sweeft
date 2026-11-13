@@ -93,8 +93,7 @@ veripay/               Django modular monolith (product coordinator + projection
   apps/escrow/         agreements, invitations, contract reads, settlement projection
   apps/logistics/      partners, Demo Carrier, shipments, verification records
   apps/market/         listings, purchase requests, trust profiles (/u/<wallet>/)
-  apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) — see docs/ai-and-intents.md
-  apps/intents/        provider-neutral NEAR Intents (dry | oneclick) — cross-chain, wired later
+  apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) + co-pilot payments — see docs/ai-copilot.md
   templates/ static/   Django templates + HTMX + Alpine + Tailwind; wallet bundle
 tools/web-bundle/      esbuild bundle of @near-wallet-selector (Meteor/HERE/Nightly)
 scripts/               deploy + end-to-end scripts
@@ -250,7 +249,7 @@ no-budget paths refused correctly.
   testnet wash-trading is cheap. Production would add stake, fees, or dispute-bond mechanics.
 - Marketplace listings are an off-chain catalog (photos/descriptions); the on-chain reference is
   the wallet and its escrow history.
-- Fiat/bank payouts, Intents cross-chain settlement, reputation staking, and mobile apps are out of
+- Fiat/bank payouts, cross-chain settlement, reputation staking, and mobile apps are out of
   MVP scope.
 
 License: MIT.
