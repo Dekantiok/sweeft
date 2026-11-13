@@ -18,67 +18,38 @@
       One wallet connects escrow, marketplace, logistics and your on-chain reputation.
     </p>
 
-  {% if wallet_account %}
-    <div class="mt-8 flex flex-wrap items-center gap-3 text-sm text-slate-400">
-      <span class="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-emerald-300">
-        <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
-        Wallet connected — pick a path below
-      </span>
-    </div>
-  {% else %}
     <div class="mt-8">
-      <button onclick="VPApp.connect()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-full px-6 py-3 font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] transition-all">Connect wallet to start</button>
-      <p class="mt-3 text-sm text-slate-400">Free sign-in — no gas, no transaction. Your wallet unlocks direct escrow and the marketplace.</p>
+      {% if wallet_account %}
+        <button onclick="togglePaths()" class="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-full px-6 py-3 font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] transition-all">
+          Start trading
+          <span id="paths-caret" class="transition-transform">▾</span>
+        </button>
+      {% else %}
+        <button onclick="VPApp.connect()" class="bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-full px-6 py-3 font-semibold shadow-[0_0_24px_rgba(16,185,129,0.35)] transition-all">Connect wallet to start</button>
+        <p class="mt-3 text-sm text-slate-400">Free sign-in — no gas, no transaction. Your wallet unlocks direct escrow and the marketplace.</p>
+      {% endif %}
     </div>
-  {% endif %}
-  </div>
-</section>
 
-{% if wallet_account %}
-<section class="grid md:grid-cols-2 gap-5 mt-10">
-  <div class="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col">
-    <div class="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Direct escrow</div>
-    <h2 class="text-xl font-semibold mt-2">I already have a counterparty</h2>
-    <p class="text-sm text-slate-600 mt-2 flex-1">
-      You know who you're dealing with? Agree the deal, lock the funds, ship the goods.
-      Invite the other wallet by link if they don't have one yet — acceptance and funding stay
-      wallet-signed and enforced on-chain.
-    </p>
-    <ul class="text-sm text-slate-600 mt-3 space-y-1 list-disc list-inside">
-      <li>Fixed parties — nobody else can join</li>
-      <li>Logistics + platform fees disclosed before funding</li>
-      <li>Release only on verified delivery + your confirmation</li>
-    </ul>
-    <a href="/escrow/new/" class="mt-5 inline-block text-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Open an escrow →</a>
-  </div>
-
-  <div class="bg-white border border-slate-200 rounded-2xl p-6 flex flex-col">
-    <div class="text-xs font-semibold text-sky-700 uppercase tracking-wide">Marketplace</div>
-    <h2 class="text-xl font-semibold mt-2">I'm looking for someone to trade with</h2>
-    <p class="text-sm text-slate-600 mt-2 flex-1">
-      Browse listings from sellers with an on-chain trust record: completed deals, volume,
-      disputes — all recomputable from the contract, nothing self-reported.
-      Every purchase runs through the same escrow.
-    </p>
-    <ul class="text-sm text-slate-600 mt-3 space-y-1 list-disc list-inside">
-      <li>Check a seller's wallet reputation before you deal</li>
-      <li>Goods and services, priced in native NEAR</li>
-      <li>Request to buy — the seller issues the escrow in one click</li>
-    </ul>
-    <a href="/market/" class="mt-5 inline-block text-center border border-slate-900 hover:bg-slate-900 hover:text-white rounded-lg px-4 py-2 text-sm font-medium">Explore the marketplace →</a>
+    {% if wallet_account %}
+      <div id="paths-panel" class="hidden mt-6 grid gap-3 md:grid-cols-2">
+        <a href="/escrow/new/" class="group flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-950/70 px-5 py-4 hover:border-emerald-400 transition-colors">
+          <span>
+            <span class="block font-semibold text-white">Direct escrow</span>
+            <span class="block text-sm text-slate-400">Invite a counterparty and lock the deal on-chain.</span>
+          </span>
+          <span class="text-emerald-300 transition-transform group-hover:translate-x-0.5">→</span>
+        </a>
+        <a href="/market/" class="group flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-950/70 px-5 py-4 hover:border-emerald-400 transition-colors">
+          <span>
+            <span class="block font-semibold text-white">Marketplace</span>
+            <span class="block text-sm text-slate-400">Discover sellers with verifiable on-chain reputations.</span>
+          </span>
+          <span class="text-emerald-300 transition-transform group-hover:translate-x-0.5">→</span>
+        </a>
+      </div>
+    {% endif %}
   </div>
 </section>
-{% else %}
-<section class="mt-10 rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
-  <h2 class="text-sm font-semibold text-slate-200">One wallet, two ways to trade</h2>
-  <div class="mt-4 grid gap-4 sm:grid-cols-3 text-sm text-slate-400">
-    <div><span class="text-emerald-300 font-medium">Direct escrow</span><br>Invite a counterparty and lock the deal on-chain.</div>
-    <div><span class="text-emerald-300 font-medium">Marketplace</span><br>Discover sellers with verifiable on-chain reputations.</div>
-    <div><span class="text-emerald-300 font-medium">Trust profile</span><br>Every completed trade builds your public record.</div>
-  </div>
-  <p class="mt-4 text-xs text-slate-500">Connect your wallet above to unlock both paths. Sign-in is free — nothing is signed but a message.</p>
-</section>
-{% endif %}
 
 <section class="mt-14">
   <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -111,38 +82,15 @@
     </ol>
   </div>
 </section>
-
-<section class="mt-14 border-t border-slate-800 pt-8">
-  <div class="grid gap-8 md:grid-cols-3 md:gap-10">
-    <div>
-      <h3 class="text-sm font-semibold text-white">Reputation you can verify</h3>
-      <p class="mt-2 text-sm leading-relaxed text-slate-600">
-        Every completed deal moves on-chain counters on your wallet. Buyers see who delivers;
-        sellers see who pays. No stars to game — just contract facts.
-      </p>
-      <a class="mt-2 inline-block text-sm font-medium" href="/u/seller.steepdata3968.testnet/">See a sample profile →</a>
-    </div>
-    <div>
-      <h3 class="text-sm font-semibold text-white">Logistics partners</h3>
-      <p class="mt-2 text-sm leading-relaxed text-slate-600">
-        Approved providers get paid when carrier pickup is verified — not when a label is printed.
-        Register your company and manage shipments from the partner portal.
-      </p>
-      <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
-        <a href="/logistics/">Provider directory →</a>
-        <a href="/partners/register/">Become a partner →</a>
-      </div>
-    </div>
-    <div>
-      <h3 class="text-sm font-semibold text-white">What is real (and what is simulated)</h3>
-      <p class="mt-2 text-sm leading-relaxed text-slate-600">
-        <b class="font-semibold text-emerald-300">Real:</b> NEAR testnet escrow, native NEAR funding,
-        wallet-signed authorization, OutLayer TEE attestations.
-      </p>
-      <p class="mt-2 text-sm leading-relaxed text-slate-600">
-        <b class="font-semibold text-amber-300">Simulated:</b> Demo Carrier tracking — labelled everywhere it appears.
-      </p>
-    </div>
-  </div>
-</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  function togglePaths() {
+    const panel = document.getElementById('paths-panel');
+    const caret = document.getElementById('paths-caret');
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+    caret.textContent = panel.classList.contains('hidden') ? '▾' : '▴';
+  }
+</script>
 {% endblock %}
