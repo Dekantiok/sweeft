@@ -58,6 +58,9 @@ const MAX_ESCROWS: u64 = 1_000_000;
 /// Deals below this value still settle but do not move reputation counters
 /// (wash-trading friction).
 const MIN_COUNTED_AMOUNT_YOCTO: u128 = 5_000_000_000_000_000_000_000; // 0.005 NEAR
+/// Inspection window floor: a verified delivery plus the permissionless
+/// timeout release must leave the buyer a real window to inspect/dispute.
+const MIN_INSPECTION_PERIOD_MS: u64 = 3_600_000; // 1 hour
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -225,9 +228,31 @@ fn push_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: 
 
 #[near]
 impl VeriPay {
+    /// Initialization REQUIRES the review board: a fresh deployment can never
+    /// expose the (deprecated) arbitration pool even briefly.
     #[init]
-    pub fn new(owner: AccountId, outlayer_contract: AccountId, outlayer_project: String, platform_fee_bps: u16) -> Self {
+    pub fn new(
+        owner: AccountId,
+        outlayer_contract: AccountId,
+        outlayer_project: String,
+        platform_fee_bps: u16,
+        arbiter: AccountId,
+        provider_id: Option<String>,
+        carrier_pubkey: Option<String>,
+    ) -> Self {
         require!(platform_fee_bps <= 2_000, "fee bps too high");
+        gov_config_map().insert("arbiter".to_string(), arbiter);
+        if let Some(p) = provider_id {
+            require!(p.len() <= 64, "provider_id too long");
+            str_config_map().insert("provider_id".to_string(), p);
+        }
+        if let Some(k) = carrier_pubkey {
+            require!(
+                k.len() == 64 && k.chars().all(|c| c.is_ascii_hexdigit()),
+                "carrier pubkey must be 64 hex chars"
+            );
+            str_config_map().insert("carrier_pubkey".to_string(), k.to_lowercase());
+        }
         Self {
             owner,
             outlayer_contract,
@@ -299,6 +324,10 @@ impl VeriPay {
             require!(p != &seller, "provider must differ from seller");
         }
         require!(dispatch_deadline_ms > env::block_timestamp() / 1_000_000, "dispatch deadline in the past");
+        require!(
+            inspection_period_ms >= MIN_INSPECTION_PERIOD_MS,
+            "inspection period below the 1 hour floor"
+        );
         let seller_ids = self.seller_index.get(&seller).cloned().unwrap_or_default();
         require!(seller_ids.len() < MAX_IDS_PER_ACCOUNT, "seller escrow index full");
         if let Some(b) = &buyer {
@@ -674,60 +703,49 @@ impl VeriPay {
         )
     }
 
-    /// Buyer confirms receipt after TEE-verified delivery. Pays the seller
-    /// allocation; the platform fee follows in `finish_platform`.
+    /// Buyer confirms receipt after TEE-verified delivery.
     pub fn confirm_receipt(&mut self, escrow_id: String) -> Promise {
-        let mut escrow = self.internal_get(&escrow_id);
-        require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer confirms receipt");
-        require!(escrow.delivered_verified, "delivery not verified");
-        require!(!escrow.problem_reported, "problem reported; resolve review first");
-        require!(!escrow.seller_paid, "already settled");
-        escrow.state = EscrowState::Completed;
-        escrow.seller_paid = true;
-        escrow.platform_paid = true;
-        let seller_amount = escrow.seller_amount;
-        let seller = escrow.seller.clone();
-        let buyer = escrow.buyer.clone().expect("buyer set");
-        let token = escrow.token.clone();
-        self.escrows.insert(escrow_id.clone(), escrow);
-        // Trust record: completion counts for both sides; volume is deal value.
-        // Counted once per escrow (retries after a failed payout must not
-        // inflate counters) and only above the anti-wash minimum.
-        if !counted(&escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
-            mark_counted(&escrow_id, COUNTED_COMPLETION);
-            bump_reputation(&seller, |r| {
-                r.completed_as_seller += 1;
-                r.volume.0 += seller_amount.0;
-            });
-            bump_reputation(&buyer, |r| {
-                r.completed_as_buyer += 1;
-                r.volume.0 += seller_amount.0;
-            });
-        }
-        payout(token, seller, seller_amount).then(
-            Self::ext(env::current_account_id())
-                .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
-                .finish_platform(escrow_id),
-        )
+        require!(
+            Some(&env::predecessor_account_id()) == self.internal_get(&escrow_id).buyer.as_ref(),
+            "only the buyer confirms receipt"
+        );
+        self.start_completion(&escrow_id)
     }
 
     /// Permissionless timeout release: once delivery is TEE-verified and the
     /// inspection window has elapsed with no problem reported, anyone (e.g.
-    /// the platform relayer) can release the seller and platform allocations.
-    /// `confirm_receipt` remains the buyer's explicit early-release path; the
-    /// shared `seller_paid` flag guarantees exactly-once settlement.
+    /// the platform relayer) can release the allocations.
     pub fn release_after_inspection(&mut self, escrow_id: String) -> Promise {
-        let mut escrow = self.internal_get(&escrow_id);
+        let escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::AwaitingBuyerConfirmation, "wrong state");
-        require!(escrow.delivered_verified, "delivery not verified");
-        require!(!escrow.problem_reported, "problem reported; resolve review first");
-        require!(!escrow.seller_paid, "already settled");
         let times = delivery_times_map();
         let delivered_ms = *times.get(&escrow_id).expect("delivery time not recorded");
         require!(
             env::block_timestamp() / 1_000_000 >= delivered_ms.saturating_add(escrow.inspection_period_ms),
             "inspection window not elapsed"
         );
+        self.start_completion(&escrow_id)
+    }
+
+    /// Shared completion sequence. Pays in order: logistics (if still due),
+    /// seller, then platform fee. Each leg is flag-guarded and rolls back
+    /// exactly its own flag, so no allocation can strand (logistics included)
+    /// and none can pay twice. When logistics is still due, a recorded
+    /// provider is required — completion never leaves that share behind.
+    fn start_completion(&mut self, escrow_id: &str) -> Promise {
+        let mut escrow = self.internal_get(escrow_id);
+        // Idempotency first: a retry after settlement must report clearly.
+        require!(!escrow.seller_paid, "already settled");
+        require!(escrow.state == EscrowState::AwaitingBuyerConfirmation, "wrong state");
+        require!(escrow.delivered_verified, "delivery not verified");
+        require!(!escrow.problem_reported, "problem reported; resolve review first");
+
+        let logistics_due_now = !escrow.logistics_paid;
+        if logistics_due_now {
+            require!(escrow.pickup_verified, "pickup not verified");
+            require!(escrow.logistics_provider.is_some(), "assign a logistics provider before completion");
+            escrow.logistics_paid = true;
+        }
         escrow.state = EscrowState::Completed;
         escrow.seller_paid = true;
         escrow.platform_paid = true;
@@ -735,11 +753,14 @@ impl VeriPay {
         let seller = escrow.seller.clone();
         let buyer = escrow.buyer.clone().expect("buyer set");
         let token = escrow.token.clone();
-        self.escrows.insert(escrow_id.clone(), escrow);
-        // Trust record: a timeout release is still a completed deal, counted
-        // once per escrow and only above the anti-wash minimum.
-        if !counted(&escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
-            mark_counted(&escrow_id, COUNTED_COMPLETION);
+        let provider = escrow.logistics_provider.clone();
+        let logistics_amount = escrow.logistics_amount;
+        self.escrows.insert(escrow_id.to_string(), escrow);
+
+        // Trust record: counted once per escrow, above the anti-wash minimum,
+        // for both explicit confirmation and the timeout release.
+        if !counted(escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
+            mark_counted(escrow_id, COUNTED_COMPLETION);
             bump_reputation(&seller, |r| {
                 r.completed_as_seller += 1;
                 r.volume.0 += seller_amount.0;
@@ -749,11 +770,46 @@ impl VeriPay {
                 r.volume.0 += seller_amount.0;
             });
         }
-        payout(token, seller, seller_amount).then(
+
+        if logistics_due_now {
+            payout(token, provider.expect("provider checked"), logistics_amount).then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                    .finish_completion_logistics(escrow_id.to_string()),
+            )
+        } else {
+            payout(token, seller, seller_amount).then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
+                    .finish_platform(escrow_id.to_string()),
+            )
+        }
+    }
+
+    /// After the logistics leg of a completion: continue with seller +
+    /// platform, or roll the completion back so it can be retried. A failed
+    /// logistics transfer rolls back all completion flags (nothing was paid).
+    #[private]
+    pub fn finish_completion_logistics(&mut self, escrow_id: String) {
+        if !payout_ok(0) {
+            let mut escrow = self.internal_get(&escrow_id);
+            escrow.logistics_paid = false;
+            escrow.seller_paid = false;
+            escrow.platform_paid = false;
+            escrow.state = EscrowState::AwaitingBuyerConfirmation;
+            self.escrows.insert(escrow_id, escrow);
+            log!("completion logistics payout failed — rolled back");
+            return;
+        }
+        let escrow = self.internal_get(&escrow_id);
+        let seller = escrow.seller.clone();
+        let token = escrow.token.clone();
+        let seller_amount = escrow.seller_amount;
+        let _ = payout(token, seller, seller_amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .finish_platform(escrow_id),
-        )
+        );
     }
 
     /// After the seller transfer settles: pay the platform fee, or roll the
@@ -1553,33 +1609,45 @@ mod tests {
 
     fn setup() -> VeriPay {
         testing_env!(as_account(accounts(0)).build());
-        VeriPay::new(accounts(0), accounts(5), "test-project".to_string(), 500)
+        VeriPay::new(
+            accounts(0),
+            accounts(5),
+            "test-project".to_string(),
+            500,
+            accounts(1), // review board is REQUIRED at init — pool is never exposed
+            Some("LOG-DEMO-001".to_string()),
+            None,
+        )
     }
 
     #[test]
-    fn owner_appoints_board_and_board_can_hand_off() {
-        let mut c = setup();
-        assert_eq!(c.get_arbiter(), None);
-        c.set_arbiter(accounts(1));
+    fn init_requires_and_sets_the_board_and_carrier_config() {
+        let c = setup();
+        // A fresh deployment can never expose the pool: the board is set at init.
         assert_eq!(c.get_arbiter(), Some(accounts(1)));
+        assert_eq!(c.get_provider_id(), Some("LOG-DEMO-001".to_string()));
+    }
+
+    #[test]
+    fn board_can_hand_off() {
+        let mut c = setup();
         testing_env!(as_account(accounts(1)).build());
         c.set_arbiter(accounts(2));
         assert_eq!(c.get_arbiter(), Some(accounts(2)));
     }
 
     #[test]
-    #[should_panic(expected = "only the owner can bootstrap the board")]
+    #[should_panic(expected = "board already set")]
     fn stranger_cannot_appoint_board() {
         let mut c = setup();
         testing_env!(as_account(accounts(5)).build());
-        c.set_arbiter(accounts(1));
+        c.set_arbiter(accounts(5));
     }
 
     #[test]
     #[should_panic(expected = "board already set")]
     fn owner_cannot_retake_the_board() {
         let mut c = setup();
-        c.set_arbiter(accounts(1));
         // Owner tries to claw resolution power back — refused.
         testing_env!(as_account(accounts(0)).build());
         c.set_arbiter(accounts(0));
@@ -1589,7 +1657,6 @@ mod tests {
     #[should_panic(expected = "arbitration pool is disabled while a review board is set")]
     fn pool_is_disabled_once_board_is_set() {
         let mut c = setup();
-        c.set_arbiter(accounts(1));
         testing_env!(as_account(accounts(5)).attached_deposit(NearToken::from_millinear(10)).build());
         c.vote_dispute("VP-000001".to_string(), 100);
     }
@@ -1600,9 +1667,7 @@ mod tests {
         assert_eq!(c.platform_fee_recipient(), accounts(0));
         c.set_treasury(accounts(3));
         assert_eq!(c.platform_fee_recipient(), accounts(3));
-        // the board can also rotate the treasury
-        testing_env!(as_account(accounts(0)).build());
-        c.set_arbiter(accounts(1));
+        // the board can rotate the treasury afterwards
         testing_env!(as_account(accounts(1)).build());
         c.set_treasury(accounts(4));
         assert_eq!(c.get_treasury(), Some(accounts(4)));
@@ -1620,7 +1685,6 @@ mod tests {
     #[should_panic(expected = "only the review board resolves disputes")]
     fn owner_cannot_resolve_after_board_is_set() {
         let mut c = setup();
-        c.set_arbiter(accounts(1));
         // Owner tries to decide a dispute — rejected BEFORE any state access.
         c.resolve_review("VP-000001".to_string(), 50);
     }
@@ -1629,7 +1693,6 @@ mod tests {
     #[should_panic(expected = "unknown escrow")]
     fn board_passes_resolver_auth_check() {
         let mut c = setup();
-        c.set_arbiter(accounts(1));
         testing_env!(as_account(accounts(1)).build());
         // Board passes the resolver gate and fails later on the missing
         // escrow — proving the auth check itself accepts the board.
@@ -1639,8 +1702,6 @@ mod tests {
     #[test]
     fn gov_info_snapshot() {
         let mut c = setup();
-        assert_eq!(c.get_gov_info().arbiter, None);
-        c.set_arbiter(accounts(1));
         c.set_treasury(accounts(2));
         let info = c.get_gov_info();
         assert_eq!(info.arbiter, Some(accounts(1)));
@@ -1661,7 +1722,7 @@ mod tests {
             None,
             "near".parse().unwrap(),
             1_000,
-            1_000,
+            MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(),
             None,
             None,
@@ -1702,7 +1763,7 @@ mod tests {
             .build());
         let id = c.create_escrow(
             "Known counterparty".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(), None, None,
         );
         // A different wallet tries to accept — the contract refuses.
@@ -1721,7 +1782,7 @@ mod tests {
             .build());
         let id = c.create_escrow(
             "Invite link".to_string(), "hash".to_string(), U128(100), U128(10),
-            None, Some(hash), "near".parse().unwrap(), 1_000, 1_000,
+            None, Some(hash), "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(), None, None,
         );
         testing_env!(as_account(accounts(3)).build());
@@ -1746,7 +1807,7 @@ mod tests {
             .build());
         let id = c.create_escrow(
             "Legacy FT".to_string(), "hash".to_string(), U128(100), U128(10), Some(accounts(2)), None,
-            accounts(3), 1_000, 1_000, "terms".to_string(), None, None,
+            accounts(3), 1_000, MIN_INSPECTION_PERIOD_MS, "terms".to_string(), None, None,
         );
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
@@ -1835,7 +1896,7 @@ mod tests {
         let mut escrow = c.get_escrow(id.clone()).unwrap();
         escrow.pickup_verified = true;
         c.escrows.insert(id.clone(), escrow);
-        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
         c.settle_logistics(id.clone());
         assert!(c.get_escrow(id).unwrap().logistics_paid);
     }
@@ -1875,7 +1936,7 @@ mod tests {
     fn timeout_release_settles_after_the_window() {
         let mut c = setup();
         let id = delivered_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build()); // 2000 ms
+        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build()); // 2000 ms
         c.release_after_inspection(id.clone());
         let escrow = c.get_escrow(id).unwrap();
         assert!(escrow.seller_paid);
@@ -1894,7 +1955,7 @@ mod tests {
         let mut escrow = c.get_escrow(id.clone()).unwrap();
         escrow.problem_reported = true;
         c.escrows.insert(id.clone(), escrow);
-        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
         c.release_after_inspection(id);
     }
 
@@ -1903,9 +1964,9 @@ mod tests {
     fn confirmation_and_timeout_release_are_mutually_exclusive() {
         let mut c = setup();
         let id = delivered_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
         c.release_after_inspection(id.clone());
-        testing_env!(as_account(accounts(2)).block_timestamp(2_100_000_000).build());
+        testing_env!(as_account(accounts(2)).block_timestamp(4_100_000_000_000).build());
         c.confirm_receipt(id);
     }
 
@@ -1920,7 +1981,7 @@ mod tests {
         testing_env!(as_account(accounts(1)).block_timestamp(1).build());
         c.create_escrow(
             "No deposit".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(), None, None,
         );
     }
@@ -1935,7 +1996,7 @@ mod tests {
             .build());
         c.create_escrow(
             "x".repeat(MAX_NAME_LEN + 1), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(), None, None,
         );
     }
@@ -1950,7 +2011,7 @@ mod tests {
             .build());
         c.create_escrow(
             "Arbitrary token".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, accounts(3), 1_000, 1_000,
+            Some(accounts(2)), None, accounts(3), 1_000, MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(), None, None,
         );
     }
@@ -1966,9 +2027,8 @@ mod tests {
     #[test]
     fn board_resolution_folds_logistics_and_unlocks_stakes() {
         let mut c = setup();
-        c.set_arbiter(accounts(5));
         let id = disputed_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
         c.resolve_review(id.clone(), 60);
         let escrow = c.get_escrow(id.clone()).unwrap();
         // Logistics was unpaid and is folded into the split — marked paid so it
@@ -1982,9 +2042,8 @@ mod tests {
     #[test]
     fn dispute_split_with_unpaid_logistics_covers_the_full_total() {
         let mut c = setup();
-        c.set_arbiter(accounts(5));
         let id = disputed_native(&mut c); // logistics NOT paid
-        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
         c.resolve_review(id.clone(), 60);
         let escrow = c.get_escrow(id.clone()).unwrap();
         let total = escrow.total_amount.0;
@@ -1996,37 +2055,16 @@ mod tests {
     }
 
     #[test]
-    fn arbitration_split_with_unpaid_logistics_covers_the_full_total() {
-        let mut c = setup();
-        // No board: the pool path is only reachable in bootstrap mode (it is
-        // disabled in every reviewed deployment — see deploy script).
-        let id = disputed_native(&mut c);
-        testing_env!(as_account(accounts(5))
-            .block_timestamp(50_000_000)
-            .attached_deposit(NearToken::from_millinear(50)) // meets the 0.05 NEAR quorum
-            .build());
-        c.vote_dispute(id.clone(), 40);
-        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
-        c.finalize_arbitration(id.clone());
-        let escrow = c.get_escrow(id.clone()).unwrap();
-        let total = escrow.total_amount.0;
-        let seller_part = total * 40 / 100;
-        let buyer_part = review_due(&id);
-        assert_eq!(seller_part + buyer_part, total, "all balances must sum to total_amount");
-    }
-
-    #[test]
     #[should_panic(expected = "logistics already paid")]
     fn logistics_cannot_be_paid_again_after_resolution() {
         let mut c = setup();
-        c.set_arbiter(accounts(5));
         let id = disputed_native(&mut c);
         let mut escrow = c.get_escrow(id.clone()).unwrap();
         escrow.pickup_verified = true; // would qualify for logistics payout
         c.escrows.insert(id.clone(), escrow);
-        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
         c.resolve_review(id.clone(), 60);
-        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(60_000_000).build());
         c.settle_logistics(id);
     }
 
@@ -2038,7 +2076,7 @@ mod tests {
         let mut escrow = c.get_escrow(id.clone()).unwrap();
         escrow.pickup_verified = true;
         c.escrows.insert(id.clone(), escrow);
-        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
+        testing_env!(as_account(accounts(1)).block_timestamp(60_000_000).build());
         c.settle_logistics(id);
     }
 
@@ -2089,6 +2127,59 @@ mod tests {
         let escrow = c.get_escrow(id).unwrap();
         assert!(!escrow.delivered_verified);
         assert_eq!(escrow.state, EscrowState::Shipped);
+    }
+
+    #[test]
+    fn completion_pays_logistics_when_unpaid() {
+        let mut c = setup();
+        let id = delivered_native(&mut c); // logistics NOT settled yet
+        testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
+        c.confirm_receipt(id.clone());
+        let escrow = c.get_escrow(id).unwrap();
+        // Regression: completion must pay (or fold) logistics — never strand it.
+        assert!(escrow.logistics_paid, "completion must not strand logistics");
+        assert!(escrow.seller_paid);
+        assert!(escrow.platform_paid);
+        assert_eq!(escrow.state, EscrowState::Completed);
+    }
+
+    #[test]
+    fn timeout_release_also_pays_logistics_when_unpaid() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
+        c.release_after_inspection(id.clone());
+        let escrow = c.get_escrow(id).unwrap();
+        assert!(escrow.logistics_paid, "timeout release must not strand logistics");
+        assert!(escrow.seller_paid);
+        assert!(escrow.platform_paid);
+    }
+
+    #[test]
+    #[should_panic(expected = "assign a logistics provider before completion")]
+    fn completion_requires_provider_when_logistics_unpaid() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.logistics_provider = None;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
+        c.confirm_receipt(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "inspection period below the 1 hour floor")]
+    fn inspection_period_floor_enforced() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        c.create_escrow(
+            "Floor".to_string(), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
+            "terms".to_string(), None, None,
+        );
     }
 
     #[test]

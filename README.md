@@ -320,15 +320,24 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Owner could retake dispute power via `set_arbiter(owner)` | `set_arbiter`/`set_treasury` are **bootstrap-only for the owner**; afterwards only the current board/treasury can rotate them. Verified live: owner call reverts. |
 | Double payouts from failed buyer legs / folded logistics | Independent per-leg settlement: the buyer remainder is stored and retried via permissionless `retry_review_buyer_payout`; resolution paths mark folded logistics paid; `settle_logistics` is state-gated; reputation counters are exactly-once and value-filtered. |
 | Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR or the configured legacy token). |
-| TEE input controlled by caller | The claim is scoped honestly: the TEE attests *this code ran on this input*; the contract enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline consistency and pickup-before-delivery. **Signed carrier payloads / TEE-side carrier fetch remain the roadmap** for carrier authenticity. |
+| TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline and pickup-before-delivery. |
+| Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
+| Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period**; the timeout release can never skip a real buyer review window. |
+| Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
 | AI budget cap lived only in server settings | Enforced **on-chain** in the budget contract (`get_max_payment`/`set_max_payment`, default 0.1 NEAR per payment). |
 
-Residual (disclosed) risks: the review-board council is a **demo council** on testnet (single operator;
-multisig/hardware on mainnet), the demo agent key is server-side (on-chain cap + budget bound it), and the
-arbitration pool has no slashing — which is why it is disabled in favour of the board. OutLayer compute
-refunds accumulate in the contract unspent: there is deliberately no owner sweep, so they are dust on
-testnet rather than a drain vector.
+Residual (disclosed) risks:
+
+- The review-board council is a **demo council** on testnet (single operator; multisig/hardware on mainnet).
+- **Carrier key custody**: on testnet the Demo Carrier signing key is held by this project's service
+  (`DEMO_CARRIER_PRIVATE_KEY` in the server env) — a real deployment would hold it at the carrier.
+  The TEE verifies the signature, so trust is in the registered carrier key holder; the owner/board
+  can rotate that key on-chain, and rotation is visible to verifiers.
+- The demo agent key is server-side (on-chain cap + budget bound its blast radius).
+- The arbitration pool has no slashing — which is why it is disabled in favour of the board.
+- OutLayer compute refunds accumulate in the contract unspent: there is deliberately no owner sweep,
+  so they are dust on testnet rather than a drain vector.
 
 ## Tests
 

@@ -204,42 +204,44 @@ fn run(raw: &str) -> Output {
         None => return fail("escrow has no shipment_id".into()),
     }
 
-    // 2c. Carrier authenticity. When a carrier signing key is configured
-    //     on-chain, the payload MUST be signed by that key over the canonical
-    //     message — public ids alone prove nothing.
-    if let Some(pubkey_hex) = &input.expected.carrier_pubkey {
-        let sig_hex = carrier.get("signature").and_then(|v| v.as_str()).unwrap_or_default();
-        if sig_hex.is_empty() {
-            return fail("carrier signature required but missing".into());
-        }
-        let Some(pubkey_bytes) = decode_hex(pubkey_hex) else {
-            return fail("malformed carrier pubkey config".into());
-        };
-        let Ok(pubkey_arr) = <[u8; 32]>::try_from(pubkey_bytes.as_slice()) else {
-            return fail("carrier pubkey must be 32 bytes".into());
-        };
-        let Ok(verifying) = VerifyingKey::from_bytes(&pubkey_arr) else {
-            return fail("invalid carrier pubkey".into());
-        };
-        let Some(sig_bytes) = decode_hex(sig_hex) else {
-            return fail("carrier signature must be hex".into());
-        };
-        let Ok(sig_arr) = <[u8; 64]>::try_from(sig_bytes.as_slice()) else {
-            return fail("carrier signature must be 64 bytes".into());
-        };
-        let signature = Signature::from_bytes(&sig_arr);
-        let raw_events: Vec<String> = carrier
-            .get("events")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|e| e.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string())
-            .collect();
-        let message = canonical_carrier_message(&provider_id, &tracking, carrier_shipment, raw_status, &raw_events);
-        if verifying.verify(message.as_bytes(), &signature).is_err() {
-            return fail("carrier signature invalid".into());
-        }
+    // 2c. Carrier authenticity — MANDATORY. The on-chain config must carry a
+    //     carrier signing key and the payload must be signed by it over the
+    //     canonical message. Unsigned payloads never pass, so a caller cannot
+    //     fabricate carrier data from public ids alone.
+    let Some(pubkey_hex) = &input.expected.carrier_pubkey else {
+        return fail("carrier pubkey not configured on-chain".into());
+    };
+    let sig_hex = carrier.get("signature").and_then(|v| v.as_str()).unwrap_or_default();
+    if sig_hex.is_empty() {
+        return fail("carrier signature required but missing".into());
+    }
+    let Some(pubkey_bytes) = decode_hex(pubkey_hex) else {
+        return fail("malformed carrier pubkey config".into());
+    };
+    let Ok(pubkey_arr) = <[u8; 32]>::try_from(pubkey_bytes.as_slice()) else {
+        return fail("carrier pubkey must be 32 bytes".into());
+    };
+    let Ok(verifying) = VerifyingKey::from_bytes(&pubkey_arr) else {
+        return fail("invalid carrier pubkey".into());
+    };
+    let Some(sig_bytes) = decode_hex(sig_hex) else {
+        return fail("carrier signature must be hex".into());
+    };
+    let Ok(sig_arr) = <[u8; 64]>::try_from(sig_bytes.as_slice()) else {
+        return fail("carrier signature must be 64 bytes".into());
+    };
+    let signature = Signature::from_bytes(&sig_arr);
+    let raw_events: Vec<String> = carrier
+        .get("events")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|e| e.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        .collect();
+    let message = canonical_carrier_message(&provider_id, &tracking, carrier_shipment, raw_status, &raw_events);
+    if verifying.verify(message.as_bytes(), &signature).is_err() {
+        return fail("carrier signature invalid".into());
     }
 
     // 3. Status must normalize into the supported set.
@@ -317,21 +319,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
+    fn signer() -> (ed25519_dalek::SigningKey, String) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let pubkey_hex: String = sk.verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        (sk, pubkey_hex)
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Fully signed carrier payload (the signature is MANDATORY).
     fn input(status: &str, events: serde_json::Value, provider_id: &str, shipment_id: &str) -> String {
+        use ed25519_dalek::Signer;
+        let (sk, pubkey_hex) = signer();
+        let event_statuses: Vec<String> = events
+            .as_array()
+            .map(|a| a.iter().map(|e| e["status"].as_str().unwrap_or("").to_string()).collect())
+            .unwrap_or_default();
+        let message = canonical_carrier_message(provider_id, "DEMO-1", shipment_id, status, &event_statuses);
+        let signature = sk.sign(message.as_bytes());
         serde_json::json!({
             "escrow_id": "VP-000003",
             "expected": {
                 "tracking_number": "DEMO-1",
                 "provider_wallet": "log.testnet",
                 "shipment_id": "SHIP-1",
-                "provider_id": "LOG-DEMO-001"
+                "provider_id": "LOG-DEMO-001",
+                "carrier_pubkey": pubkey_hex
             },
             "carrier": {
                 "provider_id": provider_id,
                 "tracking_number": "DEMO-1",
                 "shipment_id": shipment_id,
                 "status": status,
-                "events": events
+                "events": events,
+                "signature": hex(&signature.to_bytes())
             }
         })
         .to_string()
@@ -347,47 +370,17 @@ mod tests {
         )
     }
 
-    // ---- Carrier signature tests (ed25519, hex-encoded) ----
-
-    fn signer() -> (ed25519_dalek::SigningKey, String) {
-        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        let pubkey_hex: String = sk.verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect();
-        (sk, pubkey_hex)
-    }
-
-    fn signed_input(mutate: impl FnOnce(&mut serde_json::Value)) -> String {
-        let (sk, pubkey_hex) = signer();
-        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
-        v["expected"]["carrier_pubkey"] = serde_json::json!(pubkey_hex);
-        mutate(&mut v);
-        let c = &v["carrier"];
-        let events: Vec<String> = c["events"].as_array().unwrap().iter()
-            .map(|e| e["status"].as_str().unwrap().to_string()).collect();
-        let message = canonical_carrier_message(
-            c["provider_id"].as_str().unwrap(),
-            c["tracking_number"].as_str().unwrap(),
-            c["shipment_id"].as_str().unwrap(),
-            c["status"].as_str().unwrap(),
-            &events,
-        );
-        use ed25519_dalek::Signer;
-        let signature = sk.sign(message.as_bytes());
-        let sig_hex: String = signature.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
-        v["carrier"]["signature"] = serde_json::json!(sig_hex);
-        v.to_string()
-    }
-
     #[test]
     fn carrier_signature_valid_verifies() {
-        let out = run(&signed_input(|_| {}));
+        let out = run(&happy_input());
         assert!(out.verified, "reason: {}", out.reason);
     }
 
     #[test]
     fn tampered_events_after_signing_rejected() {
-        // Sign the happy payload, then swap an event status: the identity
-        // checks still pass but the signature must fail.
-        let mut v: serde_json::Value = serde_json::from_str(&signed_input(|_| {})).unwrap();
+        // Swap an event status after signing: identity checks still pass but
+        // the signature must fail.
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
         v["carrier"]["events"][0]["status"] = serde_json::json!("ACCEPTED");
         let out = run(&v.to_string());
         assert!(!out.verified);
@@ -396,7 +389,7 @@ mod tests {
 
     #[test]
     fn tampered_payload_after_signing_rejected() {
-        let mut v: serde_json::Value = serde_json::from_str(&signed_input(|_| {})).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
         v["carrier"]["status"] = serde_json::json!("DELIVERY_FAILED");
         let out = run(&v.to_string());
         assert!(!out.verified);
@@ -405,12 +398,22 @@ mod tests {
 
     #[test]
     fn missing_signature_with_configured_key_rejected() {
-        let (_, pubkey_hex) = signer();
         let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
-        v["expected"]["carrier_pubkey"] = serde_json::json!(pubkey_hex);
+        v["carrier"].as_object_mut().unwrap().remove("signature");
         let out = run(&v.to_string());
         assert!(!out.verified);
-        assert!(out.reason.contains("signature required"));
+        assert!(out.reason.contains("signature required"), "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn missing_carrier_pubkey_rejected() {
+        // Mandatory config: a fresh deployment without a carrier key never
+        // verifies unsigned payloads.
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
+        v["expected"].as_object_mut().unwrap().remove("carrier_pubkey");
+        let out = run(&v.to_string());
+        assert!(!out.verified);
+        assert!(out.reason.contains("carrier pubkey not configured"), "reason: {}", out.reason);
     }
 
     #[test]
