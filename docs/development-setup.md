@@ -16,7 +16,7 @@
 ```bash
 cd sweeft
 cp .env.example .env          # pre-filled with the deployed testnet addresses
-python3 -m pip install django django-environ
+python3 -m pip install -r requirements.txt
 python3 manage.py migrate
 python3 manage.py createsuperuser    # partner approvals live in /admin/
 python3 manage.py runserver 0.0.0.0:8000
@@ -30,7 +30,7 @@ It needs a partner API key (printed once):
 
 ```bash
 python3 manage.py seed_demo --issue-carrier-key
-SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=swft_… \
   python3 tools/demo-carrier/simulator.py
 ```
 
@@ -60,7 +60,6 @@ See `sweeft/.env.example`. Never commit real values; the repo contains none.
 
 ```bash
 # contracts
-(cd contracts/test-token && cargo near build non-reproducible-wasm --no-abi)
 (cd contracts/sweeft   && cargo near build non-reproducible-wasm --no-abi)
 
 # TEE verification module (WASI Preview 2 — required by the OutLayer worker)
@@ -76,7 +75,7 @@ See `sweeft/.env.example`. Never commit real values; the repo contains none.
 python3 manage.py check                                # Django system check
 python3 manage.py test                                # Django unit tests (logistics + relayer + API)
 (cd tools/demo-carrier && python3 -m unittest test_simulator -v)   # carrier simulator schedule
-(cd contracts/sweeft && cargo test)                   # contract unit tests (22: state machine + permissionless gates)
+(cd contracts/sweeft && cargo test)                   # contract unit tests (47: state machine + permissionless gates)
 SELLER_KEY=... BUYER_KEY=... scripts/e2e_lifecycle.sh  # full testnet lifecycle
 ```
 
@@ -87,8 +86,6 @@ logistics +`LOGISTICS_AMOUNT`, seller +`SELLER_AMOUNT`, platform +5%.
 
 - **OutLayer modules must be `wasm32-wasip2`** — the worker rejects `wasm32-wasip1` ("Not a valid
   WASI Preview 2 component"). Contracts must be `wasm32-unknown-unknown`.
-- **NEP-141 receivers must be storage-registered** on the token contract before a transfer reaches
-  them (`storage_deposit`); a failed transfer rolls the payout flag back so it can be retried.
 - **Wallet actions need NAJ-format actions** (`transactions.functionCall(...)`) — raw
   `{type, params}` objects throw "Unsupported NAJ action" in wallet-selector ≥10.
 - RPC view calls use `request_type: "call_function"` (not `"call"`).

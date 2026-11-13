@@ -14,11 +14,10 @@ The contract is the financial and authorization source of truth.
 | `reject_escrow(escrow_id)` | buyer | `Rejected` |
 | `cancel_escrow(escrow_id)` | seller | `Cancelled` (pre-acceptance) |
 | `fund_escrow(escrow_id)` — payable | buyer | native-NEAR funding; attached deposit must equal `total_amount` |
-| `ft_on_transfer(sender_id, amount, msg)` | token contract | legacy NEP-141 funding (`msg = escrow_id`) |
+| `ft_on_transfer(sender_id, amount, msg)` | token contract | NEP-141 funding (`msg = escrow_id`) |
 
 **Currency model:** new escrows use `token: "near"` and amounts in yoctoNEAR. A single `payout`
-helper transfers native NEAR for those escrows and calls `ft_transfer` for legacy token escrows;
-no state migration is required.
+helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer` for NEP-141 escrows.
 
 ### Logistics & verification
 | Method | Who | Effect |
@@ -43,15 +42,15 @@ no state migration is required.
 
 > There is deliberately **no `withdraw` and no `withdraw_ft`**: any owner sweep could
 > drain balances held for active escrows. Value leaves the contract only through
-> settlement, review-board resolution, or (legacy cases) arbitration.
+> settlement or review-board resolution.
 
 ### Governance / configuration
 | Method | Who | Effect |
 |---|---|---|
 | `set_arbiter(account)` | owner (bootstrap only) / current board | review board; **disables the arbitration pool** |
 | `set_treasury(account)` | owner (bootstrap only) / treasury or board | platform-fee destination |
-| `set_provider_id(id)` | owner or board | carrier-registry id enforced in verification outcomes |
-| `set_allowed_token(token?)` | owner or board | legacy FT allowlist (native NEAR always allowed) |
+| `set_provider_id(id)` | review board | carrier-registry id enforced in verification outcomes |
+| `set_allowed_token(token?)` | review board | FT allowlist (native NEAR always allowed) |
 | `vote_dispute` / `finalize_arbitration` | — | **revert while a review board is set** |
 | `claim_stake(escrow_id)` | voters | reclaim stake once a case is finalized (board resolution finalizes open cases) |
 

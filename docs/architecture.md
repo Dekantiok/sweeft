@@ -20,7 +20,7 @@
 ```
 
 - **Smart contract (Rust, near-sdk 5.x)** — financial and authorization source of truth.
-  Holds native NEAR (legacy tUSD supported), enforces state transitions and permissions,
+  Holds native NEAR, enforces state transitions and permissions,
   performs payouts via native transfer or NEP-141
   `ft_transfer`, and is the only path through which TEE verification can be recorded
   (`on_verification_result` is `#[private]`, reachable only via the contract's own promise

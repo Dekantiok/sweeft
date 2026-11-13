@@ -41,13 +41,13 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
    `pickup_verified` (for PICKED_UP…DELIVERED) and `delivered_verified` + state
    `AwaitingBuyerConfirmation` (for DELIVERED).
 7. **Settle logistics** (seller or provider) — allowed once pickup is verified; pays the recorded
-   provider via `ft_transfer`.
+   provider in native NEAR.
 8. **Confirm receipt** (buyer) — requires `delivered_verified` and no open problem. Pays the
    seller, then the platform fee (chained callback). A failed transfer rolls the flags back
    (`on_payout_result`) so it can be retried — the contract never reports a payment that failed.
 9. **Report problem** (buyer) — state `ReviewRequired`; funds stay locked. The disclosed operator
-   path `resolve_review(seller_pct)` splits the remaining balance; it is a centralized fallback,
-   not arbitration.
+   proposal `resolve_review(seller_pct)` splits the remaining balance; only the review board can
+   execute it.
 
 ## Authorization summary
 
@@ -55,7 +55,7 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
 |---|---|
 | Create agreement | seller (any wallet creating it) |
 | Accept / reject | preassigned buyer, or first invitee presenting the secret |
-| Fund | the accepted buyer, exact total, supported token |
+| Fund | the accepted buyer, exact total, native NEAR |
 | Assign provider | seller |
 | Register shipment | seller or the assigned provider |
 | Request verification | any party to the escrow |

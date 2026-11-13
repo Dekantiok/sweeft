@@ -7,8 +7,7 @@ total_funded = seller_amount + logistics_amount + platform_fee
 platform_fee = seller_amount × platform_fee_bps / 10_000     (default bps = 500 → 5%)
 ```
 
-Amounts are in **native NEAR (yoctoNEAR, 24 decimals)** for new escrows. Legacy tUSD escrows keep
-their original 6-decimal units. Network gas is separate and borne by the transacting wallet. Fees
+Amounts are in **native NEAR (yoctoNEAR, 24 decimals)**. Network gas is separate and borne by the transacting wallet. Fees
 are disclosed before funding and enforced by the contract; changing the fee bps affects only future
 agreements.
 
@@ -34,7 +33,7 @@ Example (native demo values):
 
 Beneficiaries (seller, logistics provider, platform treasury) are recorded before funding and
 enforced by the contract. No backend request can alter them after funding. Payouts are native NEAR
-transfers for new escrows (NEP-141 `ft_transfer` for legacy escrows); every transfer is
+transfers; every transfer is
 idempotency-guarded by `*_paid` flags, and a failed transfer rolls its flag back so it can be retried.
 
 ## Failure cases
@@ -43,13 +42,11 @@ idempotency-guarded by `*_paid` flags, and a failed transfer rolls its flag back
 |---|---|
 | Seller does not dispatch | buyer claims `refund_buyer` after the dispatch deadline (no shipment registered); logistics forfeits |
 | Carrier reports loss/return | verification returns the status; no automatic fault assigned; review path applies |
-| Wrong/damaged goods | buyer `report_problem` → `ReviewRequired`; funds locked; arbitration pool or review-board split via `resolve_review` |
+| Wrong/damaged goods | buyer `report_problem` → `ReviewRequired`; funds locked; review-board split via `resolve_review` |
 | Verification unavailable | no fabricated result: the escrow stays `Shipped`; retry or review |
 | Duplicate event / payout | rejected by state checks + `*_paid` flags |
-| FT receiver not registered | transfer fails, flag rolls back, remains retryable |
 
 ## Token boundary
 
-MVP payouts are on-chain transfers to NEAR-compatible wallets in the supported testnet token
-(`tusd.steepdata3968.testnet`, open-mint demo token). Fiat/bank payouts require a separate provider,
-compliance work and reconciliation — explicitly out of scope.
+MVP payouts are native NEAR transfers to NEAR-compatible wallets. Fiat/bank payouts require a
+separate provider, compliance work and reconciliation — explicitly out of scope.

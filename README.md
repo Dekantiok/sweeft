@@ -18,7 +18,7 @@ CONNECT WALLET → BROWSE / LIST → CHECK TRUST PROFILE → ESCROW
 → SETTLE (seller + logistics + platform) → REPUTATION MOVES
 ```
 
-Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
+Built at NEAR Hackathon (Nov 2026).
 
 ---
 
@@ -27,7 +27,7 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Component | Status |
 |---|---|
 | Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft.testnet`) |
-| Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
+| Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
 | Verification & settlement automation | **Real on-chain** — the platform relayer (`manage.py run_relayer`) triggers permissionless TEE verification, the logistics payout, and the inspection-window release; the contract state machine gates every call and fixes every destination/amount |
@@ -63,99 +63,20 @@ platform fee **+0.005 NEAR** to the board treasury, all payout flags true:
 | `settle_logistics` | `C8cFZWwnEjdy2hHnkRrhfdkUoxZizm8PY5LU491pJNpo` |
 | `confirm_receipt` (buyer) | `7rHJAMq5qRTkJChH4qFb3g17MScVotvkepL9yK5haAA2` |
 
-### Earlier testnet runs (predecessor deployment)
-
-Runs below were executed on the predecessor contract (`sweeft-escrow.testnet`, id format `VP-…`,
-since superseded) and are kept as an audit trail of the hardening rounds.
-
-### Native NEAR
-
-- **`VP-000014`** — full lifecycle in native NEAR: buyer funded **0.115 NEAR** with the payable
-  `fund_escrow`; OutLayer TEE verified delivery; seller received **0.1 NEAR**, logistics **0.01 NEAR**,
-  and the review-board treasury received the **0.005 NEAR** platform fee.
-- **`VP-000015`** — native dispute: review-board proposal #3 approved 2-of-3 and executed
-  `resolve_review(…, 60)` → seller **0.0414 NEAR**, buyer **0.0276 NEAR** (before gas).
-- **AI budget** — owner deposited **0.05 NEAR**; the co-pilot paid invoices in native NEAR and the
-  budget's `spent`/`available` updated exactly on-chain. No token mint or registration anywhere.
-- **`VP-000027` / `VP-000028`** — final hardened build: signed-carrier TEE verification, then
-  `settle_logistics` + `confirm_receipt` (all payout flags true). Representative txs:
-  VP-000027 TEE-request `8fcf2M3t…`, settle `FnYKtT9G…`, confirm `7oSrmZiX…`;
-  VP-000028 settle `2D3K1WuP…`, confirm `EbaDUc8A…` (full hashes in the explorer under
-  `sweeft-escrow.testnet`).
-
-### Relayer: zero-signature happy path (`VP-000017`, historical)
-
-Full lifecycle with **no wallet signatures after funding** — the platform relayer
-(`relayer.steepdata3968.testnet`, `manage.py run_relayer`) drove every step via the permissionless
-contract methods:
-
-- seller created + buyer funded **0.0625 NEAR**, provider assigned, shipment registered → `Shipped`
-- Demo Carrier reported `DELIVERED` (simulated scan) → relayer called
-  `request_delivery_verification`; OutLayer's TEE returned `verified: true`, `DELIVERED` in ~40s and
-  the callback moved the escrow to `AwaitingBuyerConfirmation`
-- relayer paid logistics (`settle_logistics`) and released seller + platform
-  (`release_after_inspection`) → state `Completed`, all payout flags true
-
-> This run predates the hardening rounds: the contract now enforces a **1-hour minimum inspection
-> window** (the old 30s was before the floor), and completion itself settles any still-due logistics
-> allocation. (`VP-000027`/`VP-000028` were that build's lifecycle evidence; the current
-> deployment's run is `SWFT-100185` above.)
-
-### Counterparty acceptance policies (verified on-chain)
-
-- `VP-000018` — preassigned to `steepdata3968.testnet`: `logistics.steepdata3968.testnet` was
-  rejected on-chain (`only the preassigned buyer can accept`); the named wallet accepted.
-- `VP-000019` — invite-link escrow: a wrong secret was rejected (`invalid invite secret`);
-  the wallet presenting the correct secret accepted and became the buyer.
-
-### Legacy FT verification (historical tUSD escrows)
-
-Full lifecycle proven with real transactions and exact balances (see `scripts/e2e_lifecycle.sh`):
-
-- `VP-000003`: seller `seller.steepdata3968.testnet`, buyer `steepdata3968.testnet`,
-  provider `logistics.steepdata3968.testnet`
-  - funded 115 tUSD via `ft_transfer_call`
-  - OutLayer TEE executed the published verifier (`3153c52b…`, active version of the
-    `steepdata3968.testnet/sweeft-verify` project) and returned `verified: true` for the
-    registered tracking number; the contract recorded `pickup_verified` + `delivered_verified`
-  - `settle_logistics` paid the provider **+10 tUSD**
-  - `confirm_receipt` paid the seller **+100 tUSD** and the platform **+5 tUSD**
-  - contract balance returned to **0**; state `Completed`
-
-- `VP-000004` (reputation cycle): full lifecycle; afterwards `reputation_of(seller)` shows
-  `completed_as_seller: 1`, `reputation_of(buyer)` shows `completed_as_buyer: 1`, both with
-  `volume: 100000000`; `VP-000005` reject moved `requests_rejected: 1` for the declining buyer.
-- Marketplace verified in-app: 4 seeded listings browse at `/market/`, seller trust panel reads
-  live contract counters, profiles at `/u/<wallet>/`, purchase requests → prefilled escrow.
-
-TEE negative case also verified: a tampered tracking number returns
-`verified: false` with the mismatch reason — natively (unit tests) and inside the real TEE.
-
-### Governance verified on testnet (Sputnik DAO review board)
+### Governance (Sputnik DAO review board)
 
 Board: [`sweeft-board.testnet`](https://testnet.near.org/accounts/sweeft-board.testnet) — council 2-of-3
-(`steepdata3968` + `seller.steepdata3968` + `logistics.steepdata3968`), default Sputnik policy.
+(`steepdata3968` + `seller.steepdata3968` + `logistics.steepdata3968`; a demo council operated by this
+project on testnet). Disputes resolve only through council-approved `resolve_review` proposals; platform
+fees accrue to the board treasury, and spending requires a council-approved Transfer proposal.
 
-- **Proposal #0** — council voted to lower the proposal bond to 0.1 NEAR (governance parameter change, executed).
-- **Proposal #1** — dispute on `VP-000012`: the seller (a party) filed the escalation; the **other two council
-  members approved** (the proposing party recused itself) → the DAO executed `resolve_review(VP-000012, 60)`
-  on-chain → exact split: seller **+69 tUSD**, buyer **+46 tUSD** of the 115 tUSD escrow.
-- **Proposal #2** — treasury spend: 0.2 NEAR from the board account to the logistics partner
-  (arbitration participation incentive) — executed via Transfer proposal.
-- **Platform fees → treasury**: completing `VP-000006` paid the 5 tUSD fee to the board account. (First attempt
-  failed because the treasury wasn't registered in the token — the payout rolled back safely and the new
-  permissionless `retry_platform_payout` recovered the funds on-chain: treasury **+5 tUSD**.)
-
-The escrow contract's `get_gov_info` shows `arbiter`/`treasury` = the DAO; the platform owner can appoint the board
-but **cannot resolve disputes** — that power is gone by design.
-
-Explorer: <https://testnet.near.org/accounts/sweeft.testnet>
+The escrow contract's `get_gov_info` shows `arbiter`/`treasury` = the DAO; the platform owner can appoint
+the board but **cannot resolve disputes** — that power is gone by design.
 
 ## Architecture
 
 ```
 contracts/sweeft/     Rust (near-sdk) escrow contract — funds & authorization source of truth
-contracts/test-token/  Legacy NEP-141 tUSD (only for pre-native escrows)
 contracts/near-budget/ Native-NEAR co-pilot budget (deposit / agent pay / withdraw)
 wasi/sweeft-verify/   TEE verification program → wasm32-wasip2, published on OutLayer
 sweeft/               Django modular monolith (product coordinator + projection)
@@ -177,16 +98,14 @@ execution of the configured verification code; the buyer's confirmation remains 
 
 ## Getting test NEAR
 
-Escrows, marketplace prices, logistics fees, platform fees, arbitration stakes, and co-pilot
+Escrows, marketplace prices, logistics fees, platform fees, and co-pilot
 budgets all use **native NEAR**. There is no project token to mint, import, or register.
 
 - **Already have testnet NEAR?** Connect your wallet and go — the header chip shows your native balance.
 - **Fresh wallet?** Click **“Get test NEAR”** in the header or dashboard to open the public
   [NEAR testnet faucet](https://near-faucet.io/). Any testnet wallet works.
 
-Legacy escrows created before the native migration still display and settle through their original
-NEP-141 token (`tusd.steepdata3968.testnet`); new escrows pass `token: "near"` and fund with the
-payable `fund_escrow` method.
+New escrows pass `token: "near"` and fund with the payable `fund_escrow` method.
 
 ## Setup
 
@@ -207,7 +126,6 @@ Environment variables (`.env`, never commit real values):
 |---|---|
 | `SWEEFT_CONTRACT` | deployed escrow account |
 | `AI_BUDGET_CONTRACT` | native-NEAR co-pilot budget account |
-| `TUSD_CONTRACT` | legacy NEP-141 token account (old escrows only) |
 | `OUTLAYER_CONTRACT` / `OUTLAYER_PROJECT` | OutLayer receiver + published verification project |
 | `RELAYER_ENABLED` / `RELAYER_ACCOUNT` / `RELAYER_PRIVATE_KEY` | platform relayer (see below) |
 | `NEAR_NETWORK`, `NEAR_RPC_URL`, `DJANGO_DEBUG`, `DJANGO_SECRET_KEY` | standard config |
@@ -240,7 +158,6 @@ cargo install cargo-near          # or grab the prebuilt release
 
 (cd contracts/sweeft && cargo near build non-reproducible-wasm --no-abi)
 (cd contracts/near-budget && cargo near build non-reproducible-wasm --no-abi)
-# legacy token only if you need it: (cd contracts/test-token && cargo near build non-reproducible-wasm --no-abi)
 
 # deploy + init (see scripts/deploy_testnet.sh for the full flow)
 near contract deploy <acct> use-file target/near/sweeft.wasm without-init-call ...
@@ -314,8 +231,8 @@ partner API (the same surface a real GIG/DHL/FedEx integration would use) and ho
 state. Start it next to `runserver`:
 
 ```bash
-python3 manage.py seed_demo --issue-carrier-key          # one-time: prints the vp_… key
-SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+python3 manage.py seed_demo --issue-carrier-key          # one-time: prints the swft_… key
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=swft_… \
   python3 tools/demo-carrier/simulator.py
 ```
 
@@ -348,7 +265,7 @@ Over-cap and no-budget paths refused correctly.
 ### Governance console
 
 - `/governance/` — board account, council members + threshold, all proposals with votes and statuses,
-  treasury balances (NEAR + tUSD), treasury Transfer proposals, and the on-chain wiring
+  treasury balance, treasury Transfer proposals, and the on-chain wiring
   (`arbiter`/`treasury`).
 - Escrow page — “Review board” panel appears while a dispute is open: escalation form for the parties,
   Approve/Reject for council members, live vote chips.
@@ -358,7 +275,7 @@ Over-cap and no-budget paths refused correctly.
 ## Security & trust boundaries (post-review hardening)
 
 A pre-submission review surfaced real exploit paths; all critical findings are fixed and verified
-on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the commits):
+on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md`):
 
 | Finding | Fix |
 |---|---|
@@ -366,7 +283,7 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Owner could drain escrowed NEAR via `withdraw` | **Removed.** No owner sweep exists; value leaves only through settlement/board paths. |
 | Owner could retake dispute power via `set_arbiter(owner)` | `set_arbiter`/`set_treasury` are **bootstrap-only for the owner**; afterwards only the current board/treasury can rotate them. Verified live: owner call reverts. |
 | Double payouts from failed buyer legs / folded logistics | Independent per-leg settlement: the buyer remainder is stored and retried via permissionless `retry_review_buyer_payout`; resolution paths mark folded logistics paid; `settle_logistics` is state-gated; reputation counters are exactly-once and value-filtered. |
-| Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR or the configured legacy token). |
+| Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR). |
 | TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline and pickup-before-delivery. |
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
@@ -396,7 +313,7 @@ Residual (disclosed) risks:
 ## Tests
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
-  asserting exact token balances at each settlement step.
+  asserting exact balances at each settlement step.
 - Django: `python3 manage.py test` — carrier state-machine guards (forward-only, idempotent,
   failure-terminal), partner API auth + event round-trips, escrow tracking lookup, the
   verification payload matching the OutLayer invariants, and the relayer (chain-conditioned
@@ -405,7 +322,7 @@ Residual (disclosed) risks:
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
 - Rust unit tests: `cargo test` in `contracts/sweeft` — state machine, permissionless
-  verification/settlement/release gates, inspection-clock behavior (22 tests).
+  verification/settlement/release gates, inspection-clock behavior (47 tests).
 
 ## Known limitations / roadmap
 

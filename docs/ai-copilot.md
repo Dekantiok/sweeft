@@ -1,7 +1,7 @@
 # Trade co-pilot (AI agent)
 
 **The agent proposes; the wallet authorizes.** The AI never holds user keys. Every
-money-moving step is either completed in the existing wallet modal (`VPApp`) or —
+money-moving step is either completed in the existing wallet modal (`SweftApp`) or —
 for co-pilot payments — bounded on-chain by a **native-NEAR budget** the user funds
 with a single wallet signature. The budget contract is the security boundary.
 
@@ -102,7 +102,7 @@ even a fully compromised agent key can never exceed the deposited budget.
   → proposal card with total cost and affordability
 - “check my balance” → native NEAR balance reply
 - “score for seller.steepdata3968.testnet” → on-chain trust summary
-- “dispute VP-000006 goods arrived damaged” → dispute proposal card
+- “dispute SWFT-100185 goods arrived damaged” → dispute proposal card
 - “pay 0.025 NEAR to seller.steepdata3968.testnet for invoice 12” → payment card →
   “Pay now” settles from the deposited budget (deposit flow if none yet)
 - Real provider (NEAR AI Cloud) verified: `run_agent` returned

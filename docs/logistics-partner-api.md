@@ -24,7 +24,7 @@ python3 manage.py seed_demo --issue-carrier-key
 
 ## Endpoints (key-authenticated)
 
-Authenticate with `X-Api-Key: vp_…`.
+Authenticate with `X-Api-Key: swft_…`.
 
 | Method | Path | Description |
 |---|---|---|
@@ -52,7 +52,7 @@ database state; run it next to `runserver`:
 cd sweeft && python3 manage.py runserver 0.0.0.0:8000
 
 # terminal 2 — the carrier (SIMULATED). Key from `seed_demo --issue-carrier-key`.
-SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=swft_… \
   python3 tools/demo-carrier/simulator.py
 ```
 
