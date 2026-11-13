@@ -13,7 +13,12 @@ The contract is the financial and authorization source of truth.
 | `accept_escrow(escrow_id, invite_secret?)` | buyer / invitee | `Approved` |
 | `reject_escrow(escrow_id)` | buyer | `Rejected` |
 | `cancel_escrow(escrow_id)` | seller | `Cancelled` (pre-acceptance) |
-| `ft_on_transfer(sender_id, amount, msg)` | token contract | validates & records funding (`msg = escrow_id`) |
+| `fund_escrow(escrow_id)` — payable | buyer | native-NEAR funding; attached deposit must equal `total_amount` |
+| `ft_on_transfer(sender_id, amount, msg)` | token contract | legacy NEP-141 funding (`msg = escrow_id`) |
+
+**Currency model:** new escrows use `token: "near"` and amounts in yoctoNEAR. A single `payout`
+helper transfers native NEAR for those escrows and calls `ft_transfer` for legacy token escrows;
+no state migration is required.
 
 ### Logistics & verification
 | Method | Who | Effect |
@@ -47,8 +52,8 @@ The contract is the financial and authorization source of truth.
 - Every state transition validated; permissions enforced on-chain; beneficiary addresses immutable
   after funding.
 - Verification flags are written **only** by the `#[private]` OutLayer callback.
-- Idempotency: `*_paid` flags + state checks prevent double settlement; failed FT transfers roll
-  their flags back (`on_payout_result`) so a payout is never falsely reported.
+- Idempotency: `*_paid` flags + state checks prevent double settlement; failed native or FT
+  transfers roll their flags back (`on_payout_result`) so a payout is never falsely reported.
 - No keys or secrets in the contract; no backend endpoint can release funds.
 - Duplicate funding rejected by state (`Approved` → `Funded` once); wrong token / amount / buyer
   refunded by `ft_on_transfer`.

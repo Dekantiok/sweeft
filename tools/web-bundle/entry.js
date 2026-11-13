@@ -121,6 +121,18 @@ async function callMethod(contractId, method, args, gas = '100000000000000', dep
   };
 }
 
+// Native NEAR transfer (used for escrow funding and direct co-pilot payments).
+async function sendNear(receiverId, amountYocto) {
+  const wallet = await selectedWallet();
+  const action = transactions.transfer(BigInt(amountYocto));
+  const res = await wallet.signAndSendTransaction({ receiverId, actions: [action] });
+  return {
+    txHash: res?.transaction?.hash || res?.transaction_outcome?.id || null,
+    successValue: decodeSuccessValue(res),
+    raw: res,
+  };
+}
+
 async function signLogin(message, recipient, nonce) {
   const wallet = await selectedWallet();
   const res = await wallet.signMessage({ message, recipient, nonce });
@@ -147,5 +159,6 @@ export {
   signOut,
   isConnected,
   callMethod,
+  sendNear,
   signLogin,
 };

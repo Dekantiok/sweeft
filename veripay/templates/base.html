@@ -28,9 +28,9 @@
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261113b">
-  <script src="{% static 'js/veripay-wallet.js' %}?v=20261112k"></script>
-  <script src="{% static 'js/app.js' %}?v=20261113b"></script>
-  <script src="{% static 'js/chat.js' %}?v=20261113c"></script>
+  <script src="{% static 'js/veripay-wallet.js' %}?v=20261113c"></script>
+  <script src="{% static 'js/app.js' %}?v=20261113c"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261113d"></script>
 </head>
 <body class="h-full bg-slate-950 text-slate-100 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ VERIPAY_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
   <style>
@@ -109,7 +109,7 @@
         <div class="flex-1"></div>
         <div id="wallet-box" class="flex items-center gap-2">
           {% if wallet_account %}
-            <span id="tusd-balance" title="tUSD balance (testnet demo token)" class="hidden sm:inline-block text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1 whitespace-nowrap">… tUSD</span>
+            <span id="tusd-balance" title="Native NEAR balance" class="hidden sm:inline-block text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1 whitespace-nowrap">… NEAR</span>
             <div class="relative">
               <button onclick="toggleAccountMenu(event)" class="flex items-center gap-2 text-xs text-slate-200 border border-slate-700 rounded-full px-3 py-1.5 hover:border-emerald-500 hover:text-emerald-300 transition-colors">
                 <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
@@ -128,7 +128,7 @@
                     <a href="/disputes/">Disputes</a>
                     <a href="/ops/">Ops console</a>
                   {% endif %}
-                  <button id="faucet-btn" onclick="VPApp.faucet()">Get test tUSD</button>
+                  <button id="faucet-btn" onclick="VPApp.faucet()">Get test NEAR</button>
                   <button class="danger" onclick="VPApp.disconnect()">Disconnect</button>
                 </div>
               </div>
@@ -170,9 +170,9 @@
       <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-wrap gap-4 items-center">
         <span class="text-emerald-700 font-medium">Testnet MVP</span>
         <span>Contract: <code>{{ VERIPAY_CONTRACT|default:"not deployed yet" }}</code></span>
-        <span>Token: <code>{{ TUSD_CONTRACT|default:"not deployed yet" }}</code></span>
+        <span>Legacy token: <code>{{ TUSD_CONTRACT|default:"not deployed yet" }}</code></span>
         <span>OutLayer: <code>{{ OUTLAYER_CONTRACT }}</code></span>
-        <span class="text-slate-400">tUSD is a testnet demo token — get it with “Get test tUSD” in the header. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine.</span>
+        <span class="text-slate-400">Escrows use native NEAR — no token mint required. Get test NEAR from the public faucet. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine. Legacy tUSD escrows remain readable.</span>
       </div>
     </footer>
   </div>

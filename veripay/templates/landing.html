@@ -60,68 +60,76 @@
     </p>
     <ul class="text-sm text-slate-600 mt-3 space-y-1 list-disc list-inside">
       <li>Check a seller's wallet reputation before you deal</li>
-      <li>Goods and services, prices in test tUSD</li>
+      <li>Goods and services, priced in native NEAR</li>
       <li>Request to buy — the seller issues the escrow in one click</li>
     </ul>
     <a href="/market/" class="mt-5 inline-block text-center border border-slate-900 hover:bg-slate-900 hover:text-white rounded-lg px-4 py-2 text-sm font-medium">Explore the marketplace →</a>
   </div>
 </section>
 
-<section class="mt-12">
-  <h2 class="text-lg font-semibold">How a trade runs</h2>
-  <div class="grid sm:grid-cols-4 gap-4 mt-4">
-    <div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-semibold text-emerald-700">1 · Agree</div>
-      <p class="text-sm text-slate-600 mt-1">Seller creates the agreement: product, price, logistics fee, platform fee, deadlines.</p>
-    </div>
-    <div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-semibold text-emerald-700">2 · Fund</div>
-      <p class="text-sm text-slate-600 mt-1">Buyer accepts and funds the exact total in tUSD — held by the contract, not by us.</p>
-    </div>
-    <div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-semibold text-emerald-700">3 · Ship &amp; verify</div>
-      <p class="text-sm text-slate-600 mt-1">Logistics provider ships; OutLayer's TEE verifies the carrier report on-chain.</p>
-    </div>
-    <div class="bg-white rounded-xl border border-slate-200 p-4">
-      <div class="text-sm font-semibold text-emerald-700">4 · Settle</div>
-      <p class="text-sm text-slate-600 mt-1">Verified pickup pays logistics. Delivery + buyer confirmation pays seller and platform fee.</p>
-    </div>
+<section class="mt-14">
+  <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+    <h2 class="text-lg font-semibold">How a trade runs</h2>
+    <p class="text-xs text-slate-500">One flow — enforced end-to-end by the escrow contract.</p>
+  </div>
+  <div class="relative mt-6">
+    <div class="pointer-events-none absolute inset-x-0 top-4 hidden h-px bg-gradient-to-r from-emerald-800/80 via-slate-800 to-transparent sm:block" aria-hidden="true"></div>
+    <ol class="relative grid gap-7 sm:grid-cols-4 sm:gap-6">
+      <li>
+        <span class="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-700/60 bg-slate-950 text-xs font-bold text-emerald-300">1</span>
+        <h3 class="mt-3 text-sm font-semibold text-white">Agree</h3>
+        <p class="mt-1 text-sm leading-relaxed text-slate-600">Seller creates the agreement: product, price, logistics fee, platform fee, deadlines.</p>
+      </li>
+      <li>
+        <span class="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-700/60 bg-slate-950 text-xs font-bold text-emerald-300">2</span>
+        <h3 class="mt-3 text-sm font-semibold text-white">Fund</h3>
+        <p class="mt-1 text-sm leading-relaxed text-slate-600">Buyer accepts and funds the exact total in NEAR — held by the contract, not by us.</p>
+      </li>
+      <li>
+        <span class="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-700/60 bg-slate-950 text-xs font-bold text-emerald-300">3</span>
+        <h3 class="mt-3 text-sm font-semibold text-white">Ship &amp; verify</h3>
+        <p class="mt-1 text-sm leading-relaxed text-slate-600">Logistics provider ships; OutLayer's TEE verifies the carrier report on-chain.</p>
+      </li>
+      <li>
+        <span class="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-700/60 bg-slate-950 text-xs font-bold text-emerald-300">4</span>
+        <h3 class="mt-3 text-sm font-semibold text-white">Settle</h3>
+        <p class="mt-1 text-sm leading-relaxed text-slate-600">Verified pickup pays logistics. Delivery + buyer confirmation pays seller and platform fee.</p>
+      </li>
+    </ol>
   </div>
 </section>
 
-<section class="grid md:grid-cols-3 gap-5 mt-10">
-  <div class="bg-slate-900 text-white rounded-2xl p-5">
-    <h3 class="font-semibold">Reputation you can verify</h3>
-    <p class="text-sm text-slate-300 mt-2">
-      Every completed deal moves on-chain counters on your wallet. Buyers see who delivers;
-      sellers see who pays. No stars to game — just contract facts.
-    </p>
-    <a class="inline-block mt-3 text-sm text-emerald-300" href="/u/seller.steepdata3968.testnet/">See a sample profile →</a>
-  </div>
-  <div class="bg-white border border-slate-200 rounded-2xl p-5">
-    <h3 class="font-semibold">Logistics partners</h3>
-    <p class="text-sm text-slate-600 mt-2">
-      Approved providers get paid when carrier pickup is verified — not when a label is printed.
-      Register your company and manage shipments from the partner portal.
-    </p>
-    <div class="mt-3 flex gap-3 text-sm">
-      <a class="text-emerald-700" href="/logistics/">Provider directory →</a>
-      <a class="text-emerald-700" href="/partners/register/">Become a partner →</a>
+<section class="mt-14 border-t border-slate-800 pt-8">
+  <div class="grid gap-8 md:grid-cols-3 md:gap-10">
+    <div>
+      <h3 class="text-sm font-semibold text-white">Reputation you can verify</h3>
+      <p class="mt-2 text-sm leading-relaxed text-slate-600">
+        Every completed deal moves on-chain counters on your wallet. Buyers see who delivers;
+        sellers see who pays. No stars to game — just contract facts.
+      </p>
+      <a class="mt-2 inline-block text-sm font-medium" href="/u/seller.steepdata3968.testnet/">See a sample profile →</a>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-white">Logistics partners</h3>
+      <p class="mt-2 text-sm leading-relaxed text-slate-600">
+        Approved providers get paid when carrier pickup is verified — not when a label is printed.
+        Register your company and manage shipments from the partner portal.
+      </p>
+      <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
+        <a href="/logistics/">Provider directory →</a>
+        <a href="/partners/register/">Become a partner →</a>
+      </div>
+    </div>
+    <div>
+      <h3 class="text-sm font-semibold text-white">What is real (and what is simulated)</h3>
+      <p class="mt-2 text-sm leading-relaxed text-slate-600">
+        <b class="font-semibold text-emerald-300">Real:</b> NEAR testnet escrow, native NEAR funding,
+        wallet-signed authorization, OutLayer TEE attestations.
+      </p>
+      <p class="mt-2 text-sm leading-relaxed text-slate-600">
+        <b class="font-semibold text-amber-300">Simulated:</b> Demo Carrier tracking — labelled everywhere it appears.
+      </p>
     </div>
   </div>
-  <div class="bg-white border border-slate-200 rounded-2xl p-5">
-    <h3 class="font-semibold">What is real (and what is simulated)</h3>
-    <ul class="text-sm text-slate-600 mt-2 space-y-1 list-disc list-inside">
-      <li><b>Real:</b> NEAR testnet escrow, NEP-141 funding, wallet-signed authorization, OutLayer TEE attestations.</li>
-      <li><b>Simulated:</b> Demo Carrier tracking — labelled everywhere it appears.</li>
-    </ul>
-  </div>
 </section>
-
-<footer class="mt-12 border-t border-slate-200 pt-5 text-xs text-slate-500 flex flex-wrap gap-4">
-  <span>Contract: <code>{{ VERIPAY_CONTRACT }}</code></span>
-  <span>Token: <code>{{ TUSD_CONTRACT }}</code></span>
-  <a class="text-emerald-700" href="/logistics/">Logistics directory</a>
-  <a class="text-emerald-700" href="/partners/register/">Become a logistics partner</a>
-</footer>
 {% endblock %}

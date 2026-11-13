@@ -7,18 +7,19 @@ total_funded = seller_amount + logistics_amount + platform_fee
 platform_fee = seller_amount × platform_fee_bps / 10_000     (default bps = 500 → 5%)
 ```
 
-All amounts are in tUSD (6 decimals) in the MVP. Network gas is separate and borne by the
-transacting wallet. Fees are disclosed before funding and enforced by the contract; changing the
-fee bps affects only future agreements.
+Amounts are in **native NEAR (yoctoNEAR, 24 decimals)** for new escrows. Legacy tUSD escrows keep
+their original 6-decimal units. Network gas is separate and borne by the transacting wallet. Fees
+are disclosed before funding and enforced by the contract; changing the fee bps affects only future
+agreements.
 
-Example (demo values):
+Example (native demo values):
 
-| Allocation | tUSD |
+| Allocation | NEAR |
 |---|---|
-| Product / seller | 850.00 |
-| Logistics | 10.00 |
-| Platform fee (5%) | 42.50 |
-| **Total funded** | **902.50** |
+| Product / seller | 0.10 |
+| Logistics | 0.01 |
+| Platform fee (5%) | 0.005 |
+| **Total funded** | **0.115** |
 
 ## Milestones
 
@@ -32,9 +33,9 @@ Example (demo values):
 ## Payout destinations
 
 Beneficiaries (seller, logistics provider, platform treasury) are recorded before funding and
-enforced by the contract. No backend request can alter them after funding. Payouts are NEP-141
-`ft_transfer` calls from the contract; every transfer is idempotency-guarded by `*_paid` flags,
-and a failed transfer rolls its flag back so the payout can be retried.
+enforced by the contract. No backend request can alter them after funding. Payouts are native NEAR
+transfers for new escrows (NEP-141 `ft_transfer` for legacy escrows); every transfer is
+idempotency-guarded by `*_paid` flags, and a failed transfer rolls its flag back so it can be retried.
 
 ## Failure cases
 
@@ -42,7 +43,7 @@ and a failed transfer rolls its flag back so the payout can be retried.
 |---|---|
 | Seller does not dispatch | buyer claims `refund_buyer` after the dispatch deadline (no shipment registered); logistics forfeits |
 | Carrier reports loss/return | verification returns the status; no automatic fault assigned; review path applies |
-| Wrong/damaged goods | buyer `report_problem` → `ReviewRequired`; funds locked; disclosed operator split via `resolve_review` |
+| Wrong/damaged goods | buyer `report_problem` → `ReviewRequired`; funds locked; arbitration pool or review-board split via `resolve_review` |
 | Verification unavailable | no fabricated result: the escrow stays `Shipped`; retry or review |
 | Duplicate event / payout | rejected by state checks + `*_paid` flags |
 | FT receiver not registered | transfer fails, flag rolls back, remains retryable |

@@ -77,7 +77,7 @@ def listing_detail(request, slug: str):
             "my_request": my_request,
             "is_owner": wallet == listing.seller_account,
             "wallet_account": wallet,
-            "fmt": near.format_token,
+            "fmt": near.format_near_amount,
         },
     )
 
@@ -87,7 +87,7 @@ def listing_new(request):
     if not wallet:
         return redirect("/?connect=1")
     if request.method == "POST":
-        price = near.parse_token(request.POST.get("price_amount", "0"))
+        price = near.parse_near_amount(request.POST.get("price_amount", "0"))
         if price <= 0:
             messages.error(request, "Price must be greater than zero.")
             return redirect("listing-new")
@@ -132,7 +132,7 @@ def listing_mine(request):
             "listings": listings,
             "requests": requests,
             "wallet_account": wallet,
-            "fmt": near.format_token,
+            "fmt": near.format_near_amount,
         },
     )
 
@@ -199,12 +199,12 @@ def profile(request, account_id: str):
         {
             "profile_account": account_id,
             "rep": rep,
-            "volume_display": near.format_token((rep or {}).get("volume") or 0),
+            "volume_display": near.format_near_amount((rep or {}).get("volume") or 0),
             "listings": listings,
             "completed_count": len(completed),
             "escrow_count": len(escrows),
             "wallet_account": current_wallet(request),
-            "fmt": near.format_token,
+            "fmt": near.format_near_amount,
             "explorer_tx": near.settings.EXPLORER_URL,
         },
     )

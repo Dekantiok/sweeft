@@ -46,7 +46,7 @@
         </div>
         <div id="copilot-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px"></div>
         <form id="copilot-form" style="display:flex;gap:8px;padding:10px;border-top:1px solid ${T.border};background:${T.bgSoft}">
-          <input id="copilot-input" placeholder='Try “pay 25 tUSD to seller.steepdata3968.testnet”' style="flex:1;background:#020617;color:${T.text};border:1px solid ${T.border};border-radius:8px;padding:8px 10px;font-size:13px" autocomplete="off">
+          <input id="copilot-input" placeholder='Try “pay 0.025 NEAR to seller.steepdata3968.testnet”' style="flex:1;background:#020617;color:${T.text};border:1px solid ${T.border};border-radius:8px;padding:8px 10px;font-size:13px" autocomplete="off">
           <button style="background:#059669;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer">Send</button>
         </form>
       </div>
@@ -115,7 +115,7 @@
   function toUnits(display) {
     const clean = String(display || '0').replace(/,/g, '').trim();
     const [w = '0', f = ''] = clean.split('.');
-    return String(BigInt(w) * 1000000n + BigInt((f + '000000').slice(0, 6)));
+    return String(BigInt(w) * 10n ** 24n + BigInt((f + '0'.repeat(24)).slice(0, 24) || '0'));
   }
 
   async function execPayment(node, intentId) {
@@ -133,13 +133,13 @@
     }
   }
 
-  async function grantAndPay(node, intentId, agent, grantAmount) {
+  async function grantAndPay(node, intentId, budgetContract, grantAmount) {
     const btns = node.querySelector('.vp-btns');
     btns.style.display = 'none';
     try {
-      setStatus(node, 'Confirm the budget grant in your wallet (one signature)…');
-      await VPApp.callToken('approve', { spender: agent, amount: grantAmount }, '1', '30000000000000');
-      setStatus(node, 'Budget granted on-chain ✓ — co-pilot is paying…');
+      setStatus(node, 'Confirm your NEAR budget deposit in your wallet (one signature)…');
+      await VPApp.callContractOn(budgetContract, 'deposit', {}, grantAmount, '100000000000000');
+      setStatus(node, 'Budget deposited on-chain ✓ — co-pilot is paying…');
       await execPayment(node, intentId);
     } catch (e) {
       btns.style.display = 'flex';
@@ -152,7 +152,7 @@
     btns.style.display = 'none';
     try {
       setStatus(node, 'Confirm the transfer in your wallet…');
-      const res = await VPApp.callToken('ft_transfer', { receiver_id: to, amount, memo: memo || null }, '1', '50000000000000');
+      const res = await VPApp.sendNear(to, amount);
       txLink(node, res && res.txHash);
     } catch (e) {
       btns.style.display = 'flex';
@@ -165,10 +165,10 @@
       <div style="border:1px solid #065f46;background:rgba(6,78,59,.28);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:4px">
         <div style="font-size:13px;font-weight:600;color:#6ee7b7">⚡ Co-pilot payment</div>
         <div style="font-size:12px">To: <code>${escapeHtml(c.to)}</code></div>
-        <div style="font-size:12px">Amount: <b>${escapeHtml(c.amount_display)} tUSD</b>${c.memo ? ` · ${escapeHtml(c.memo)}` : ''}</div>
-        <div style="font-size:11px;color:${T.dim}">Your co-pilot budget: ${escapeHtml(c.allowance_display)} tUSD · per-payment limit ${escapeHtml(c.max_payment_display)} tUSD</div>
+        <div style="font-size:12px">Amount: <b>${escapeHtml(c.amount_display)} NEAR</b>${c.memo ? ` · ${escapeHtml(c.memo)}` : ''}</div>
+        <div style="font-size:11px;color:${T.dim}">Your co-pilot budget: ${escapeHtml(c.allowance_display)} NEAR · per-payment limit ${escapeHtml(c.max_payment_display)} NEAR</div>
         <div class="vp-btns" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"></div>
-        <div style="font-size:11px;color:${T.dim}">One wallet approval sets the budget; the token contract enforces it on-chain — revoke any time by approving 0.</div>
+        <div style="font-size:11px;color:${T.dim}">Deposit exactly the NEAR the co-pilot may spend; the budget contract enforces your limit — withdraw the unspent remainder to revoke.</div>
         <div class="vp-status" style="font-size:11px;color:${T.dim}"></div>
       </div>
     `);
@@ -179,9 +179,9 @@
       btns.appendChild(pay);
     } else {
       const wrap = el('<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>');
-      const input = el(`<input value="${escapeHtml(c.grant_display)}" title="Budget to grant the co-pilot (tUSD)" style="width:6rem;background:#020617;border:1px solid #334155;border-radius:8px;padding:6px 8px;font-size:12.5px;color:#e2e8f0">`);
+      const input = el(`<input value="${escapeHtml(c.grant_display)}" title="Budget to grant the co-pilot (NEAR)" style="width:6rem;background:#020617;border:1px solid #334155;border-radius:8px;padding:6px 8px;font-size:12.5px;color:#e2e8f0">`);
       const grant = el('<button style="background:#059669;color:#fff;border:none;border-radius:8px;padding:7px 10px;font-size:12.5px;cursor:pointer">Grant budget &amp; pay</button>');
-      grant.onclick = () => grantAndPay(node, c.intent_id, c.agent, toUnits(input.value));
+      grant.onclick = () => grantAndPay(node, c.intent_id, c.budget_contract, toUnits(input.value));
       wrap.appendChild(input);
       wrap.appendChild(grant);
       btns.appendChild(wrap);
@@ -206,9 +206,9 @@
       if (c.listing) lines.push(`<b>${escapeHtml(c.listing)}</b>`);
       if (c.seller) lines.push(`<span style="font-size:12px">Seller: <code>${escapeHtml(c.seller)}</code></span>`);
       if (c.seller_score) lines.push(`<span style="font-size:12px">${escapeHtml(c.seller_score)}</span>`);
-      if (c.totals) lines.push(`<span style="font-size:12px">Total: ${Number(c.totals.total_amount) / 1e6} tUSD (seller ${Number(c.totals.seller_amount) / 1e6} + logistics ${Number(c.totals.logistics_amount) / 1e6} + fee ${Number(c.totals.platform_fee) / 1e6})</span>`);
-      if (c.buyer_balance) lines.push(`<span style="font-size:12px">Your balance: ${escapeHtml(c.buyer_balance)} tUSD — affordable: ${c.affordable ? 'yes' : 'no'}</span>`);
-      if (c.total_amount) lines.push(`<span style="font-size:12px">Total to fund: ${Number(c.total_amount) / 1e6} tUSD</span>`);
+      if (c.totals) lines.push(`<span style="font-size:12px">Total: ${Number(c.totals.total_amount) / 1e24} NEAR (seller ${Number(c.totals.seller_amount) / 1e24} + logistics ${Number(c.totals.logistics_amount) / 1e24} + fee ${Number(c.totals.platform_fee) / 1e24})</span>`);
+      if (c.buyer_balance) lines.push(`<span style="font-size:12px">Your balance: ${escapeHtml(c.buyer_balance)} NEAR — affordable: ${c.affordable ? 'yes' : 'no'}</span>`);
+      if (c.total_amount) lines.push(`<span style="font-size:12px">Total to fund: ${Number(c.total_amount) / 1e24} NEAR</span>`);
       if (c.reason) lines.push(`<span style="font-size:12px">Claim: ${escapeHtml(c.reason.slice(0, 220))}</span>`);
       if (c.note) lines.push(`<span style="font-size:11px;color:${T.dim}">${escapeHtml(c.note)}</span>`);
       const card = el(`<div style="border:1px solid #065f46;background:rgba(6,78,59,.2);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:4px">

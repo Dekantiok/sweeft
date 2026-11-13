@@ -19,7 +19,7 @@ class Listing(models.Model):
     kind = models.CharField(max_length=16, choices=KIND_CHOICES, default="goods")
     category = models.CharField(max_length=80, blank=True)
     description = models.TextField(blank=True)
-    price_amount = models.CharField(max_length=40, help_text="tUSD units (6 decimals), string")
+    price_amount = models.CharField(max_length=40, help_text="native NEAR amount in yoctoNEAR, string")
     location = models.CharField(max_length=120, blank=True)
     photos = models.JSONField(default=list, blank=True, help_text="off-chain image references")
     dispatch_days = models.PositiveIntegerField(default=7)
@@ -52,9 +52,9 @@ class Listing(models.Model):
 
     @property
     def price_display(self) -> str:
-        from apps.escrow.near import format_token
+        from apps.escrow.near import format_near_amount
 
-        return format_token(self.price_amount)
+        return format_near_amount(self.price_amount)
 
 
 class PurchaseRequest(models.Model):

@@ -48,7 +48,7 @@
           <span class="text-slate-500">{{ l.get_kind_display }}</span>
         </div>
         <a href="/market/{{ l.slug }}/" class="block font-medium mt-1">{{ l.title }}</a>
-        <div class="text-sm text-slate-600 mt-1">{{ l.price_display }} tUSD</div>
+        <div class="text-sm text-slate-600 mt-1">{{ l.price_display }} NEAR</div>
         <div class="flex gap-2 mt-3">
           {% if l.status == 'active' %}
             <button onclick="setStatus('{{ l.slug }}','paused')" class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100">Pause</button>

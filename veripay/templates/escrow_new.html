@@ -22,12 +22,12 @@
     </div>
     <div class="grid sm:grid-cols-2 gap-4">
       <div>
-        <label class="block text-sm font-medium mb-1">Seller amount (tUSD)</label>
-        <input id="f-seller" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.amount }}" placeholder="850.00">
+        <label class="block text-sm font-medium mb-1">Seller amount (NEAR)</label>
+        <input id="f-seller" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.amount }}" placeholder="0.10">
       </div>
       <div>
-        <label class="block text-sm font-medium mb-1">Logistics fee (tUSD)</label>
-        <input id="f-logistics" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="10.00">
+        <label class="block text-sm font-medium mb-1">Logistics fee (NEAR)</label>
+        <input id="f-logistics" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="0.01">
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Dispatch deadline</label>
@@ -73,7 +73,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  const DECIMALS = 6;
+  const DECIMALS = 24;
   function toUnits(text) {
     const clean = String(text || '0').replace(/,/g, '').trim();
     if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return 0n;
@@ -96,7 +96,7 @@
     try {
       const seller = toUnits(document.getElementById('f-seller').value);
       const fee = seller * 5n / 100n;
-      document.getElementById('fee-value').textContent = (Number(fee) / 10 ** DECIMALS).toFixed(2) + ' tUSD';
+      document.getElementById('fee-value').textContent = (Number(fee) / 10 ** DECIMALS).toFixed(6) + ' NEAR';
     } catch (e) { document.getElementById('fee-value').textContent = '—'; }
   }
 
@@ -143,7 +143,7 @@
         logistics_amount: logisticsAmount.toString(),
         buyer: buyer || null,
         invite_hash: inviteHash,
-        token: c.tusd_contract,
+        token: 'near', // native NEAR escrow — no token mint or registration
         dispatch_deadline_ms: new Date(deadline + 'T23:59:59Z').getTime(),
         inspection_period_ms: inspectionDays * 86400000,
         terms_hash: await sha256Hex(terms),

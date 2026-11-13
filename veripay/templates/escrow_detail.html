@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load money %}
 {% block title %}{{ agreement.escrow_id|default:escrow_id }} — VeriPay{% endblock %}
 {% block content %}
 {% with chain_state=chain.state|default:agreement.state %}
@@ -191,10 +192,10 @@
       <tbody class="divide-y divide-slate-100">
         <tr><td class="py-1.5 text-slate-500">Seller</td><td class="py-1.5"><code>{{ chain.seller|default:agreement.seller_account }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Buyer</td><td class="py-1.5"><code>{{ chain.buyer|default:agreement.buyer_account|default:"— awaiting acceptance" }}</code></td></tr>
-        <tr><td class="py-1.5 text-slate-500">Seller amount</td><td class="py-1.5">{{ fmt|default:"" }}{{ chain.seller_amount }}</td></tr>
-        <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount }}</td></tr>
-        <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee }}</td></tr>
-        <tr><td class="py-1.5 text-slate-500">Total to fund</td><td class="py-1.5 font-semibold">{{ chain.total_amount }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Seller amount</td><td class="py-1.5">{{ chain.seller_amount|money:chain.token }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount|money:chain.token }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee|money:chain.token }}</td></tr>
+        <tr><td class="py-1.5 text-slate-500">Total to fund</td><td class="py-1.5 font-semibold">{{ chain.total_amount|money:chain.token }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Token</td><td class="py-1.5"><code>{{ chain.token|default:agreement.token_contract }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Logistics provider</td><td class="py-1.5"><code>{{ chain.logistics_provider|default:"—" }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Tracking</td><td class="py-1.5">{{ chain.tracking_number|default:"—" }}</td></tr>
@@ -240,7 +241,7 @@
     <h2 class="font-semibold">Settlement records</h2>
     {% if settlements %}
       <ul class="mt-2 text-sm space-y-1">
-        {% for s in settlements %}<li>{{ s.party }} → <code>{{ s.account_id }}</code> · {{ s.amount }} ({{ s.status }})</li>{% endfor %}
+        {% for s in settlements %}<li>{{ s.party }} → <code>{{ s.account_id }}</code> · {{ s.amount|money:chain.token }} ({{ s.status }})</li>{% endfor %}
       </ul>
     {% else %}<p class="text-sm text-slate-500 mt-2">Nothing settled yet.</p>{% endif %}
   </section>
@@ -264,6 +265,12 @@
   const GOV_BOND = "{{ gov.proposal_bond_yocto|default:'0' }}";
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
+  function fmtAmount(value) {
+    if (CHAIN && CHAIN.token === 'near') {
+      return (Number(value) / 1e24).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' NEAR';
+    }
+    return (Number(value) / 1e6).toLocaleString() + ' tUSD';
+  }
   function addButton(label, fn, style='primary') {
     const cls = style === 'primary'
       ? 'bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-sm font-medium transition-colors'
@@ -290,7 +297,7 @@
       addButton('Accept agreement', () => doAccept(null));
     }
     if (state === 'Approved' && isBuyer) {
-      addButton('Fund ' + (Number(CHAIN.total_amount) / 1e6).toLocaleString() + ' tUSD', doFund);
+      addButton('Fund ' + fmtAmount(CHAIN.total_amount), doFund);
     }
     if (state === 'Funded' && isSeller) {
       const input = el('<input class="flex-1 min-w-[11rem] border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500" placeholder="Provider wallet (e.g. log.testnet)">');
@@ -362,14 +369,20 @@
 
   async function doFund() {
     try {
-      status('Funding escrow with tUSD…');
-      const c = await VPApp.cfg();
-      await VPApp.callToken('ft_transfer_call', {
-        receiver_id: c.veripay_contract,
-        amount: CHAIN.total_amount,
-        msg: AGREEMENT.escrow_id,
-        memo: null,
-      }, '1');
+      if (CHAIN.token === 'near') {
+        status('Funding escrow with native NEAR…');
+        await VPApp.callContract('fund_escrow', { escrow_id: AGREEMENT.escrow_id }, '100000000000000', CHAIN.total_amount);
+      } else {
+        // Legacy NEP-141 escrows keep their original funding path.
+        status('Funding escrow with tUSD…');
+        const c = await VPApp.cfg();
+        await VPApp.callToken('ft_transfer_call', {
+          receiver_id: c.veripay_contract,
+          amount: CHAIN.total_amount,
+          msg: AGREEMENT.escrow_id,
+          memo: null,
+        }, '1');
+      }
       status('Funded — refreshing…'); setTimeout(() => window.location.reload(), 3000);
     } catch (e) { status(''); alert('Funding failed: ' + e.message); }
   }

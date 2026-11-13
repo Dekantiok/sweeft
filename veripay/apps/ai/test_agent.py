@@ -28,11 +28,11 @@ class ToolTests(TestCase):
     def setUpTestData(cls):
         Listing.objects.create(
             seller_account="seller.testnet", title="Solar inverter batch", kind="goods", category="energy",
-            description="5kVA units", price_amount="1200000000", location="Abuja",
+            description="5kVA units", price_amount="1200000000000000000000000", location="Abuja",
         )
         Listing.objects.create(
             seller_account="cheap.testnet", title="Cotton fabric", kind="goods", category="textiles",
-            description="200 units", price_amount="850000000", location="Lagos",
+            description="200 units", price_amount="850000000000000000000000", location="Lagos",
         )
 
     def test_search_ranks_by_reputation(self):
@@ -61,7 +61,7 @@ class ToolTests(TestCase):
 
     def test_price_filter(self):
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep()):
-            result = tools.search_listings(query="", max_price=900)
+            result = tools.search_listings(query="", max_price=0.9)
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["results"][0]["title"], "Cotton fabric")
 
@@ -75,9 +75,9 @@ class ToolTests(TestCase):
             tools.execute_tool("send_funds_to_anyone", {}, "buyer.testnet")
 
     def test_balance(self):
-        with mock.patch("apps.ai.tools.near.token_balance", return_value="500000000"):
+        with mock.patch("apps.ai.tools.near.native_balance", return_value="500000000000000000000000000"):
             result = tools.check_my_balance(wallet="me.testnet")
-        self.assertEqual(result["balance"], "500000000")
+        self.assertEqual(result["balance"], "500000000000000000000000000")
         self.assertEqual(result["balance_display"], "500")
 
     def test_purchase_request_idempotent_and_owner_guard(self):
@@ -118,7 +118,7 @@ class KeywordRouteTests(TestCase):
     def setUpTestData(cls):
         Listing.objects.create(
             seller_account="seller.testnet", title="Solar inverter batch", kind="goods", category="energy",
-            description="5kVA units", price_amount="1200000000", location="Abuja",
+            description="5kVA units", price_amount="1200000000000000000000000", location="Abuja",
         )
 
     @override_settings(AI_PROVIDER="echo")
@@ -126,7 +126,7 @@ class KeywordRouteTests(TestCase):
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep(completed_as_seller=4)), mock.patch(
             "apps.ai.tools.near.token_balance", return_value="500000000000"
         ):
-            result = agent.keyword_route("buy solar inverter under 1500 tUSD", "buyer.testnet")
+            result = agent.keyword_route("buy solar inverter under 1.5 NEAR", "buyer.testnet")
         self.assertTrue(result["cards"])
         self.assertEqual(result["cards"][0]["kind"], "purchase_proposal")
         self.assertTrue(any(t["tool"] == "search_listings" for t in result["tool_trace"]))
@@ -134,7 +134,7 @@ class KeywordRouteTests(TestCase):
 
     @override_settings(AI_PROVIDER="echo")
     def test_balance_route(self):
-        with mock.patch("apps.ai.tools.near.token_balance", return_value="499680000"):
+        with mock.patch("apps.ai.tools.near.native_balance", return_value="499680000000000000000000000"):
             result = agent.keyword_route("check my balance", "buyer.testnet")
         self.assertIn("499.68", result["reply"])
 
@@ -169,33 +169,33 @@ class PaymentToolTests(TestCase):
         AI_AGENT_ACCOUNT="agent.testnet",
         AI_AGENT_PRIVATE_KEY="ed25519:dummy",
         AI_AGENT_ENABLED=True,
-        AI_AGENT_MAX_PAYMENT=100_000_000,
-        AI_AGENT_GRANT=250_000_000,
+        AI_AGENT_MAX_PAYMENT=100_000_000_000_000_000_000_000,
+        AI_AGENT_GRANT=250_000_000_000_000_000_000_000,
     )
     def test_prepare_payment_card_and_intent(self):
         from .models import PaymentIntent
 
-        with mock.patch("apps.ai.tools.allowance_of", return_value=300_000_000):
-            card = tools.prepare_payment(to="seller.testnet", amount="25", memo="invoice 12", wallet="buyer.testnet")
+        with mock.patch("apps.ai.tools.allowance_of", return_value=300_000_000_000_000_000_000_000):
+            card = tools.prepare_payment(to="seller.testnet", amount="0.025", memo="invoice 12", wallet="buyer.testnet")
         self.assertEqual(card["type"], "payment_proposal")
-        self.assertEqual(card["amount"], "25000000")
-        self.assertEqual(card["amount_display"], "25")
+        self.assertEqual(card["amount"], "25000000000000000000000")
+        self.assertEqual(card["amount_display"], "0.025")
         self.assertTrue(card["can_execute"])
-        self.assertEqual(card["allowance_display"], "300")
+        self.assertEqual(card["allowance_display"], "0.3")
         intent = PaymentIntent.objects.get(pk=card["intent_id"])
         self.assertEqual(intent.wallet, "buyer.testnet")
         self.assertEqual(intent.to_account, "seller.testnet")
         self.assertEqual(intent.status, "proposed")
 
         with mock.patch("apps.ai.tools.allowance_of", return_value=1_000_000):
-            card2 = tools.prepare_payment(to="seller.testnet", amount="25", wallet="buyer.testnet")
+            card2 = tools.prepare_payment(to="seller.testnet", amount="0.025", wallet="buyer.testnet")
         self.assertFalse(card2["can_execute"])  # allowance below amount
 
     def test_allowance_falls_back_to_zero(self):
         with override_settings(AI_AGENT_ACCOUNT="agent.testnet"):
             with mock.patch("apps.ai.tools.near.view_call", side_effect=RuntimeError("no method")):
                 self.assertEqual(tools.allowance_of("buyer.testnet"), 0)
-            with mock.patch("apps.ai.tools.near.view_call", return_value="42000000"):
+            with mock.patch("apps.ai.tools.near.view_call", return_value={"available": "42000000"}):
                 self.assertEqual(tools.allowance_of("buyer.testnet"), 42_000_000)
 
 
@@ -203,12 +203,12 @@ class PaymentRouteTests(TestCase):
     @override_settings(AI_PROVIDER="echo", AI_AGENT_ACCOUNT="agent.testnet")
     def test_pay_route_builds_payment_card(self):
         with mock.patch("apps.ai.tools.allowance_of", return_value=0):
-            result = agent.keyword_route("pay 25 tUSD to seller.testnet for invoice 12", "buyer.testnet")
+            result = agent.keyword_route("pay 0.025 NEAR to seller.testnet for invoice 12", "buyer.testnet")
         self.assertTrue(result["cards"], result["reply"])
         card = result["cards"][0]
         self.assertEqual(card["kind"], "payment_proposal")
         self.assertEqual(card["to"], "seller.testnet")
-        self.assertEqual(card["amount"], "25000000")
+        self.assertEqual(card["amount"], "25000000000000000000000")
         self.assertEqual(card["memo"], "invoice 12")
         self.assertIn("seller.testnet", result["reply"])
 
@@ -228,7 +228,7 @@ class PaymentEndpointTests(TestCase):
     def _intent(self, **kwargs):
         from .models import PaymentIntent
 
-        defaults = dict(wallet="buyer.testnet", to_account="seller.testnet", amount="25000000", memo="invoice 12")
+        defaults = dict(wallet="buyer.testnet", to_account="seller.testnet", amount="25000000000000000000000", memo="invoice 12")
         defaults.update(kwargs)
         return PaymentIntent.objects.create(**defaults)
 
@@ -284,7 +284,7 @@ class PaymentEndpointTests(TestCase):
         self.assertEqual(res.status_code, 400)
 
     def test_agent_info_endpoint(self):
-        with mock.patch("apps.ai.views.tools.allowance_of", return_value=42_000_000):
+        with mock.patch("apps.ai.views.tools.allowance_of", return_value=42_000_000_000_000_000_000_000_000):
             res = self.client.get("/api/v1/ai/agent/")
         body = res.json()
         self.assertEqual(res.status_code, 200)

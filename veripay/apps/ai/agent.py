@@ -19,13 +19,13 @@ AGENT_SYSTEM = """You are the VeriPay trade co-pilot. You propose actions; you n
 Available tools (call by returning an action object):
 - search_listings {query?, max_price?, kind?} — find ACTIVE listings ranked by seller on-chain trust
 - get_seller_score {account_id} — a wallet's on-chain trust record
-- check_my_balance {} — the buyer's tUSD balance
+- check_my_balance {} — the buyer's NEAR balance
 - get_my_trade_status {} — the buyer's open escrows, completed trades, disputes
 - send_purchase_request {listing_slug, message?} — file an off-chain purchase request for the listing owner to act on
 - prepare_purchase {listing_slug} — full purchase proposal card (seller score, totals, affordability)
 - prepare_funding {escrow_id} — accept+fund action card for an existing escrow owned by the buyer
 - prepare_dispute {escrow_id, reason} — dispute case-file card with the user's reason
-- prepare_payment {to, amount, memo?} — propose paying a NEAR account in tUSD from the budget the user granted the co-pilot (one wallet approval). The user confirms on the card; execution is capped by the platform limit and the user's on-chain allowance.
+- prepare_payment {to, amount, memo?} — propose paying a NEAR account in NEAR from the budget the user granted the co-pilot (one wallet approval). The user confirms on the card; execution is capped by the platform limit and the user's on-chain allowance.
 
 Rules:
 - Reply with exactly one JSON object: {"reply": string, "action": {"name": string, "args": object}|null}
@@ -42,7 +42,7 @@ ESCROW_RE = re.compile(r"\b(VP-\d{6})\b", re.I)
 PRICE_RE = re.compile(r"(?:under|below|max(?:imum)?|less than|cheaper than)\s*(?:t?USD\s*)?([\d,.]+)", re.I)
 SLUG_RE = re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+)+)\b", re.I)
 PAY_VERB_RE = re.compile(r"\b(pay|paying|send|sending|transfer|tip)\b", re.I)
-PAY_AMOUNT_RE = re.compile(r"([\d][\d,]*(?:\.\d+)?)\s*(?:tusd|usd|\$)", re.I)
+PAY_AMOUNT_RE = re.compile(r"([\d][\d,]*(?:\.\d+)?)\s*(?:near|tusd|usd|\$)", re.I)
 PAY_MEMO_RE = re.compile(r"\bfor\s+(.+)$", re.I)
 
 
@@ -90,7 +90,7 @@ def keyword_route(message: str, wallet: str) -> dict:
     if any(w in lowered for w in ("balance", "afford", "how much", "have i got")):
         result = execute_tool("check_my_balance", {}, wallet)
         trace.append({"tool": "check_my_balance", "kind": "read", "args": {}})
-        return {"reply": f"Your tUSD balance is {result['balance_display']} tUSD. Tell me an item and I'll check whether you can cover the full escrow total (price + logistics + platform fee).", "cards": [], "tool_trace": trace}
+        return {"reply": f"Your NEAR balance is {result['balance_display']} NEAR. Tell me an item and I'll check whether you can cover the full escrow total (price + logistics + platform fee).", "cards": [], "tool_trace": trace}
 
     # Reputation questions about a wallet.
     acct = ACCOUNT_RE.search(text)
@@ -99,7 +99,7 @@ def keyword_route(message: str, wallet: str) -> dict:
         trace.append({"tool": "get_seller_score", "kind": "read", "args": {"account_id": acct.group(1).lower()}})
         return {"reply": f"{acct.group(1).lower()}: {result['summary']}.", "cards": [], "tool_trace": trace}
 
-    # Co-pilot payments: "pay 25 tUSD to seller.testnet for invoice 12".
+    # Co-pilot payments: "pay 25 NEAR to seller.testnet for invoice 12".
     if PAY_VERB_RE.search(text) and acct:
         amount_match = (
             PAY_AMOUNT_RE.search(text)
@@ -123,19 +123,19 @@ def keyword_route(message: str, wallet: str) -> dict:
                 trace.append({"tool": "prepare_payment", "kind": "prepare", "args": {"to": to_account, "amount": amount}})
                 if result["can_execute"]:
                     how = (
-                        f"Your co-pilot budget has {result['allowance_display']} tUSD left, so confirm "
+                        f"Your co-pilot budget has {result['allowance_display']} NEAR left, so confirm "
                         "“Pay now” on the card — the co-pilot settles it for you with no extra popups."
                     )
                 else:
                     how = (
-                        f"Your co-pilot budget is {result['allowance_display']} tUSD — grant the suggested budget "
+                        f"Your co-pilot budget is {result['allowance_display']} NEAR — grant the suggested budget "
                         "on the card (one wallet signature) and the co-pilot pays instantly."
                     )
                 memo_text = f" for {memo}" if memo else ""
                 return {
                     "reply": (
-                        f"Payment ready: {result['amount_display']} tUSD to {to_account}{memo_text}. "
-                        f"{how} The token contract enforces your budget on-chain — revoke any time by approving 0."
+                        f"Payment ready: {result['amount_display']} NEAR to {to_account}{memo_text}. "
+                        f"{how} The budget contract enforces your limit on-chain — withdraw the unspent remainder to revoke."
                     ),
                     "cards": cards,
                     "tool_trace": trace,
@@ -143,7 +143,7 @@ def keyword_route(message: str, wallet: str) -> dict:
             except ToolError as e:
                 return {"reply": f"I can't prepare that payment: {e}", "cards": [], "tool_trace": trace}
         return {
-            "reply": "Tell me the amount too, e.g. “pay 25 tUSD to seller.steepdata3968.testnet for invoice 12”.",
+            "reply": "Tell me the amount too, e.g. “pay 25 NEAR to seller.steepdata3968.testnet for invoice 12”.",
             "cards": [],
             "tool_trace": trace,
         }
@@ -168,18 +168,18 @@ def keyword_route(message: str, wallet: str) -> dict:
         result = execute_tool("search_listings", {"query": query, "max_price": max_price}, wallet)
         trace.append({"tool": "search_listings", "kind": "read", "args": {"query": query, "max_price": max_price}})
         if not result["results"]:
-            return {"reply": f"I couldn't find an active listing matching {query or 'that'} (max {max_price or 'any'} tUSD). Try a different item or budget.", "cards": [], "tool_trace": trace}
+            return {"reply": f"I couldn't find an active listing matching {query or 'that'} (max {max_price or 'any'} NEAR). Try a different item or budget.", "cards": [], "tool_trace": trace}
         top = result["results"][0]
         proposal = execute_tool("prepare_purchase", {"listing_slug": top["slug"]}, wallet)
         cards.append(_card(proposal.get("type", "purchase_proposal"), proposal))
         trace.append({"tool": "prepare_purchase", "kind": "prepare", "args": {"listing_slug": top["slug"]}})
-        summary = f"I found **{top['title']}** at {top['price']} tUSD from {top['seller']}. Seller record: {top['seller_score']}. "
-        summary += "Your balance: " + proposal["buyer_balance"] + " tUSD. "
-        summary += "Affordable: yes." if proposal["affordable"] else "Affordable: no — mint more test tUSD first."
+        summary = f"I found **{top['title']}** at {top['price']} NEAR from {top['seller']}. Seller record: {top['seller_score']}. "
+        summary += "Your balance: " + proposal["buyer_balance"] + " NEAR. "
+        summary += "Affordable: yes." if proposal["affordable"] else "Affordable: no — mint more test NEAR first."
         return {"reply": summary + " Ready to proceed? Send the purchase request from the listing page — the seller then issues the escrow and you accept + fund in your wallet.", "cards": cards, "tool_trace": trace}
 
     return {
-        "reply": "I'm your trade co-pilot. Try: “buy solar inverters under 1200 tUSD”, “check my balance”, “score for seller.steepdata3968.testnet”, or “dispute VP-000006 goods arrived damaged”. I find, evaluate and prepare — your wallet signs the money steps.",
+        "reply": "I'm your trade co-pilot. Try: “buy solar inverters under 1200 NEAR”, “check my balance”, “score for seller.steepdata3968.testnet”, or “dispute VP-000006 goods arrived damaged”. I find, evaluate and prepare — your wallet signs the money steps.",
         "cards": [],
         "tool_trace": trace,
     }

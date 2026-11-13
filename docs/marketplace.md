@@ -31,7 +31,7 @@ database is a cache, never the truth.
 
 ## Marketplace (Django, off-chain catalog)
 
-- `Listing` — seller wallet, title, kind (goods/service), category, description, price (tUSD),
+- `Listing` — seller wallet, title, kind (goods/service), category, description, price (native NEAR),
   location, photo URLs, default dispatch/inspection windows. Status: active / paused / sold.
 - `PurchaseRequest` — a buyer asks the seller to issue an escrow. The contract fixes the seller
   as creator (a buyer cannot open an escrow in someone else's name), so the seller issues it with

@@ -45,8 +45,10 @@ def ops_console(request):
 
     completed = [e for e in escrows if e.get("state") == "Completed"]
     disputed = [e for e in escrows if e.get("state") == "ReviewRequired"]
-    total_volume = sum(int(e.get("seller_amount") or 0) for e in completed)
-    total_fees = sum(int(e.get("platform_fee") or 0) for e in completed)
+    # Do not mix denominations: legacy tUSD escrows stay out of native totals.
+    native_completed = [e for e in completed if e.get("token") == "near"]
+    total_volume = sum(int(e.get("seller_amount") or 0) for e in native_completed)
+    total_fees = sum(int(e.get("platform_fee") or 0) for e in native_completed)
 
     arbitration = []
     for e in disputed:
@@ -61,8 +63,8 @@ def ops_console(request):
             "escrow_count": count,
             "completed_count": len(completed),
             "disputed_count": len(disputed),
-            "total_volume_display": near.format_token(total_volume),
-            "total_fees_display": near.format_token(total_fees),
+            "total_volume_display": near.format_near_amount(total_volume),
+            "total_fees_display": near.format_near_amount(total_fees),
             "active_partners": LogisticsPartner.objects.filter(status="ACTIVE").count(),
             "pending_partners": LogisticsPartner.objects.filter(status__in=["PENDING", "UNDER_REVIEW"]).count(),
             "open_disputes": Dispute.objects.filter(status="open").count(),

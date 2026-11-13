@@ -40,8 +40,8 @@ class DemoCarrier(CarrierAdapter):
     provider_id = "LOG-DEMO-001"
 
     def quote(self, origin: str, destination: str, weight_kg: float) -> dict:
-        base = 800_000  # 0.80 tUSD in token units (6 decimals)
-        price = base + int(weight_kg * 120_000)
+        base = 10_000_000_000_000_000_000_000  # 0.01 NEAR in yoctoNEAR
+        price = base + int(weight_kg * 1_000_000_000_000_000_000_000)  # +0.001 NEAR/kg
         return {
             "carrier": "demo",
             "simulated": True,
@@ -49,7 +49,7 @@ class DemoCarrier(CarrierAdapter):
             "destination": destination,
             "weight_kg": weight_kg,
             "price": str(price),
-            "currency": "tUSD",
+            "currency": "NEAR",
             "note": "SIMULATED QUOTE — Demo Carrier, not a real carrier rate.",
         }
 

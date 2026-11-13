@@ -25,6 +25,10 @@ use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearTok
 const MIN_VERIFICATION_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const OUTLAYER_GAS_TGAS: u64 = 100;
 const CALLBACK_GAS_TGAS: u64 = 20;
+/// Native NEAR currency marker in `Escrow.token`. It is a valid AccountId so
+/// existing serialized escrows need no migration; legacy NEP-141 escrows keep
+/// using their token contract. New escrows default to this marker in the UI.
+const NATIVE_NEAR_TOKEN: &str = "near";
 const MIN_VOTE_STAKE_YOCTO: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR per vote
 const MIN_ARBITRATION_STAKE_YOCTO: u128 = 50_000_000_000_000_000_000_000; // 0.05 NEAR quorum
 const MAX_ARBITRATION_VOTES: usize = 24;
@@ -362,6 +366,7 @@ impl VeriPay {
         };
         let token = env::predecessor_account_id();
         if token != escrow.token
+            || token.as_str() == NATIVE_NEAR_TOKEN
             || escrow.state != EscrowState::Approved
             || Some(&sender_id) != escrow.buyer.as_ref()
             || amount.0 != escrow.total_amount.0
@@ -373,6 +378,30 @@ impl VeriPay {
         self.escrows.insert(escrow_id.clone(), escrow);
         log!("escrow {} funded with {} by {}", escrow_id, amount.0, sender_id);
         "0".to_string()
+    }
+
+    /// Fund a native-NEAR escrow. The buyer attaches the exact total in
+    /// yoctoNEAR; no mint, token registration, or token-contract call needed.
+    /// Legacy NEP-141 escrows still fund through `ft_transfer_call`.
+    #[payable]
+    pub fn fund_escrow(&mut self, escrow_id: String) {
+        let mut escrow = self.internal_get(&escrow_id);
+        require!(escrow.token.as_str() == NATIVE_NEAR_TOKEN, "not a native NEAR escrow");
+        require!(escrow.state == EscrowState::Approved, "wrong state");
+        require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer funds");
+        require!(
+            env::attached_deposit().as_yoctonear() == escrow.total_amount.0,
+            "attach the exact total in yoctoNEAR"
+        );
+        let total = escrow.total_amount.0;
+        escrow.state = EscrowState::Funded;
+        self.escrows.insert(escrow_id.clone(), escrow);
+        log!(
+            "escrow {} funded with {} yoctoNEAR by {}",
+            escrow_id,
+            total,
+            env::predecessor_account_id()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -556,7 +585,7 @@ impl VeriPay {
         let amount = escrow.logistics_amount;
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        ft_transfer(token, provider, amount).then(
+        payout(token, provider, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .on_payout_result(escrow_id, "logistics".to_string()),
@@ -588,7 +617,7 @@ impl VeriPay {
             r.completed_as_buyer += 1;
             r.volume.0 += seller_amount.0;
         });
-        ft_transfer(token, seller, seller_amount).then(
+        payout(token, seller, seller_amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .finish_platform(escrow_id),
@@ -608,7 +637,7 @@ impl VeriPay {
             return;
         }
         let escrow = self.internal_get(&escrow_id);
-        let promise = ft_transfer(escrow.token.clone(), self.platform_fee_recipient(), escrow.platform_fee);
+        let promise = payout(escrow.token.clone(), self.platform_fee_recipient(), escrow.platform_fee);
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -632,7 +661,7 @@ impl VeriPay {
         let platform_fee = escrow.platform_fee;
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        ft_transfer(token, self.platform_fee_recipient(), platform_fee).then(
+        payout(token, self.platform_fee_recipient(), platform_fee).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .on_payout_result(escrow_id, "platform".to_string()),
@@ -807,7 +836,7 @@ impl VeriPay {
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
         log!("arbitration finalized for {} with {}% to seller", escrow_id, winning_pct);
-        ft_transfer(token, seller, U128(seller_part)).then(
+        payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .finish_arbitration_payout(escrow_id, U128(buyer_part)),
@@ -825,7 +854,7 @@ impl VeriPay {
             return;
         }
         let buyer = escrow.buyer.clone().expect("no buyer");
-        let promise = ft_transfer(escrow.token.clone(), buyer, buyer_part);
+        let promise = payout(escrow.token.clone(), buyer, buyer_part);
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -938,7 +967,7 @@ impl VeriPay {
         let seller = escrow.seller.clone();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        ft_transfer(token, seller, U128(seller_part)).then(
+        payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .finish_review_payout(escrow_id, U128(buyer_part)),
@@ -956,7 +985,7 @@ impl VeriPay {
             return;
         }
         let buyer = escrow.buyer.clone().expect("no buyer");
-        let promise = ft_transfer(escrow.token.clone(), buyer, buyer_part);
+        let promise = payout(escrow.token.clone(), buyer, buyer_part);
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -984,7 +1013,7 @@ impl VeriPay {
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
         bump_reputation(&buyer, |r| r.refunds_claimed += 1);
-        ft_transfer(token, buyer, amount).then(
+        payout(token, buyer, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .on_payout_result(escrow_id, "refund".to_string()),
@@ -1091,10 +1120,14 @@ fn pop_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &
     map.insert(key.clone(), v);
 }
 
-/// NEP-141 payout: the escrow contract holds tUSD, so settlements call
-/// `ft_transfer` on the token contract (1 yoctoNEAR is required by the FT
-/// standard for transfers).
-fn ft_transfer(token: AccountId, receiver_id: AccountId, amount: U128) -> Promise {
+/// Settlement payout. Native escrows transfer yoctoNEAR directly; legacy
+/// NEP-141 escrows call `ft_transfer` (1 yoctoNEAR required by the standard).
+/// Both return a Promise whose result is checked by the same rollback
+/// callbacks, so state transitions and failure handling are identical.
+fn payout(token: AccountId, receiver_id: AccountId, amount: U128) -> Promise {
+    if token.as_str() == NATIVE_NEAR_TOKEN {
+        return Promise::new(receiver_id).transfer(NearToken::from_yoctonear(amount.0));
+    }
     let args = serde_json::json!({
         "receiver_id": receiver_id,
         "amount": amount,
@@ -1252,5 +1285,62 @@ mod tests {
         let info = c.get_gov_info();
         assert_eq!(info.arbiter, Some(accounts(1)));
         assert_eq!(info.treasury, Some(accounts(2)));
+    }
+
+    fn create_native(c: &mut VeriPay) -> String {
+        testing_env!(as_account(accounts(1)).block_timestamp(1).build());
+        c.create_escrow(
+            "Native escrow".to_string(),
+            "hash".to_string(),
+            U128(100_000_000_000_000_000_000_000_000),
+            U128(10_000_000_000_000_000_000_000_000),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1_000,
+            1_000,
+            "terms".to_string(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn native_fund_moves_to_funded() {
+        let mut c = setup();
+        let total = 115_000_000_000_000_000_000_000_000u128;
+        let id = create_native(&mut c);
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(total)).build());
+        c.fund_escrow(id.clone());
+        assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Funded);
+    }
+
+    #[test]
+    #[should_panic(expected = "attach the exact total in yoctoNEAR")]
+    fn native_fund_requires_exact_total() {
+        let mut c = setup();
+        let total = 115_000_000_000_000_000_000_000_000u128;
+        let id = create_native(&mut c);
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(total - 1)).build());
+        c.fund_escrow(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "not a native NEAR escrow")]
+    fn native_fund_rejects_ft_escrow() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1)).block_timestamp(1).build());
+        let id = c.create_escrow(
+            "Legacy FT".to_string(), "hash".to_string(), U128(100), U128(10), Some(accounts(2)), None,
+            accounts(3), 1_000, 1_000, "terms".to_string(), None, None,
+        );
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(115)).build());
+        c.fund_escrow(id);
     }
 }

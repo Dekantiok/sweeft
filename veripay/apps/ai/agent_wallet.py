@@ -1,6 +1,6 @@
 """Server-side signing for the VeriPay AI co-pilot agent account (testnet demo).
 
-The co-pilot holds no user keys. A user grants it an on-chain tUSD allowance
+The co-pilot holds no user keys. A user grants it an on-chain NEAR allowance
 with ONE wallet signature (`approve(spender=agent, amount)` on the token);
 the agent can then call `ft_transfer_from` and the token contract itself
 enforces the budget — scoped, capped and revocable on-chain. That allowance
@@ -201,13 +201,16 @@ def send_near_from(*, signer: str, private_key: str, receiver: str, amount_yocto
 
 
 def transfer_from_allowance(*, owner: str, receiver: str, amount: int, memo: str | None = None) -> dict:
-    """Pay `receiver` `amount` tUSD from `owner`'s granted allowance."""
-    args = {"owner": owner, "receiver_id": receiver, "amount": str(amount)}
-    args["memo"] = memo or None
+    """Pay `receiver` `amount` yoctoNEAR from `owner`'s co-pilot budget.
+
+    Kept under the historical function name so API call sites stay stable;
+    this now calls the native NEAR budget contract's agent-only `pay` method.
+    The memo remains in the off-chain PaymentIntent audit record.
+    """
     return sign_and_send(
-        method_name="ft_transfer_from",
-        args=args,
-        receiver_id=settings.TUSD_CONTRACT,
+        method_name="pay",
+        args={"owner": owner, "receiver": receiver, "amount": str(amount)},
+        receiver_id=settings.AI_BUDGET_CONTRACT,
         gas=GAS_FUNCTION_CALL,
-        deposit=1,
+        deposit=0,
     )

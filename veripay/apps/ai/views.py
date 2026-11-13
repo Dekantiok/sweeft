@@ -37,10 +37,11 @@ def ai_agent_info(request):
             "enabled": bool(settings.AI_AGENT_ENABLED),
             "wallet": wallet,
             "allowance": str(allowance),
-            "allowance_display": near_mod.format_token(allowance),
-            "max_payment_display": near_mod.format_token(int(settings.AI_AGENT_MAX_PAYMENT)),
+            "allowance_display": near_mod.format_near_amount(allowance),
+            "max_payment_display": near_mod.format_near_amount(int(settings.AI_AGENT_MAX_PAYMENT)),
             "grant_amount": str(int(settings.AI_AGENT_GRANT)),
-            "grant_display": near_mod.format_token(int(settings.AI_AGENT_GRANT)),
+            "grant_display": near_mod.format_near_amount(int(settings.AI_AGENT_GRANT)),
+            "budget_contract": settings.AI_BUDGET_CONTRACT,
         }
     )
 

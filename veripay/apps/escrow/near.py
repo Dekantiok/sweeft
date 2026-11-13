@@ -14,7 +14,9 @@ import urllib.request
 from django.conf import settings
 
 YOCTO = 10**24
-TOKEN_DECIMALS = 6
+TOKEN_DECIMALS = 6  # legacy tUSD decimals (existing escrows remain readable)
+NATIVE_NEAR_TOKEN = "near"
+NATIVE_NEAR_DECIMALS = 24
 TOKEN_UNIT = 10**TOKEN_DECIMALS
 
 
@@ -91,6 +93,18 @@ def token_balance(token_contract: str, account_id: str) -> str:
     return result or "0"
 
 
+def native_balance(account_id: str) -> str:
+    """Native NEAR balance in yoctoNEAR (no token contract needed)."""
+    result = _rpc(
+        "query",
+        {"request_type": "view_account", "finality": "final", "account_id": account_id},
+        timeout=15,
+    )
+    if "error" in result:
+        return "0"
+    return str((result.get("result") or {}).get("amount") or 0)
+
+
 # Platform config (owner, fee bps, outlayer addresses) changes rarely; cache it
 # briefly so page loads don't pay two RPC round-trips for every render.
 _config_cache: dict = {"value": None, "ts": 0.0}
@@ -137,3 +151,26 @@ def parse_token(text: str, decimals: int = TOKEN_DECIMALS) -> int:
     whole, _, frac = text.partition(".")
     frac = (frac + "0" * decimals)[:decimals]
     return int(whole or "0") * (10**decimals) + int(frac or "0")
+
+
+def format_near_amount(amount: str | int) -> str:
+    """Compact native NEAR display (up to 6 decimals, zeros trimmed)."""
+    return format_token(amount, NATIVE_NEAR_DECIMALS)
+
+
+def parse_near_amount(text: str) -> int:
+    """Parse a human NEAR amount (e.g. '0.115') into yoctoNEAR."""
+    return parse_token(text, NATIVE_NEAR_DECIMALS)
+
+
+def format_currency(amount: str | int, token: str | None = NATIVE_NEAR_TOKEN) -> str:
+    """Format by the escrow's currency; legacy FT escrows keep their units."""
+    if (token or NATIVE_NEAR_TOKEN) == NATIVE_NEAR_TOKEN:
+        return format_near_amount(amount)
+    return format_token(amount)
+
+
+def parse_currency(text: str, token: str | None = NATIVE_NEAR_TOKEN) -> int:
+    if (token or NATIVE_NEAR_TOKEN) == NATIVE_NEAR_TOKEN:
+        return parse_near_amount(text)
+    return parse_token(text)

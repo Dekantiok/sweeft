@@ -9,7 +9,7 @@
       <span class="rounded-full px-2 py-0.5 {% if listing.status == 'active' %}bg-emerald-100 text-emerald-800{% else %}bg-slate-100 text-slate-600{% endif %}">{{ listing.get_status_display }}</span>
     </div>
     <h1 class="text-3xl font-semibold mt-2">{{ listing.title }}</h1>
-    <p class="text-2xl font-semibold text-emerald-700 mt-2">{{ listing.price_display }} <span class="text-base font-normal text-slate-500">tUSD</span></p>
+    <p class="text-2xl font-semibold text-emerald-700 mt-2">{{ listing.price_display }} <span class="text-base font-normal text-slate-500">NEAR</span></p>
     {% if listing.location %}<p class="text-sm text-slate-500 mt-1">📍 {{ listing.location }}</p>{% endif %}
     <div class="prose prose-sm max-w-none mt-5 whitespace-pre-line text-slate-700">{{ listing.description }}</div>
     {% if listing.photos %}

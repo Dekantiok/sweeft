@@ -135,8 +135,28 @@
   }
 
   // ------------------------------------------------------------------
-  // tUSD helpers: balance display + self-serve faucet (open testnet mint)
+  // Native NEAR helpers: balance display + faucet link. Legacy tUSD reads
+  // remain available through tokenBalance for old escrows.
   // ------------------------------------------------------------------
+
+  async function nativeBalance(accountId) {
+    const c = await cfg();
+    const r = await fetch(c.rpc_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 'bal', method: 'query',
+        params: { request_type: 'view_account', finality: 'final', account_id: accountId },
+      }),
+    });
+    const j = await r.json();
+    return BigInt(j.result?.amount || 0);
+  }
+
+  async function sendNear(receiverId, amountYocto) {
+    if (!requireWallet()) throw new Error('wallet not connected');
+    return VPWallet.sendNear(receiverId, amountYocto);
+  }
 
   async function tokenBalance(accountId) {
     const c = await cfg();
@@ -162,9 +182,9 @@
   }
 
   function fmtUnits(units) {
-    const s = units.toString().padStart(7, '0');
-    const whole = s.slice(0, -6).replace(/^0+(?=\d)/, '') || '0';
-    const frac = s.slice(-6).replace(/0+$/, '');
+    const s = units.toString().padStart(25, '0');
+    const whole = s.slice(0, -24).replace(/^0+(?=\d)/, '') || '0';
+    const frac = s.slice(-24).replace(/0+$/, '').slice(0, 6);
     return frac ? `${whole}.${frac}` : whole;
   }
 
@@ -172,32 +192,16 @@
     const el = document.getElementById('tusd-balance');
     if (!el || !state.walletAccount) return;
     try {
-      el.textContent = fmtUnits(await tokenBalance(state.walletAccount)) + ' tUSD';
+      el.textContent = fmtUnits(await nativeBalance(state.walletAccount)) + ' NEAR';
     } catch (e) {
-      el.textContent = '— tUSD';
+      el.textContent = '— NEAR';
     }
   }
 
   async function faucet() {
-    if (!requireWallet()) return;
-    const btn = document.getElementById('faucet-btn');
-    try {
-      if (btn) { btn.disabled = true; btn.textContent = 'Minting…'; }
-      const c = await cfg();
-      await VPWallet.callMethod(
-        c.tusd_contract,
-        'mint',
-        { account_id: state.walletAccount, amount: '100000000' }, // 100 tUSD (6 decimals)
-        '100000000000000',
-        '0',
-      );
-      alert('100 test tUSD minted to ' + state.walletAccount + ' (testnet demo token).');
-      await refreshTokenBalance();
-    } catch (e) {
-      alert('Faucet failed: ' + (e && e.message ? e.message : e));
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Get test tUSD'; }
-    }
+    // Judges already hold testnet NEAR. For a fresh wallet, open the public
+    // faucet rather than requiring a project-specific token mint.
+    window.open('https://near-faucet.io/', '_blank', 'noopener,noreferrer');
   }
 
   // ------------------------------------------------------------------
@@ -241,8 +245,8 @@
     window.VPApp = window.VPApp || {};
     Object.assign(window.VPApp, {
       state, cfg, connect, disconnect, login, callContract, callToken,
-      callContractOn,
-      explorerTx, jsonPost, requireWallet, tokenBalance, refreshTokenBalance, faucet,
+      callContractOn, sendNear,
+      explorerTx, jsonPost, requireWallet, tokenBalance, nativeBalance, refreshTokenBalance, faucet,
       checkWalletConnection,
     });
     if (state.walletAccount) {

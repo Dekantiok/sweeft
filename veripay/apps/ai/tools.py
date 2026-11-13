@@ -50,10 +50,10 @@ def score_label(rep: dict) -> str:
     completed = int(rep.get("completed_as_seller", 0) or 0)
     as_buyer = int(rep.get("completed_as_buyer", 0) or 0)
     disputes = int(rep.get("disputes_opened", 0) or 0)
-    volume = near.format_token(rep.get("volume") or 0)
+    volume = near.format_near_amount(rep.get("volume") or 0)
     if completed + as_buyer == 0:
         return "New wallet — no completed trades yet"
-    return f"{completed} completed sales, {as_buyer} completed purchases, {volume} tUSD volume, {disputes} disputes"
+    return f"{completed} completed sales, {as_buyer} completed purchases, {volume} NEAR volume, {disputes} disputes"
 
 
 def rank_score(rep: dict) -> int:
@@ -104,7 +104,7 @@ def search_listings(*, query: str = "", max_price: float | None = None, kind: st
         qs = qs.filter(kind=kind)
     listings = list(qs.distinct()[:60])
     if max_price is not None:
-        cap = near.parse_token(str(max_price))
+        cap = near.parse_near_amount(str(max_price))
         listings = [l for l in listings if int(l.price_amount) <= cap]
     listings = listings[:limit]
 
@@ -135,11 +135,11 @@ def get_seller_score(*, account_id: str) -> dict:
 
 
 def check_my_balance(*, wallet: str) -> dict:
-    units = near.token_balance(settings.TUSD_CONTRACT, wallet)
+    units = near.native_balance(wallet)
     return {
         "wallet": wallet,
         "balance": units,
-        "balance_display": near.format_token(units),
+        "balance_display": near.format_near_amount(units),
     }
 
 
@@ -256,7 +256,7 @@ def prepare_dispute(*, escrow_id: str, wallet: str, reason: str = "") -> dict:
 # ---------------------------------------------------------------------------
 # Co-pilot payments — the ONE money-moving agent capability.
 #
-# Non-custodial by design: the user grants the agent a tUSD allowance with a
+# Non-custodial by design: the user grants the agent a NEAR allowance with a
 # single wallet-signed `approve`; the token contract enforces the budget for
 # every `ft_transfer_from` the agent signs. Revocable at any time by
 # approving 0. The agent key itself can never exceed the granted allowance.
@@ -264,13 +264,13 @@ def prepare_dispute(*, escrow_id: str, wallet: str, reason: str = "") -> dict:
 
 
 def allowance_of(owner: str) -> int:
-    """Remaining tUSD the agent may spend for `owner` (0 on any failure)."""
-    agent = getattr(settings, "AI_AGENT_ACCOUNT", "")
-    if not agent or not owner:
+    """Unspent native NEAR available in the owner's co-pilot budget."""
+    if not owner:
         return 0
     try:
-        return int(near.view_call(settings.TUSD_CONTRACT, "ft_allowance", {"owner": owner, "spender": agent}) or 0)
-    except Exception:  # noqa: BLE001 — pre-upgrade tokens simply report no allowance
+        view = near.view_call(settings.AI_BUDGET_CONTRACT, "budget_of", {"owner": owner}) or {}
+        return int(view.get("available") or 0)
+    except Exception:  # noqa: BLE001
         return 0
 
 
@@ -284,14 +284,14 @@ def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
     if to == wallet:
         raise ToolError("that is your own wallet — pick the recipient")
 
-    units = near.parse_token(str(amount))
+    units = near.parse_near_amount(str(amount))
     if units <= 0:
         raise ToolError("amount must be greater than zero")
 
-    cap = int(getattr(settings, "AI_AGENT_MAX_PAYMENT", 100_000_000))
+    cap = int(getattr(settings, "AI_AGENT_MAX_PAYMENT", 100_000_000_000_000_000_000_000))
     if units > cap:
         raise ToolError(
-            f"that is above the co-pilot per-payment limit ({near.format_token(cap)} tUSD). "
+            f"that is above the co-pilot per-payment limit ({near.format_near_amount(cap)} NEAR). "
             "Split the payment or raise AI_AGENT_MAX_PAYMENT."
         )
 
@@ -304,24 +304,25 @@ def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
 
     agent_account = getattr(settings, "AI_AGENT_ACCOUNT", "")
     allowance = allowance_of(wallet)
-    grant = int(getattr(settings, "AI_AGENT_GRANT", 250_000_000))
+    grant = int(getattr(settings, "AI_AGENT_GRANT", 250_000_000_000_000_000_000_000))
     return {
         "type": "payment_proposal",
         "intent_id": intent.id,
         "to": to,
         "amount": str(units),
-        "amount_display": near.format_token(units),
+        "amount_display": near.format_near_amount(units),
         "memo": intent.memo,
         "agent": agent_account,
+        "budget_contract": settings.AI_BUDGET_CONTRACT,
         "allowance": str(allowance),
-        "allowance_display": near.format_token(allowance),
+        "allowance_display": near.format_near_amount(allowance),
         "can_execute": agent_configured() and allowance >= units,
         "grant_amount": str(grant),
-        "grant_display": near.format_token(grant),
-        "max_payment_display": near.format_token(cap),
+        "grant_display": near.format_near_amount(grant),
+        "max_payment_display": near.format_near_amount(cap),
         "note": (
-            "The co-pilot pays this from the budget you grant it — one wallet approval sets the budget; "
-            "revoke any time by approving 0. The token contract enforces the allowance on-chain."
+            "The co-pilot pays this from the native NEAR budget you deposit — you set the exact limit; "
+            "withdraw the unspent remainder any time to revoke. The budget contract enforces it on-chain."
         ),
     }
 
@@ -355,7 +356,7 @@ TOOLS: dict[str, ToolSpec] = {
     "check_my_balance": ToolSpec(
         name="check_my_balance",
         kind="read",
-        description="Check the connected wallet's tUSD balance to see whether a purchase is affordable.",
+        description="Check the connected wallet's NEAR balance to see whether a purchase is affordable.",
         handler=check_my_balance,
     ),
     "get_my_trade_status": ToolSpec(
@@ -392,8 +393,8 @@ TOOLS: dict[str, ToolSpec] = {
         name="prepare_payment",
         kind="prepare",
         description=(
-            "Propose paying a NEAR account in tUSD from the budget the user granted the co-pilot "
-            "(one wallet approval). Requires to (account id) and amount (in tUSD). Optional memo. "
+            "Propose paying a NEAR account in NEAR from the budget the user granted the co-pilot "
+            "(one wallet approval). Requires to (account id) and amount (in NEAR). Optional memo. "
             "Capped by the platform per-payment limit and by the user's on-chain allowance."
         ),
         handler=prepare_payment,

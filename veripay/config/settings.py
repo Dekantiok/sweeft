@@ -147,8 +147,10 @@ AI_TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
 AI_AGENT_ENABLED = os.environ.get("AI_AGENT_ENABLED", "1") == "1"
 AI_AGENT_ACCOUNT = os.environ.get("AI_AGENT_ACCOUNT", "")
 AI_AGENT_PRIVATE_KEY = os.environ.get("AI_AGENT_PRIVATE_KEY", "")
-AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000"))  # 100 tUSD per payment
-AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000"))  # 250 tUSD suggested budget (UI)
+# Native-NEAR budget contract (replaces the legacy tUSD allowance extension).
+AI_BUDGET_CONTRACT = os.environ.get("AI_BUDGET_CONTRACT", "budget.steepdata3968.testnet")
+AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000000000000000000"))  # 0.1 NEAR
+AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000000000000000000"))  # 0.25 NEAR (UI)
 
 # Platform owner hint for UI affordances (nav links). Authorization is always
 # checked against the on-chain config — this is display only.
