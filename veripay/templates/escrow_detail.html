@@ -192,6 +192,20 @@
       <tbody class="divide-y divide-slate-100">
         <tr><td class="py-1.5 text-slate-500">Seller</td><td class="py-1.5"><code>{{ chain.seller|default:agreement.seller_account }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Buyer</td><td class="py-1.5"><code>{{ chain.buyer|default:agreement.buyer_account|default:"— awaiting acceptance" }}</code></td></tr>
+        <tr>
+          <td class="py-1.5 text-slate-500">Who can accept</td>
+          <td class="py-1.5">
+            {% if chain.buyer %}
+              {% if chain.state == 'PendingAcceptance' %}
+                only <code>{{ chain.buyer }}</code> — the contract rejects every other wallet
+              {% else %}
+                restricted to <code>{{ chain.buyer }}</code> — accepted by that wallet on-chain
+              {% endif %}
+            {% else %}
+              the invite-link holder — the link's hash is committed on-chain and acceptance is still wallet-signed
+            {% endif %}
+          </td>
+        </tr>
         <tr><td class="py-1.5 text-slate-500">Seller amount</td><td class="py-1.5">{{ chain.seller_amount|money:chain.token }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount|money:chain.token }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee|money:chain.token }}</td></tr>
@@ -232,8 +246,16 @@
         <div class="text-slate-500">{{ chain.last_verification.reason }}</div>
         <div class="text-xs text-slate-400 mt-1">Attested by OutLayer TEE for code hash pinned in the published project; carrier data is simulated.</div>
       </div>
+    {% elif relayer_enabled %}
+      <p class="text-sm text-slate-500 mt-2">No verification recorded yet. This runs automatically: once the carrier reports delivery, the platform relayer submits the report to OutLayer for TEE attestation — no wallet action needed.</p>
     {% else %}
       <p class="text-sm text-slate-500 mt-2">No verification recorded yet. After the shipment is registered, any party can request TEE verification of the carrier report.</p>
+    {% endif %}
+    {% if auto_release_ms %}
+      <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+        Inspection window active — the seller allocation auto-releases <b id="auto-release-when" data-ms="{{ auto_release_ms }}"></b>
+        unless the buyer reports a problem first. The buyer can also confirm receipt early from Actions.
+      </div>
     {% endif %}
   </section>
 
@@ -263,6 +285,7 @@
   const DISPUTE_ID = {{ dispute.id|default:"null" }};
   const GOV_DAO = "{{ gov.dao|default:''|escapejs }}";
   const GOV_BOND = "{{ gov.proposal_bond_yocto|default:'0' }}";
+  const RELAYER_ENABLED = {{ relayer_enabled|yesno:"true,false" }};
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function fmtAmount(value) {
@@ -335,7 +358,11 @@
       document.getElementById('actions').appendChild(box);
     }
     if (state === 'Shipped' && (isSeller || isBuyer || isProvider)) {
-      addButton('Request TEE delivery verification', doVerify);
+      addButton(
+        RELAYER_ENABLED ? 'Retry TEE verification (fallback)' : 'Request TEE delivery verification',
+        doVerify,
+        RELAYER_ENABLED ? 'ghost' : 'primary'
+      );
     }
     if ((state === 'Shipped' || state === 'AwaitingBuyerConfirmation') && (isSeller || isProvider) && CHAIN && CHAIN.pickup_verified && !CHAIN.logistics_paid) {
       addButton('Settle logistics fee', () => simpleCall('settle_logistics', 'Logistics settled', '150000000000000'));
@@ -585,9 +612,13 @@
     window.location.reload();
   }
 
-  // Format deadline timestamp
+  // Format deadline timestamps
   (function () {
     const el = document.getElementById('dispatch-deadline');
+    if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
+  })();
+  (function () {
+    const el = document.getElementById('auto-release-when');
     if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
   })();
 
@@ -608,7 +639,6 @@
     LOST: 'Lost in transit',
     CANCELLED: 'Cancelled',
   };
-  const TRACKING_TERMINAL = ['DELIVERED', 'DELIVERY_FAILED', 'RETURNED', 'LOST', 'CANCELLED'];
   const TRACKING_FAILURES = ['DELIVERY_FAILED', 'RETURNED', 'LOST', 'CANCELLED'];
 
   function escHtml(value) {
@@ -663,12 +693,14 @@
     const isParty = WALLET && CHAIN && (WALLET === AGREEMENT.seller || WALLET === AGREEMENT.buyer || WALLET === CHAIN.logistics_provider);
     const delivered = status === 'DELIVERED';
     const cta = delivered && CHAIN && CHAIN.state === 'Shipped'
-      ? isParty
-        ? `<div class="mt-3 rounded-lg border border-emerald-800/60 bg-emerald-900/30 p-3 text-sm">
-             <b>Delivery complete.</b> Request the OutLayer TEE verification — it records pickup + delivery on-chain.
-             <button id="tracking-verify" class="ml-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Request TEE verification</button>
-           </div>`
-        : '<div class="mt-3 text-xs text-slate-500">Delivery complete — any party can request the TEE verification.</div>'
+      ? RELAYER_ENABLED
+        ? '<div class="mt-3 text-xs text-slate-500">Delivery complete — the platform relayer is requesting the OutLayer TEE verification automatically; this panel refreshes when it lands.</div>'
+        : isParty
+          ? `<div class="mt-3 rounded-lg border border-emerald-800/60 bg-emerald-900/30 p-3 text-sm">
+               <b>Delivery complete.</b> Request the OutLayer TEE verification — it records pickup + delivery on-chain.
+               <button id="tracking-verify" class="ml-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Request TEE verification</button>
+             </div>`
+          : '<div class="mt-3 text-xs text-slate-500">Delivery complete — any party can request the TEE verification.</div>'
       : '';
     box.innerHTML = `<section class="bg-white border border-slate-200 rounded-xl p-4">
       <div class="flex flex-wrap items-center gap-2">
@@ -687,6 +719,7 @@
     if (verifyBtn) verifyBtn.onclick = doVerify;
   }
 
+  const ESCROW_SETTLED = ['Completed', 'Refunded', 'Rejected', 'Cancelled'];
   let trackingTimer = null;
   let trackingRendered = '';
   async function pollTracking() {
@@ -694,7 +727,14 @@
       const res = await VPApp.jsonGet('/api/v1/shipments/by-escrow/' + encodeURIComponent(AGREEMENT.escrow_id) + '/');
       if (!res || !res.ok) return;
       renderTracking(res.shipment);
-      if (res.shipment && TRACKING_TERMINAL.includes(res.shipment.status) && trackingTimer) {
+      const escrowState = res.shipment && res.shipment.escrow_state;
+      if (escrowState && CHAIN.state && escrowState !== CHAIN.state) {
+        // The relayer moved the escrow forward (verification, settlement,
+        // release) — reload so actions and records reflect the chain.
+        window.location.reload();
+        return;
+      }
+      if (escrowState && ESCROW_SETTLED.includes(escrowState) && trackingTimer) {
         clearInterval(trackingTimer);
         trackingTimer = null;
       }

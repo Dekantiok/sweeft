@@ -39,8 +39,30 @@
       </div>
     </div>
     <div>
-      <label class="block text-sm font-medium mb-1">Buyer wallet (leave empty to invite by link)</label>
-      <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.counterparty }}" placeholder="buyer.testnet — or empty for a shareable invitation">
+      <label class="block text-sm font-medium mb-1">Who can accept this escrow?</label>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <label id="mode-wallet-label" class="cursor-pointer rounded-xl border border-slate-300 p-3 transition-colors">
+          <input type="radio" name="cp-mode" value="wallet" class="accent-emerald-600" checked>
+          <span class="ml-2 text-sm font-medium">Only a specific wallet</span>
+          <span class="block ml-6 text-xs text-emerald-700">Recommended — the contract rejects every other wallet.</span>
+        </label>
+        <label id="mode-link-label" class="cursor-pointer rounded-xl border border-slate-300 p-3 transition-colors">
+          <input type="radio" name="cp-mode" value="link" class="accent-emerald-600">
+          <span class="ml-2 text-sm font-medium">Anyone with the invite link</span>
+          <span class="block ml-6 text-xs text-slate-500">High-entropy link; only its hash is committed on-chain.</span>
+        </label>
+      </div>
+
+      <div id="wallet-field" class="mt-3">
+        <label class="block text-xs text-slate-500 mb-1">Counterparty wallet (required — only this wallet can accept)</label>
+        <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.counterparty }}" placeholder="buyer.testnet">
+      </div>
+
+      <div id="link-note" class="hidden mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+        An invite link will be generated after creation and shown on the escrow page. The link is a locator,
+        not authorization: the accepting wallet must still sign on-chain, and the secret is verified against
+        the hash committed at creation.
+      </div>
     </div>
     <div>
       <label class="block text-sm font-medium mb-1">Logistics provider (optional — from the approved directory)</label>
@@ -64,9 +86,9 @@
       <span id="create-status" class="text-sm text-slate-500"></span>
     </div>
     <p class="text-xs text-slate-500">
-      This performs a wallet-signed transaction on <code>{{ VERIPAY_CONTRACT }}</code>. If you leave the buyer empty,
-      a high-entropy invitation link is generated; its hash is committed on-chain, so the link alone grants nothing —
-      the buyer's wallet must still sign the acceptance.
+      This performs a wallet-signed transaction on <code>{{ VERIPAY_CONTRACT }}</code>. With a named counterparty,
+      the contract accepts <b>only that wallet</b>; with an invite link, the link's hash is committed on-chain and
+      the accepting wallet must still sign — the link alone authorizes nothing.
     </p>
   </div>
 </div>
@@ -91,6 +113,22 @@
     crypto.getRandomValues(bytes);
     return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
+  const ACCOUNT_RE = /^[a-z0-9][a-z0-9._-]*\.(testnet|near)$/;
+  function counterpartyMode() {
+    return document.querySelector('input[name="cp-mode"]:checked').value;
+  }
+  function updateCounterpartyMode() {
+    const mode = counterpartyMode();
+    const walletField = document.getElementById('wallet-field');
+    const linkNote = document.getElementById('link-note');
+    walletField.classList.toggle('hidden', mode === 'link');
+    linkNote.classList.toggle('hidden', mode === 'wallet');
+    document.getElementById('mode-wallet-label').classList.toggle('border-emerald-500', mode === 'wallet');
+    document.getElementById('mode-link-label').classList.toggle('border-emerald-500', mode === 'link');
+  }
+  document.querySelectorAll('input[name="cp-mode"]').forEach((el) => el.addEventListener('change', updateCounterpartyMode));
+  updateCounterpartyMode();
+
   document.getElementById('f-seller').addEventListener('input', updateFee);
   function updateFee() {
     try {
@@ -111,7 +149,11 @@
       const sellerAmount = toUnits(document.getElementById('f-seller').value);
       const logisticsAmount = toUnits(document.getElementById('f-logistics').value);
       if (sellerAmount <= 0n) throw new Error('seller amount must be greater than zero');
+      const mode = counterpartyMode();
       const buyer = document.getElementById('f-buyer').value.trim().toLowerCase();
+      if (mode === 'wallet' && !ACCOUNT_RE.test(buyer)) {
+        throw new Error('enter the counterparty NEAR account (e.g. buyer.testnet) — or switch to "Anyone with the invite link"');
+      }
       const deadline = document.getElementById('f-deadline').value;
       if (!deadline) throw new Error('pick a dispatch deadline');
       const inspectionDays = parseInt(document.getElementById('f-inspection').value || '0', 10);
@@ -120,7 +162,7 @@
 
       let invitationToken = null;
       let inviteHash = null;
-      if (!buyer) {
+      if (mode === 'link') {
         invitationToken = randomToken();
         inviteHash = await sha256Hex(invitationToken);
       }
@@ -141,7 +183,7 @@
         product_desc_hash: await sha256Hex(desc),
         seller_amount: sellerAmount.toString(),
         logistics_amount: logisticsAmount.toString(),
-        buyer: buyer || null,
+        buyer: mode === 'wallet' ? buyer : null,
         invite_hash: inviteHash,
         token: 'near', // native NEAR escrow — no token mint or registration
         dispatch_deadline_ms: new Date(deadline + 'T23:59:59Z').getTime(),
