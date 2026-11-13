@@ -68,5 +68,15 @@ outlayer upload "$WASM"
 # deploy contracts/test-token/target/near/test_token.wasm to tusd.${DEPLOYER} and
 # set TUSD_CONTRACT accordingly. New escrows do NOT need it.
 
+echo "== 7. IRREVERSIBLE: delete the contract account's full-access deploy key"
+# After this the contract code can never be changed — the strongest possible
+# "no platform key" guarantee. Skip with SKIP_KEY_DELETION=1 only for dev.
+if [ "${SKIP_KEY_DELETION:-0}" != "1" ]; then
+  VERIPAY_PUBKEY=$(python3 -c "import json;print(json.load(open('$HOME/.near-credentials/testnet/$VERIPAY_ACCOUNT.json'))['public_key'])")
+  near account delete-keys "$VERIPAY_ACCOUNT" public-keys "$VERIPAY_PUBKEY" \
+    network-config testnet sign-with-legacy-keychain send
+  echo "   deleted $VERIPAY_PUBKEY — contract code is now immutable"
+fi
+
 echo "Done. Set VERIPAY_CONTRACT=$VERIPAY_ACCOUNT AI_BUDGET_CONTRACT=$BUDGET_ACCOUNT OUTLAYER_PROJECT=$OUTLAYER_PROJECT"
 echo "      RELAYER_ACCOUNT=$RELAYER_ACCOUNT RELAYER_ENABLED=1 (key at ~/.near-credentials/testnet/) in veripay/.env"
