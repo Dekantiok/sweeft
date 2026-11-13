@@ -1,6 +1,6 @@
 # Smart contract
 
-Rust, `near-sdk` 5.x, deployed at **`sweeft-pay.testnet`**. The deployment is keyless/immutable
+Rust, `near-sdk` 5.x, deployed at **`sweeft-market.testnet`**. The deployment is keyless/immutable
 and includes the beneficiary, dispute, rollback and post-payout reputation fixes described below.
 The contract is the financial and authorization source of truth.
 
@@ -67,11 +67,14 @@ helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer`
 - Verification flags are written **only** by the `#[private]` OutLayer callback.
 - Idempotency: per-leg flags + state checks prevent double settlement; failed native or FT
   transfers roll their flags back (`on_payout_result`) so a payout is never falsely reported, and
-  a failed buyer leg never un-marks a paid seller leg. Refund callbacks restore the prior state.
-  Reputation changes only after the corresponding seller or refund transfer succeeds.
-- Creation requires a storage deposit and bounded strings; per-account indexes and pending lists
-  are capped; the token field is an allowlist. Reputation counters are exactly-once and
-  value-filtered (anti-wash).
+  a failed buyer leg never un-marks a paid seller leg. Refund callbacks restore the prior state;
+  failed resolution seller legs restore the actual pre-resolution logistics flag. Reputation changes
+  only after the corresponding seller or refund transfer succeeds.
+- Creation requires a storage deposit and bounded strings; shipment registration and dispute reasons
+  enforce the same tracking/hash caps. Per-account indexes and pending lists are capped; the token
+  field is an allowlist. Reputation counters are exactly-once and value-filtered (anti-wash).
+- A creation-time tracking number is only an identifier. `shipment_registered` is set exclusively
+  by `register_shipment`, so pre-registered tracking cannot block the no-dispatch buyer refund.
 - No keys or secrets in the contract; no backend endpoint can release funds; no owner withdraw.
 - Duplicate funding rejected by state (`Approved` → `Funded` once); wrong token / amount / buyer
   refunded by `ft_on_transfer`.

@@ -17,7 +17,7 @@ services:
     plan: free
     rootDir: sweeft
     buildCommand: bash build.sh
-    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    startCommand: bash start.sh
     healthCheckPath: /health/
     envVars:
       - key: PYTHON_VERSION
@@ -35,7 +35,7 @@ services:
       - key: NEAR_RPC_URL
         value: "https://test.rpc.fastnear.com"
       - key: SWEEFT_CONTRACT
-        value: "sweeft-pay.testnet"
+        value: "sweeft-market.testnet"
       - key: OUTLAYER_CONTRACT
         value: "outlayer.testnet"
       - key: OUTLAYER_PROJECT
@@ -49,18 +49,23 @@ services:
       # --- optional server-side keys (set to enable live features) -----------
       - key: DEMO_CARRIER_PRIVATE_KEY
         sync: false
+      # Separate API credential used by the standalone simulated carrier loop.
+      - key: DEMO_CARRIER_API_KEY
+        sync: false
       - key: AI_PROVIDER
         value: "echo"
       - key: AI_AGENT_ENABLED
-        value: "0"
+        value: "1"
       - key: AI_AGENT_ACCOUNT
-        sync: false
+        value: "agent.steepdata3968.testnet"
       - key: AI_AGENT_PRIVATE_KEY
         sync: false
+      - key: AI_BUDGET_CONTRACT
+        value: "budget.steepdata3968.testnet"
       - key: RELAYER_ENABLED
-        value: "0"
+        value: "1"
       - key: RELAYER_ACCOUNT
-        sync: false
+        value: "relayer.steepdata3968.testnet"
       - key: RELAYER_PRIVATE_KEY
         sync: false
       - key: DATABASE_URL

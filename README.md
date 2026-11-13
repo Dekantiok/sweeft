@@ -26,7 +26,7 @@ Built at NEAR Hackathon (Nov 2026).
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-pay.testnet`) |
+| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-market.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -45,32 +45,30 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
-**Current deployment:** escrow contract [`sweeft-pay.testnet`](https://testnet.near.org/accounts/sweeft-pay.testnet),
+**Current deployment:** escrow contract [`sweeft-market.testnet`](https://testnet.near.org/accounts/sweeft-market.testnet),
 review board `sweeft-board.testnet` (both keyless/immutable — deploy keys deleted), TEE project
 `steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
-six-digit codes: `SWFT-XXXXXX`. **`SWFT-374253`** completed the full lifecycle on this deployment —
-signed-carrier TEE verification (first poll), logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**,
-platform fee **+0.005 NEAR** to the board treasury, all payout flags true, and post-settlement
-reputation incremented exactly once for each party:
+six-digit codes: `SWFT-XXXXXX`. **`SWFT-611104`** completed the full lifecycle on this deployment —
+signed-carrier TEE verification, logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**, platform fee
+**+0.005 NEAR** to the board treasury, all payout flags true, and post-settlement reputation for both
+parties:
 
-| `SWFT-374253` step | Tx |
+| `SWFT-611104` step | Tx |
 |---|---|
-| `create_escrow` (seller) | `76mtZFGTKUGxiASXdmhMA2P7wPXpSJCTcKCb6gd4D1vr` |
-| `accept_escrow` (buyer) | `CvJr2CmyUqaBfYFpPG6UVMnYs4kSMcB7J5zxok8pfGaE` |
-| `fund_escrow` 0.115 NEAR | `GoB9D3NRAih5JNYs3MiaTGJx98Z8cptYHiGjZhd3TfsU` |
-| `assign_logistics_provider` | `EsJfnrqb1TjKzHQ57jmpKZ2Ls4k48GoyPG7Vpvfa9mP5` |
-| `register_shipment` | `5mK2AtGdaKgBKvzeYvLAXe3NkJLWv5RcxaDgp4RwZrRF` |
-| TEE verification (signed carrier payload) | `6WyNXvRGtwq9Eea9LawZms8YTrLKrX1AJM4oaKXuKmb4` |
-| `settle_logistics` | `J6i6b4Gx6EcxdkSXMWEgneZBtC5fXn3fbNnhane3o7LJ` |
-| `confirm_receipt` (buyer) | `6ohfAex6Pid6k1z55pQFj3bGhUhmHBFGM8FscTiG4wZs` |
+| `create_escrow` (seller) | `AAYvJ8n67kiHQn8npHYdfpTa25JobebqGDCSfuEJeULr` |
+| `accept_escrow` (buyer) | `HgDZ7D8nPkmYPxgbFzwYBGBsScKJjW3h1A2TvRkRJ8BY` |
+| `fund_escrow` 0.115 NEAR | `2mZvSAk99funVe3gUXDU4wXpVVLoo8pxzBqtNPhJUYC2` |
+| `assign_logistics_provider` | `BDb8wr3wySVrya4xvaY29MpU4wNu9kLQWfnGEMAxRycK` |
+| `register_shipment` | `8VcvAAM1LexgfS7SXatuSgdg1R4mdRwBas6J6kscfvwz` |
+| TEE verification (signed carrier payload) | `BEjCyuthDpMwL53obGY62C751aNQkjGYeZAUda81STxo` |
+| `settle_logistics` | `45ULkRNqd3Ya3LwEyxLTm8BLy95mphPTGGq6Ygwcqa5s` |
+| `confirm_receipt` (buyer) | `CorSpp82LnTaqL1wSKXLXAev3Ff1mAFvjgG1ZzA8texY` |
 
-The live security probe **`SWFT-563283`** also proved that replacing a committed provider reverts
-(`C4nTu67CaQrGVUVqhwCzTs1q5tzxdHqUnuoibQoKyfNY`), while the original provider can be confirmed.
-After the seller opened a dispute (`8D3SfdDpTjsZdeMoZSfxiYuZZfN4mVPHhxVMajtyLTJR`), the buyer
-claimed the no-dispatch refund (`2vkxDjV4EAPdyj4sFudGPVd5uwJfkuJ8SabPAzqAd3RN`); the final state
-is `Refunded` and refund reputation moved after payout. Deploy key deletion:
-`GPA8AfRemcEgnkVCL8CtwZJ6AcHaT18Q5yfeqwbdJkDg`; the deployed WASM SHA-256 is
-`2a0e388507a3ea001442d66dc2e58dc43c2abae6990bfcc446b312b28067f1ba`.
+The marketplace regression **`SWFT-951559`** committed a tracking id at creation while keeping
+`shipment_registered=false`, then refunded the buyer from `ShipmentPending` after the dispatch
+deadline (`B8HT4jcxXTmLghMRig9d1zQWNr4xHyBtMeEuGf15o2vC`). Deploy key deletion:
+`HsuYFphPiJE9wL3Ye8LRTBkpWrCSMgBmLpGFKm7utFNN`; the deployed WASM SHA-256 is
+`063e3b67b486a4ff5c000ab2c0c1f87c3a7cddda1c81604881e93fb0983d1574`.
 
 ### Governance (Sputnik DAO review board)
 
@@ -193,16 +191,21 @@ cd tools/web-bundle && npm install && npm run build   # writes sweeft/static/js/
 ## Deploy on Render
 
 The repo ships a [Render blueprint](render.yaml): a Python web service plus a managed Postgres,
-with WhiteNoise serving static files and migrations applied during the build.
+with WhiteNoise serving static files and migrations applied during the build. `start.sh` also runs
+the relayer and standalone Demo Carrier loops beside the web process when their credentials are
+configured, so the free-plan demo does not require separate paid workers.
 
 1. Push this repo to GitHub, then in Render choose **New + → Blueprint** and pick the repo.
 2. Apply — Render creates the database, generates `DJANGO_SECRET_KEY`, and wires `DATABASE_URL`,
-   allowed hosts and TLS cookies. It prompts for the optional `sync: false` secrets
-   (carrier / co-pilot / relayer keys); paste them from `sweeft/.env` or leave blank.
-3. Open the service URL — the footer shows the live contract account.
+   allowed hosts and TLS cookies. It prompts for the `sync: false` secrets (carrier signing key,
+   carrier API key, co-pilot agent key and relayer key); paste them from `sweeft/.env`.
+3. Seed the hosted demo once from the Render Shell: `python manage.py seed_demo --issue-carrier-key`.
+   Put the printed `swft_…` credential in `DEMO_CARRIER_API_KEY` and restart the service. Without
+   credentials the manual on-chain fallbacks still work; no carrier events or relayer calls are faked.
+4. Open the service URL — the footer shows the live contract account.
 
-Free-plan notes: the web service spins down when idle (the first request warms it up), and the
-free Postgres is fine for the demo. Nothing secret lives in the repo — all keys come from env vars.
+Free-plan notes: the web service spins down when idle (the first request warms it up), including its
+companion automation loops. The free Postgres is fine for the demo. Nothing secret lives in the repo.
 
 ## Demo workflow
 
@@ -295,11 +298,13 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md`):
 | Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR). |
 | TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline and pickup-before-delivery. |
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
-| Seller could replace the logistics beneficiary after funding | A provider committed at creation can only be confirmed; otherwise the first assignment is final. Replacement reverts, verified live on `SWFT-563283`. |
+| Seller could replace the logistics beneficiary after funding | A provider committed at creation can only be confirmed; otherwise the first assignment is final. Replacement and confirmation paths have contract regression coverage. |
 | Failed refunds / premature reputation | Refund callbacks restore the exact prior state; completion and refund reputation move only after their transfers succeed. |
+| Creation-time tracking blocked no-dispatch refunds | Tracking is only an identifier at creation; `shipment_registered` becomes true solely through `register_shipment`. Pre-registered marketplace escrows retain the buyer refund path. |
+| Failed dispute seller leg corrupted the split pot | Resolution stores the prior logistics-payment flag and restores it on failure, so retries neither deduct unpaid logistics nor double-count paid logistics. Tracking numbers and dispute reasons are length-capped. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
-| Frozen funds if the board stalls | Buyer **dispute and long-stop refunds**: unresolved disputes default to a buyer refund after 7 days; undelivered shipments have a 30-day long-stop. No-dispatch refunds work even when the seller opened the dispute, verified live on `SWFT-563283`. |
-| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-pay.testnet` (tx `GPA8AfRemcEgnkVCL8CtwZJ6AcHaT18Q5yfeqwbdJkDg`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
+| Frozen funds if the board stalls | Buyer **dispute and long-stop refunds**: unresolved disputes default to a buyer refund after 7 days; undelivered shipments have a 30-day long-stop. No-dispatch refunds work with creation-time tracking, verified live on `SWFT-951559`, and with seller-opened disputes in regression tests. |
+| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-market.testnet` (tx `HsuYFphPiJE9wL3Ye8LRTBkpWrCSMgBmLpGFKm7utFNN`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
 | Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
@@ -334,7 +339,7 @@ Residual (disclosed) risks:
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
 - Rust unit tests: `cargo test` in `contracts/sweeft` — state machine, permissionless
   verification/settlement/release gates, beneficiary immutability, dispute deadlines, payout
-  rollback and post-payout reputation (54 tests).
+  rollback, dispute-resolution retries, storage caps and post-payout reputation (62 tests).
 
 ## Known limitations / roadmap
 

@@ -7,7 +7,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 DEPLOYER="${DEPLOYER:-steepdata3968.testnet}"
 DEPLOYER_KEY="${DEPLOYER_KEY:?set DEPLOYER_KEY=ed25519:...}"
-SWEEFT_ACCOUNT="${SWEEFT_ACCOUNT:-sweeft-pay.testnet}"
+SWEEFT_ACCOUNT="${SWEEFT_ACCOUNT:-sweeft-market.testnet}"
 BUDGET_ACCOUNT="${BUDGET_ACCOUNT:-budget.${DEPLOYER}}"
 AGENT_ACCOUNT="${AGENT_ACCOUNT:-agent.${DEPLOYER}}"
 RELAYER_ACCOUNT="${RELAYER_ACCOUNT:-relayer.${DEPLOYER}}"
@@ -29,7 +29,7 @@ echo "== 2. Build the OutLayer verification module (WASI Preview 2)"
 
 echo "== 3. Create subaccounts (skip if they exist)"
 for acct in "$SWEEFT_ACCOUNT" "$BUDGET_ACCOUNT" "$AGENT_ACCOUNT" "$RELAYER_ACCOUNT"; do
-  if ! near account view-account "$acct" network-config testnet now >/dev/null 2>&1; then
+  if ! near account view-account-summary "$acct" network-config testnet now >/dev/null 2>&1; then
     near account create-account fund-myself "$acct" '2 NEAR' autogenerate-new-keypair save-to-keychain \
       sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
   fi

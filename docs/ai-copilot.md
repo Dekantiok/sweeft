@@ -102,7 +102,7 @@ even a fully compromised agent key can never exceed the deposited budget.
   → proposal card with total cost and affordability
 - “check my balance” → native NEAR balance reply
 - “score for seller.steepdata3968.testnet” → on-chain trust summary
-- “dispute SWFT-374253 goods arrived damaged” → dispute proposal card
+- “dispute SWFT-611104 goods arrived damaged” → dispute proposal card
 - “pay 0.025 NEAR to seller.steepdata3968.testnet for invoice 12” → payment card →
   “Pay now” settles from the deposited budget (deposit flow if none yet)
 - Real provider (NEAR AI Cloud) verified: `run_agent` returned

@@ -49,7 +49,7 @@ def chain(**overrides):
     RELAYER_ENABLED=True,
     RELAYER_ACCOUNT="relayer.testnet",
     RELAYER_PRIVATE_KEY="ed25519:dummy",
-    SWEEFT_CONTRACT="sweeft-pay.testnet",
+    SWEEFT_CONTRACT="sweeft-market.testnet",
     RELAYER_VERIFICATION_DEPOSIT_YOCTO=10_000_000_000_000_000_000_000,
 )
 class RelayerTickTests(TestCase):

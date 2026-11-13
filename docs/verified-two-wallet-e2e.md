@@ -1,56 +1,59 @@
 # Verified: end-to-end on NEAR testnet
 
-Current deployment: escrow **`sweeft-pay.testnet`**, review board **`sweeft-board.testnet`** (both
-keyless/immutable — deploy keys deleted), TEE project **`steepdata3968.testnet/sweeft-verify`**,
-carrier signing key registered on-chain.
+Current deployment: escrow **`sweeft-market.testnet`**, review board **`sweeft-board.testnet`**
+(both keyless/immutable — deploy keys deleted), TEE project
+**`steepdata3968.testnet/sweeft-verify`**, carrier signing key registered on-chain.
 
-## Lifecycle — `SWFT-374253` → `Completed`
+## Lifecycle — `SWFT-611104` → `Completed`
 
 | Step | Tx |
 |---|---|
-| `create_escrow` (seller) | `76mtZFGTKUGxiASXdmhMA2P7wPXpSJCTcKCb6gd4D1vr` |
-| `accept_escrow` (buyer) | `CvJr2CmyUqaBfYFpPG6UVMnYs4kSMcB7J5zxok8pfGaE` |
-| `fund_escrow` 0.115 NEAR | `GoB9D3NRAih5JNYs3MiaTGJx98Z8cptYHiGjZhd3TfsU` |
-| `assign_logistics_provider` | `EsJfnrqb1TjKzHQ57jmpKZ2Ls4k48GoyPG7Vpvfa9mP5` |
-| `register_shipment` | `5mK2AtGdaKgBKvzeYvLAXe3NkJLWv5RcxaDgp4RwZrRF` |
-| TEE verification (signed carrier payload) | `6WyNXvRGtwq9Eea9LawZms8YTrLKrX1AJM4oaKXuKmb4` |
-| `settle_logistics` | `J6i6b4Gx6EcxdkSXMWEgneZBtC5fXn3fbNnhane3o7LJ` |
-| `confirm_receipt` | `6ohfAex6Pid6k1z55pQFj3bGhUhmHBFGM8FscTiG4wZs` |
+| `create_escrow` (seller) | `AAYvJ8n67kiHQn8npHYdfpTa25JobebqGDCSfuEJeULr` |
+| `accept_escrow` (buyer) | `HgDZ7D8nPkmYPxgbFzwYBGBsScKJjW3h1A2TvRkRJ8BY` |
+| `fund_escrow` 0.115 NEAR | `2mZvSAk99funVe3gUXDU4wXpVVLoo8pxzBqtNPhJUYC2` |
+| `assign_logistics_provider` | `BDb8wr3wySVrya4xvaY29MpU4wNu9kLQWfnGEMAxRycK` |
+| `register_shipment` | `8VcvAAM1LexgfS7SXatuSgdg1R4mdRwBas6J6kscfvwz` |
+| TEE verification (signed carrier payload) | `BEjCyuthDpMwL53obGY62C751aNQkjGYeZAUda81STxo` |
+| `settle_logistics` | `45ULkRNqd3Ya3LwEyxLTm8BLy95mphPTGGq6Ygwcqa5s` |
+| `confirm_receipt` | `CorSpp82LnTaqL1wSKXLXAev3Ff1mAFvjgG1ZzA8texY` |
 
-Final state `Completed`; seller, logistics and platform payout flags all true. Payout deltas:
-seller **+0.1 NEAR**, logistics **+0.01 NEAR**, platform fee **+0.005 NEAR** to the board treasury.
-The signed carrier result verified on the first poll. Post-settlement reputation shows exactly one
-completion and 0.1 NEAR of volume for each party.
+Final state `Completed`; seller, logistics and platform payout flags all true. Payout allocations:
+seller **0.1 NEAR**, logistics **0.01 NEAR**, platform fee **0.005 NEAR** to the board treasury.
+The signed carrier result verified successfully. Reputation is written after the seller payout.
 
-## Live hardening probe — `SWFT-563283` → `Refunded`
+## Marketplace regression — `SWFT-951559` → `Refunded`
 
 | Step | Result / tx |
 |---|---|
-| Create with logistics beneficiary committed | `E37nHYxKBuYLbs35rZ7JCyUv5s9Loo6NLALh8PnBTiqa` |
-| Accept | `2a7WCmx3NdMdqancwXsxNFKpSrZierVn3izC8w6hPART` |
-| Fund 0.115 NEAR | `5887svuPegUAmGdpziTrhSzbyfpZsydzp1rfGGgPHqEW` |
-| Replace provider after funding | **reverted** — `logistics provider is fixed before funding`; `C4nTu67CaQrGVUVqhwCzTs1q5tzxdHqUnuoibQoKyfNY` |
-| Confirm original provider | `3EDeBWFg6mSdMRsuaEq2ei4TN1rMgFjKZamf3rikjRmJ` |
-| Seller opens dispute before dispatch | `8D3SfdDpTjsZdeMoZSfxiYuZZfN4mVPHhxVMajtyLTJR` |
-| Buyer refunds after dispatch deadline | `2vkxDjV4EAPdyj4sFudGPVd5uwJfkuJ8SabPAzqAd3RN` |
+| Create with provider and tracking id committed | `9ykb1W5NBq6giD5Q8ifYmRXBCwmgBzd6uhTufDH9L6zU` |
+| Accept | `fhXZedw8ZfcjLRsmytSurLuhr3vL8Pk63zw3mK8GQXi` |
+| Fund 0.115 NEAR | `EfGLW1qNyJqkNazregzydMcn2b4jioeXM7Qtmc2BaKQ5` |
+| Confirm original provider | `3ddXpcUf1XicnBp3M1VQACp1VERWnFS82dG3fmoW8d89` |
+| Before dispatch | state `ShipmentPending`, `shipment_registered=false` |
+| Buyer refunds after dispatch deadline | `B8HT4jcxXTmLghMRig9d1zQWNr4xHyBtMeEuGf15o2vC` |
 
-Final state `Refunded`; no shipment was registered and no logistics/seller/platform allocation was
-paid. `dispute_time_ms` returned the opening time, and the buyer's refund counter moved to one only
-after the refund transfer succeeded.
+Final state `Refunded`; the tracking id remained committed but was never treated as dispatch. No
+logistics/seller/platform allocation was paid, and refund reputation moved after the transfer.
 
 ## Deployment
 
-- Account creation: `E1JJXEmq8GCoWzzJdGpDPEmWwN4kqQZXCHKeEhLHY9sZ`
-- WASM deploy: `5A9N45ANcbZfVTA9UKs1YjebuUFdk47jLYAfSbWNfoCp`
-- Initialization: `DyosJCcz3AGPDRiBh3vkJCo6kC3eophK9m4LQDA5rdG1`
-- Board treasury configuration: `BpPF2u1KTknSXtUW6TGejMuPeXLnAwkzRaaeKXXVfQ6x`
-- Escrow deploy-key deletion: `GPA8AfRemcEgnkVCL8CtwZJ6AcHaT18Q5yfeqwbdJkDg`
+- Account creation: `FNEMvKecLwv6u51pmckfeeGQA6ZacdiF8kRcR4awMHci`
+- WASM deploy: `3bhnYWAsrjaSh5fHaSVGikphopVpEwvYQAr5ooWV5yRK`
+- Initialization: `Lg1qqAojTLWTwA4c17XhrERYoxHTYicHusfb3fMTinp`
+- Board treasury configuration: `5H3f1m9CdqhhfTduwPVPYcEWoZuFESZ8gdoMAnTwXBAr`
+- Escrow deploy-key deletion: `HsuYFphPiJE9wL3Ye8LRTBkpWrCSMgBmLpGFKm7utFNN`
 - Deployed and locally built WASM SHA-256 both:
-  `2a0e388507a3ea001442d66dc2e58dc43c2abae6990bfcc446b312b28067f1ba`
-- `view_access_key_list` on `sweeft-pay.testnet` returns an empty list.
+  `063e3b67b486a4ff5c000ab2c0c1f87c3a7cddda1c81604881e93fb0983d1574`
+- `view_access_key_list` on `sweeft-market.testnet` returns an empty list.
 - Review board `sweeft-board.testnet` remains keyless and council-governed at 2-of-3.
 
-## Exploit-path rejections
+## Regression coverage
+
+The 62 escrow unit tests cover beneficiary immutability, creation-time tracking, no-dispatch and
+long-stop refunds, dispute deadlines, failed settlement/refund rollback, resolution retries with
+paid and unpaid logistics, storage caps, carrier identity, inspection timing and post-payout
+reputation. Legacy-pool stakes cannot be claimed during a pending seller payout, and a successful
+buyer fallback refund finalizes the case so remaining stakes are claimable.
 
 | Attempt | On-chain result |
 |---|---|

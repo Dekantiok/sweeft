@@ -373,7 +373,6 @@ impl Sweeft {
         let id = self.generate_escrow_id();
 
         let tracking_number = tracking_number.filter(|t| !t.trim().is_empty());
-        let has_tracking = tracking_number.is_some();
         let escrow = Escrow {
             id: id.clone(),
             seller: seller.clone(),
@@ -394,7 +393,9 @@ impl Sweeft {
             inspection_period_ms,
             created_ms: env::block_timestamp() / 1_000_000,
             terms_hash,
-            shipment_registered: has_tracking,
+            // A tracking id can be committed at creation, but dispatch is only
+            // recorded by `register_shipment` after funding/provider assignment.
+            shipment_registered: false,
             verification_pending: false,
             pickup_verified: false,
             delivered_verified: false,
@@ -553,6 +554,7 @@ impl Sweeft {
             "only seller or provider can register the shipment"
         );
         require!(escrow.state == EscrowState::ShipmentPending, "wrong state");
+        require!(tracking_number.len() <= MAX_TRACKING_LEN, "tracking_number too long");
         // An empty tracking number reuses the one committed at creation (the
         // marketplace flow pre-registers it so OutLayer can track from day one).
         let tracking = if tracking_number.trim().is_empty() {
@@ -923,6 +925,9 @@ impl Sweeft {
                 }
                 "refund" => {
                     refund_return_state_map().remove(&escrow_id);
+                    // A fallback refund resolves any legacy dispute case too;
+                    // otherwise voter stakes would remain locked forever.
+                    close_arbitration_case(&escrow_id, 0);
                     if let Some(escrow) = self.escrows.get(&escrow_id).cloned() {
                         if !counted(&escrow_id, COUNTED_REFUND) {
                             mark_counted(&escrow_id, COUNTED_REFUND);
@@ -960,6 +965,7 @@ impl Sweeft {
     /// Buyer reports a problem: funds stay locked, escrow moves to review.
     pub fn report_problem(&mut self, escrow_id: String, reason_hash: String) {
         let mut escrow = self.internal_get(&escrow_id);
+        require!(reason_hash.len() <= MAX_HASH_LEN, "reason_hash too long");
         require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer reports a problem");
         require!(
             escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
@@ -980,6 +986,7 @@ impl Sweeft {
     /// either party or an inactive board from locking the buyer's funds forever.
     pub fn open_dispute(&mut self, escrow_id: String, reason_hash: String) {
         let mut escrow = self.internal_get(&escrow_id);
+        require!(reason_hash.len() <= MAX_HASH_LEN, "reason_hash too long");
         let caller = env::predecessor_account_id();
         let is_buyer = Some(&caller) == escrow.buyer.as_ref();
         let is_seller = caller == escrow.seller;
@@ -1107,6 +1114,7 @@ impl Sweeft {
         // split rather than stranded.
         let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
         let remaining = escrow.total_amount.0 - logistics_deduction;
+        resolution_logistics_map().insert(escrow_id.clone(), escrow.logistics_paid);
         escrow.logistics_paid = true;
         let seller_part = remaining * winning_pct as u128 / 100;
         let buyer_part = remaining - seller_part;
@@ -1127,22 +1135,41 @@ impl Sweeft {
 
     #[private]
     pub fn finish_arbitration_payout(&mut self, escrow_id: String) {
-        if !payout_ok(0) {
+        self.handle_resolution_payout(escrow_id, payout_ok(0), "arbitration");
+    }
+
+    fn handle_resolution_payout(&mut self, escrow_id: String, succeeded: bool, label: &str) {
+        if !succeeded {
             review_due_map().insert(escrow_id.clone(), U128(0));
             let mut escrow = self.internal_get(&escrow_id);
             escrow.seller_paid = false;
             escrow.platform_paid = false;
+            escrow.logistics_paid = resolution_logistics_map()
+                .remove(&escrow_id)
+                .unwrap_or(true);
             escrow.state = EscrowState::ReviewRequired;
-            self.escrows.insert(escrow_id, escrow);
-            log!("arbitration seller payout failed — returned to ReviewRequired");
+            self.escrows.insert(escrow_id.clone(), escrow);
+            // The disabled legacy pool remains internally consistent if ever
+            // used without a board: a failed seller leg can be finalized again.
+            let mut map = arbitration_map();
+            if let Some(mut case) = map.get(&escrow_id).cloned() {
+                case.finalized = false;
+                map.insert(escrow_id.clone(), case);
+            }
+            log!("{} seller payout failed — returned to ReviewRequired", label);
             return;
         }
+        resolution_logistics_map().remove(&escrow_id);
         self.pay_review_due(&escrow_id);
     }
 
     /// Voters reclaim their stake after finalization. Each stake is claimable
     /// exactly once (pull pattern — no mass payout loops).
     pub fn claim_stake(&mut self, escrow_id: String) -> Promise {
+        require!(
+            resolution_logistics_map().get(&escrow_id).is_none(),
+            "resolution payout pending"
+        );
         let mut map = arbitration_map();
         let mut case = map.get(&escrow_id).cloned().expect("no arbitration case for this dispute");
         require!(case.finalized, "arbitration not finalized yet");
@@ -1319,6 +1346,7 @@ impl Sweeft {
         let remaining = escrow.total_amount.0 - logistics_deduction;
         // Record that no separate logistics payout will happen (folded above);
         // `settle_logistics` is also state-gated, so this can never double-pay.
+        resolution_logistics_map().insert(escrow_id.clone(), escrow.logistics_paid);
         escrow.logistics_paid = true;
         // Unlock any open arbitration stakes (the case is closed by the board).
         close_arbitration_case(&escrow_id, seller_pct);
@@ -1343,19 +1371,7 @@ impl Sweeft {
     /// retried without re-splitting or double-paying the seller.
     #[private]
     pub fn finish_review_payout(&mut self, escrow_id: String) {
-        if !payout_ok(0) {
-            // Seller leg failed: nothing was paid; release the due slot and
-            // return to review so the board can split again.
-            review_due_map().insert(escrow_id.clone(), U128(0));
-            let mut escrow = self.internal_get(&escrow_id);
-            escrow.seller_paid = false;
-            escrow.platform_paid = false;
-            escrow.state = EscrowState::ReviewRequired;
-            self.escrows.insert(escrow_id, escrow);
-            log!("review seller payout failed — returned to ReviewRequired");
-            return;
-        }
-        self.pay_review_due(&escrow_id);
+        self.handle_resolution_payout(escrow_id, payout_ok(0), "review");
     }
 
     /// Permissionless retry for the buyer leg of a resolved dispute. Funds can
@@ -1646,6 +1662,12 @@ fn review_due_map() -> LookupMap<String, U128> {
     LookupMap::new(b"rd1".to_vec())
 }
 
+/// Whether logistics had actually been paid before a resolution attempted to
+/// fold it into the split. Restored when the seller leg fails.
+fn resolution_logistics_map() -> LookupMap<String, bool> {
+    LookupMap::new(b"rl1".to_vec())
+}
+
 fn review_due(escrow_id: &str) -> u128 {
     review_due_map().get(&escrow_id.to_string()).copied().unwrap_or(U128(0)).0
 }
@@ -1849,6 +1871,14 @@ mod tests {
     }
 
     fn create_native_with_provider(c: &mut Sweeft, provider: Option<AccountId>) -> String {
+        create_native_with_provider_and_tracking(c, provider, None)
+    }
+
+    fn create_native_with_provider_and_tracking(
+        c: &mut Sweeft,
+        provider: Option<AccountId>,
+        tracking_number: Option<String>,
+    ) -> String {
         testing_env!(as_account(accounts(1))
             .block_timestamp(1)
             .attached_deposit(NearToken::from_near(1))
@@ -1865,7 +1895,7 @@ mod tests {
             MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(),
             provider,
-            None,
+            tracking_number,
         )
     }
 
@@ -1911,6 +1941,31 @@ mod tests {
         c.fund_escrow(id.clone());
         testing_env!(as_account(accounts(1)).build());
         c.assign_logistics_provider(id, accounts(3));
+    }
+
+    #[test]
+    fn creation_tracking_does_not_count_as_dispatch() {
+        let mut c = setup();
+        let id = create_native_with_provider_and_tracking(
+            &mut c,
+            Some(accounts(4)),
+            Some("DEMO-PRE-1".to_string()),
+        );
+        assert!(!c.get_escrow(id.clone()).unwrap().shipment_registered);
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(1)).build());
+        c.assign_logistics_provider(id.clone(), accounts(4));
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        assert_eq!(escrow.state, EscrowState::ShipmentPending);
+        assert!(!escrow.shipment_registered);
+        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        c.refund_buyer(id.clone());
+        assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
     }
 
     #[test]
@@ -2226,11 +2281,53 @@ mod tests {
         );
     }
 
+    #[test]
+    #[should_panic(expected = "tracking_number too long")]
+    fn shipment_registration_caps_tracking_length() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.state = EscrowState::ShipmentPending;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(1)).build());
+        c.register_shipment(id, "x".repeat(MAX_TRACKING_LEN + 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "reason_hash too long")]
+    fn open_dispute_caps_reason_length() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(1)).build());
+        c.open_dispute(id, "x".repeat(MAX_HASH_LEN + 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "reason_hash too long")]
+    fn problem_report_caps_reason_length() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(2)).build());
+        c.report_problem(id, "x".repeat(MAX_HASH_LEN + 1));
+    }
+
     /// Shipped native escrow escalated by the seller to `ReviewRequired`.
     fn disputed_native(c: &mut Sweeft) -> String {
         let id = shipped_native(c);
         testing_env!(as_account(accounts(1)).block_timestamp(40_000_000).build());
         c.open_dispute(id.clone(), "buyer unresponsive".to_string());
+        id
+    }
+
+    fn finalized_arbitration_with_stake(c: &mut Sweeft) -> String {
+        let id = disputed_native(c);
+        gov_config_map().remove(&"arbiter".to_string());
+        testing_env!(as_account(accounts(5))
+            .attached_deposit(NearToken::from_millinear(50))
+            .build());
+        c.vote_dispute(id.clone(), 60);
+        testing_env!(as_account(accounts(5)).build());
+        c.finalize_arbitration(id.clone());
         id
     }
 
@@ -2262,6 +2359,66 @@ mod tests {
         // Every unit of the escrow is allocated: seller + buyer == total.
         assert_eq!(seller_part + buyer_part, total, "all balances must sum to total_amount");
         assert_eq!(buyer_part, total - seller_part);
+    }
+
+    #[test]
+    fn failed_review_restores_unpaid_logistics_and_full_split_pot() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        assert!(c.get_escrow(id.clone()).unwrap().logistics_paid);
+        c.handle_resolution_payout(id.clone(), false, "review");
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        assert_eq!(escrow.state, EscrowState::ReviewRequired);
+        assert!(!escrow.logistics_paid);
+        assert_eq!(review_due(&id), 0);
+        c.resolve_review(id.clone(), 60);
+        let total = c.get_escrow(id.clone()).unwrap().total_amount.0;
+        assert_eq!(review_due(&id), total * 40 / 100);
+    }
+
+    #[test]
+    fn failed_review_preserves_already_paid_logistics() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.logistics_paid = true;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        c.handle_resolution_payout(id.clone(), false, "review");
+        assert!(c.get_escrow(id.clone()).unwrap().logistics_paid);
+        c.resolve_review(id.clone(), 60);
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        let remaining = escrow.total_amount.0 - escrow.logistics_amount.0;
+        assert_eq!(review_due(&id), remaining * 40 / 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "resolution payout pending")]
+    fn arbitration_stake_cannot_be_claimed_during_seller_payout() {
+        let mut c = setup();
+        let id = finalized_arbitration_with_stake(&mut c);
+        testing_env!(as_account(accounts(5)).build());
+        c.claim_stake(id);
+    }
+
+    #[test]
+    fn buyer_fallback_refund_unlocks_arbitration_stakes() {
+        let mut c = setup();
+        let id = finalized_arbitration_with_stake(&mut c);
+        c.handle_resolution_payout(id.clone(), false, "arbitration");
+        testing_env!(as_account(accounts(2))
+            .block_timestamp((40 + DISPUTE_TIMEOUT_MS) * 1_000_000)
+            .build());
+        c.refund_buyer(id.clone());
+        c.handle_payout_result(id.clone(), "refund".to_string(), true);
+        testing_env!(as_account(accounts(5)).build());
+        c.claim_stake(id.clone());
+        let case = c.arbitration_status(id).unwrap();
+        assert!(case.finalized);
+        assert!(case.votes[0].claimed);
     }
 
     #[test]

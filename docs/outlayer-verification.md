@@ -19,9 +19,9 @@ Input (stdin JSON, built by the contract):
 
 ```json
 {
-  "escrow_id": "SWFT-374253",
+  "escrow_id": "SWFT-611104",
   "expected": { "tracking_number": "DEMO-…", "provider_wallet": "logistics.….testnet",
-                 "shipment_id": "SHIP-SWFT-374253" },
+                 "shipment_id": "SHIP-SWFT-611104" },
   "carrier":  { "provider_id": "LOG-DEMO-001", "tracking_number": "DEMO-…",
                  "status": "DELIVERED", "events": [ {"status": "PICKED_UP"}, … ] }
 }
@@ -30,7 +30,7 @@ Input (stdin JSON, built by the contract):
 Output (stdout, exactly one JSON value; the contract deserializes it):
 
 ```json
-{ "escrow_id": "SWFT-374253", "tracking_number": "DEMO-…", "provider_id": "LOG-DEMO-001",
+{ "escrow_id": "SWFT-611104", "tracking_number": "DEMO-…", "provider_id": "LOG-DEMO-001",
   "reported_status": "DELIVERED", "verified": true, "reason": "carrier report is internally consistent…" }
 ```
 

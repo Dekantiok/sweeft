@@ -8,7 +8,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
-SWEEFT="${SWEEFT:-sweeft-pay.testnet}"
+SWEEFT="${SWEEFT:-sweeft-market.testnet}"
 SELLER="${SELLER:-seller.steepdata3968.testnet}"
 BUYER="${BUYER:-steepdata3968.testnet}"
 PROVIDER="${PROVIDER:-logistics.steepdata3968.testnet}"
@@ -23,7 +23,7 @@ TOTAL=$(python3 -c "print($SELLER_AMOUNT + $LOGISTICS_AMOUNT + $PLATFORM_FEE)") 
 
 call() { # account key method args [deposit] [gas]
   near contract call-function as-transaction "$SWEEFT" "$3" json-args "$4" \
-    prepaid-gas "${6:-100} Tgas" attached-deposit "${5:-0 NEAR}" sign-as "$1" \
+    prepaid-gas "${6:-50} Tgas" attached-deposit "${5:-0 NEAR}" sign-as "$1" \
     network-config testnet sign-with-legacy-keychain --signer-public-key "$2" send
 }
 bal() { # native NEAR balance
