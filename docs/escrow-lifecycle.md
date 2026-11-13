@@ -18,7 +18,9 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
                                                           Completed   ReviewRequired
 ```
 
-\* `refund_buyer` requires the dispatch deadline to have passed AND no shipment registered.
+\* `refund_buyer` is available after the dispatch deadline when no shipment was registered,
+including from `ReviewRequired`. Shipped escrows also have a 30-day long-stop, and unresolved
+disputes have a seven-day buyer-refund fallback.
 
 ## Step by step
 
@@ -29,10 +31,11 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
    the link is only a locator — acceptance is still a wallet-signed transaction.
 2. **Accept** (buyer) — `accept_escrow(escrow_id, invite_secret?)`. The first valid invitee
    presenting the secret becomes the buyer in Case B.
-3. **Fund** (buyer) — NEP-141 `ft_transfer_call` with `msg = escrow_id` and `amount = total`.
-   `ft_on_transfer` validates token contract, buyer, exact amount, state `Approved`, and
-   rejects duplicates by state; anything invalid is returned to the sender (FT refund).
-4. **Assign provider** (seller) — `assign_logistics_provider(escrow_id, provider)`.
+3. **Fund** (buyer) — payable `fund_escrow(escrow_id)` attaches the exact native-NEAR total.
+   The contract validates the buyer, amount and `Approved` state; duplicates are rejected.
+4. **Assign provider** (seller) — `assign_logistics_provider(escrow_id, provider)` confirms the
+   provider committed at creation, or fixes the first provider if none was committed. It cannot
+   replace an existing beneficiary.
 5. **Register shipment** (seller or provider) — `register_shipment(escrow_id, tracking_number)`.
    Registering a tracking number is NOT proof of pickup and unlocks nothing by itself.
 6. **Verify delivery** (seller, provider or buyer) — `request_delivery_verification(escrow_id,
@@ -42,12 +45,14 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
    `AwaitingBuyerConfirmation` (for DELIVERED).
 7. **Settle logistics** (seller or provider) — allowed once pickup is verified; pays the recorded
    provider in native NEAR.
-8. **Confirm receipt** (buyer) — requires `delivered_verified` and no open problem. Pays the
-   seller, then the platform fee (chained callback). A failed transfer rolls the flags back
-   (`on_payout_result`) so it can be retried — the contract never reports a payment that failed.
-9. **Report problem** (buyer) — state `ReviewRequired`; funds stay locked. The disclosed operator
-   proposal `resolve_review(seller_pct)` splits the remaining balance; only the review board can
-   execute it.
+8. **Confirm receipt** (buyer) — requires `delivered_verified` and no open problem. Pays any due
+   logistics allocation, then the seller and platform fee through chained callbacks. Alternatively,
+   anyone can call `release_after_inspection` after the displayed inspection deadline. Failed
+   transfers roll the relevant flags back; reputation moves only after the seller payout succeeds.
+9. **Report problem** (buyer or seller) — state `ReviewRequired`; funds stay locked. The review
+   board's `resolve_review(seller_pct)` proposal splits the remaining balance, including the platform
+   fee and unpaid logistics share. After seven days without resolution the buyer can claim the
+   remaining balance; no board action is then required.
 
 ## Authorization summary
 
@@ -56,11 +61,11 @@ PendingAcceptance ──accept──► Approved ──fund──► Funded ─�
 | Create agreement | seller (any wallet creating it) |
 | Accept / reject | preassigned buyer, or first invitee presenting the secret |
 | Fund | the accepted buyer, exact total, native NEAR |
-| Assign provider | seller |
+| Assign/confirm immutable provider | seller |
 | Register shipment | seller or the assigned provider |
-| Request verification | any party to the escrow |
+| Request verification | permissionless; state and deposit gated |
 | Record verification | **only** the contract's own callback from OutLayer |
-| Settle logistics | seller or provider (after verified pickup) |
-| Confirm receipt / report problem | buyer |
-| Claim refund | buyer (deadline + no shipment) |
-| Resolve review | platform owner (disclosed manual path) |
+| Settle logistics | permissionless after verified pickup |
+| Confirm receipt / report problem | buyer (seller may also open a dispute) |
+| Claim refund | buyer (dispatch, long-stop or dispute deadline) |
+| Resolve review | review board only |

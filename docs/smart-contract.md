@@ -1,6 +1,7 @@
 # Smart contract
 
-Rust, `near-sdk` 5.x, deployed at **`sweeft.testnet`**.
+Rust, `near-sdk` 5.x, deployed at **`sweeft-pay.testnet`**. The deployment is keyless/immutable
+and includes the beneficiary, dispute, rollback and post-payout reputation fixes described below.
 The contract is the financial and authorization source of truth.
 
 ## Methods
@@ -8,8 +9,8 @@ The contract is the financial and authorization source of truth.
 ### Lifecycle
 | Method | Who | Effect |
 |---|---|---|
-| `new(owner, outlayer_contract, outlayer_project, platform_fee_bps)` | init | configure |
-| `create_escrow(product_name, product_desc_hash, seller_amount, logistics_amount, buyer?, invite_hash?, token, dispatch_deadline_ms, inspection_period_ms, terms_hash)` | anyone (becomes seller) | new escrow, fee enforced, seller indexed, buyer pending |
+| `new(owner, outlayer_contract, outlayer_project, platform_fee_bps, arbiter, provider_id?, carrier_pubkey?)` | init | configure board and carrier trust roots |
+| `create_escrow(..., terms_hash, logistics_provider?, tracking_number?)` | anyone (becomes seller) | new escrow, fee enforced, seller indexed, buyer pending |
 | `accept_escrow(escrow_id, invite_secret?)` | buyer / invitee | `Approved` |
 | `reject_escrow(escrow_id)` | buyer | `Rejected` |
 | `cancel_escrow(escrow_id)` | seller | `Cancelled` (pre-acceptance) |
@@ -22,7 +23,7 @@ helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer`
 ### Logistics & verification
 | Method | Who | Effect |
 |---|---|---|
-| `assign_logistics_provider(escrow_id, provider)` | seller | records beneficiary |
+| `assign_logistics_provider(escrow_id, provider)` | seller | confirms the pre-committed provider or fixes the first one; replacement rejected |
 | `register_shipment(escrow_id, tracking_number)` | seller/provider | `Shipped` (unlocks nothing by itself) |
 | `request_delivery_verification(escrow_id, carrier_payload)` — payable | any party | calls OutLayer, results via callback |
 | `on_verification_result(escrow_id)` — `#[private]` | contract itself | records TEE outcome |
@@ -36,7 +37,7 @@ helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer`
 | `report_problem(escrow_id, reason_hash)` / `open_dispute(...)` | buyer/seller | `ReviewRequired`, funds locked |
 | `resolve_review(escrow_id, seller_pct)` | review board (DAO) only | splits remaining balance; marks folded logistics paid; stores the buyer remainder |
 | `retry_review_buyer_payout(escrow_id)` | permissionless | re-attempts only the stored buyer remainder after a failed leg |
-| `refund_buyer(escrow_id)` | buyer | after dispatch deadline, no shipment (exactly-once reputation) |
+| `refund_buyer(escrow_id)` | buyer | no-dispatch deadline, 30-day long-stop, or 7-day unresolved-dispute fallback; exact-state rollback and post-success reputation |
 | `retry_platform_payout(escrow_id)` | permissionless | re-attempts a failed platform-fee payout |
 | `update_platform_fee_bps(bps)` | owner or board | future agreements only |
 
@@ -57,16 +58,17 @@ helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer`
 ### Views
 `get_escrow(id)`, `escrows_for(account)`, `pending_for(account)`, `get_config()`,
 `get_gov_info()`, `get_provider_id()`, `get_allowed_token()`, `arbitration_status(id)`,
-`delivery_time_ms(id)`, `reputation_of(account)`, `escrows_range(start, limit)`.
+`delivery_time_ms(id)`, `dispute_time_ms(id)`, `reputation_of(account)`, `escrows_range(start, limit)`.
 
 ## Security properties
 
-- Every state transition validated; permissions enforced on-chain; beneficiary addresses immutable
-  after funding.
+- Every state transition validated; permissions enforced on-chain; a logistics beneficiary, once
+  committed or assigned, can never be replaced.
 - Verification flags are written **only** by the `#[private]` OutLayer callback.
 - Idempotency: per-leg flags + state checks prevent double settlement; failed native or FT
   transfers roll their flags back (`on_payout_result`) so a payout is never falsely reported, and
-  a failed buyer leg never un-marks a paid seller leg.
+  a failed buyer leg never un-marks a paid seller leg. Refund callbacks restore the prior state.
+  Reputation changes only after the corresponding seller or refund transfer succeeds.
 - Creation requires a storage deposit and bounded strings; per-account indexes and pending lists
   are capped; the token field is an allowlist. Reputation counters are exactly-once and
   value-filtered (anti-wash).
@@ -74,8 +76,8 @@ helper transfers native NEAR for `token: "near"` escrows and calls `ft_transfer`
 - Duplicate funding rejected by state (`Approved` → `Funded` once); wrong token / amount / buyer
   refunded by `ft_on_transfer`.
 - Honest TEE scope: the callback records the attested outcome, the contract enforces tracking and
-  carrier-provider identity, and the verifier enforces shipment identity + timeline consistency;
-  carrier authenticity itself needs signed carrier reports (roadmap).
+  carrier-provider identity, and the verifier enforces shipment identity + timeline consistency and
+  mandatory ed25519 carrier signatures against the board-configured public key.
 
 ## Build & deploy
 
@@ -87,7 +89,7 @@ cargo install cargo-near   # or prebuilt release
 near contract deploy sweeft.<parent>.testnet use-file contracts/sweeft/target/near/sweeft.wasm \
   without-init-call network-config testnet sign-with-legacy-keychain send
 near contract call-function as-transaction sweeft.<parent>.testnet new \
-  json-args '{"owner":"<parent>.testnet","outlayer_contract":"outlayer.testnet","outlayer_project":"<parent>.testnet/sweeft-verify","platform_fee_bps":500}' \
+  json-args '{"owner":"<parent>.testnet","outlayer_contract":"outlayer.testnet","outlayer_project":"<parent>.testnet/sweeft-verify","platform_fee_bps":500,"arbiter":"<board>.testnet","provider_id":"LOG-DEMO-001","carrier_pubkey":"<64 hex chars>"}' \
   prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as sweeft.<parent>.testnet network-config testnet sign-with-legacy-keychain send
 ```
 

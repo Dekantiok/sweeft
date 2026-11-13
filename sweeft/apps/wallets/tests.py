@@ -215,7 +215,7 @@ class AccountKeyBindingTests(SimpleTestCase):
                         "access_key": {
                             "permission": {
                                 "FunctionCall": {
-                                    "receiver_id": "sweeft.testnet",
+                                    "receiver_id": "sweeft-pay.testnet",
                                     "method_names": ["pay"],
                                 }
                             }

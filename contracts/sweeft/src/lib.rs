@@ -65,6 +65,10 @@ const MIN_INSPECTION_PERIOD_MS: u64 = 3_600_000; // 1 hour
 /// buyer may reclaim the unspent balance after this grace period. Prevents
 /// frozen funds when dispute resolution stalls.
 const LONG_STOP_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
+/// A dispute cannot lock the buyer's remaining funds indefinitely. If the
+/// board has not resolved it within seven days, the buyer can claim the
+/// remaining balance (less any logistics allocation already paid).
+const DISPUTE_TIMEOUT_MS: u64 = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[borsh(crate = "near_sdk::borsh")]
@@ -522,13 +526,18 @@ impl Sweeft {
     // Logistics and shipment
     // ------------------------------------------------------------------
 
-    /// Seller assigns an approved logistics provider (recorded beneficiary).
+    /// Seller confirms the logistics beneficiary after funding. A provider
+    /// committed at creation can only be confirmed, never replaced; otherwise
+    /// the first post-funding assignment fixes it for the rest of the escrow.
     pub fn assign_logistics_provider(&mut self, escrow_id: String, provider: AccountId) {
         let mut escrow = self.internal_get(&escrow_id);
         require!(env::predecessor_account_id() == escrow.seller, "only the seller assigns the provider");
         require!(escrow.state == EscrowState::Funded, "escrow not funded");
         require!(provider != escrow.seller, "provider must differ from seller");
-        escrow.logistics_provider = Some(provider);
+        match &escrow.logistics_provider {
+            Some(current) => require!(current == &provider, "logistics provider is fixed before funding"),
+            None => escrow.logistics_provider = Some(provider),
+        }
         escrow.state = EscrowState::ShipmentPending;
         self.escrows.insert(escrow_id, escrow);
     }
@@ -783,25 +792,10 @@ impl Sweeft {
         escrow.platform_paid = true;
         let seller_amount = escrow.seller_amount;
         let seller = escrow.seller.clone();
-        let buyer = escrow.buyer.clone().expect("buyer set");
         let token = escrow.token.clone();
         let provider = escrow.logistics_provider.clone();
         let logistics_amount = escrow.logistics_amount;
         self.escrows.insert(escrow_id.to_string(), escrow);
-
-        // Trust record: counted once per escrow, above the anti-wash minimum,
-        // for both explicit confirmation and the timeout release.
-        if !counted(escrow_id, COUNTED_COMPLETION) && seller_amount.0 >= MIN_COUNTED_AMOUNT_YOCTO {
-            mark_counted(escrow_id, COUNTED_COMPLETION);
-            bump_reputation(&seller, |r| {
-                r.completed_as_seller += 1;
-                r.volume.0 += seller_amount.0;
-            });
-            bump_reputation(&buyer, |r| {
-                r.completed_as_buyer += 1;
-                r.volume.0 += seller_amount.0;
-            });
-        }
 
         if logistics_due_now {
             payout(token, provider.expect("provider checked"), logistics_amount).then(
@@ -848,7 +842,14 @@ impl Sweeft {
     /// completion flags back so the buyer can retry.
     #[private]
     pub fn finish_platform(&mut self, escrow_id: String) {
-        if !payout_ok(0) {
+        self.handle_seller_payout(escrow_id, payout_ok(0));
+    }
+
+    /// Reputation is a receipt of settlement, not merely an attempt. Count the
+    /// completion only after the seller transfer succeeds; failed seller or
+    /// logistics legs roll back without leaving a completion on either profile.
+    fn handle_seller_payout(&mut self, escrow_id: String, succeeded: bool) {
+        if !succeeded {
             let mut escrow = self.internal_get(&escrow_id);
             escrow.seller_paid = false;
             escrow.platform_paid = false;
@@ -857,12 +858,30 @@ impl Sweeft {
             return;
         }
         let escrow = self.internal_get(&escrow_id);
+        self.record_completion(&escrow);
         let promise = payout(escrow.token.clone(), self.platform_fee_recipient(), escrow.platform_fee);
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
                 .on_payout_result(escrow_id, "platform".to_string()),
         );
+    }
+
+    fn record_completion(&mut self, escrow: &Escrow) {
+        if counted(&escrow.id, COUNTED_COMPLETION) || escrow.seller_amount.0 < MIN_COUNTED_AMOUNT_YOCTO {
+            return;
+        }
+        mark_counted(&escrow.id, COUNTED_COMPLETION);
+        let seller_amount = escrow.seller_amount;
+        bump_reputation(&escrow.seller, |r| {
+            r.completed_as_seller += 1;
+            r.volume.0 += seller_amount.0;
+        });
+        let buyer = escrow.buyer.clone().expect("buyer set");
+        bump_reputation(&buyer, |r| {
+            r.completed_as_buyer += 1;
+            r.volume.0 += seller_amount.0;
+        });
     }
 
     /// Permissionless retry for a failed platform-fee payout (e.g. the fee
@@ -893,9 +912,26 @@ impl Sweeft {
     /// leg, so a resolved dispute can retry only what is still owed.
     #[private]
     pub fn on_payout_result(&mut self, escrow_id: String, party: String) {
-        if payout_ok(0) {
-            if party == "due_buyer" {
-                review_due_map().insert(escrow_id, U128(0));
+        self.handle_payout_result(escrow_id, party, payout_ok(0));
+    }
+
+    fn handle_payout_result(&mut self, escrow_id: String, party: String, succeeded: bool) {
+        if succeeded {
+            match party.as_str() {
+                "due_buyer" => {
+                    review_due_map().insert(escrow_id, U128(0));
+                }
+                "refund" => {
+                    refund_return_state_map().remove(&escrow_id);
+                    if let Some(escrow) = self.escrows.get(&escrow_id).cloned() {
+                        if !counted(&escrow_id, COUNTED_REFUND) {
+                            mark_counted(&escrow_id, COUNTED_REFUND);
+                            let buyer = escrow.buyer.clone().expect("buyer set");
+                            bump_reputation(&buyer, |r| r.refunds_claimed += 1);
+                        }
+                    }
+                }
+                _ => {}
             }
             return;
         }
@@ -903,7 +939,13 @@ impl Sweeft {
         match party.as_str() {
             "logistics" => escrow.logistics_paid = false,
             "platform" => escrow.platform_paid = false,
-            "refund" => escrow.state = EscrowState::Funded,
+            "refund" => {
+                // Restore Shipped/ReviewRequired too: resetting every failed
+                // refund to Funded used to strand long-stop refunds.
+                escrow.state = refund_return_state_map()
+                    .remove(&escrow_id)
+                    .unwrap_or(EscrowState::Funded);
+            }
             "due_buyer" => {
                 // Seller/platform stay marked paid; only the buyer remainder
                 // is outstanding and retryable via `retry_review_buyer_payout`.
@@ -926,6 +968,7 @@ impl Sweeft {
         escrow.problem_reported = true;
         escrow.terms_hash = format!("{}|problem:{}", escrow.terms_hash, reason_hash);
         escrow.state = EscrowState::ReviewRequired;
+        self.note_dispute_time(&escrow_id);
         self.escrows.insert(escrow_id, escrow);
         bump_reputation(&env::predecessor_account_id(), |r| r.disputes_opened += 1);
     }
@@ -933,8 +976,8 @@ impl Sweeft {
     /// Either party can open a dispute. The buyer may escalate from
     /// shipped/awaiting-confirmation states (same as report_problem); the
     /// seller may additionally escalate from funded/shipment-pending states
-    /// (e.g. an unresponsive buyer) — this closes the "funds locked with no
-    /// exit" gap. Funds stay locked until the review path resolves them.
+    /// (e.g. an unresponsive buyer). The seven-day dispute refund prevents
+    /// either party or an inactive board from locking the buyer's funds forever.
     pub fn open_dispute(&mut self, escrow_id: String, reason_hash: String) {
         let mut escrow = self.internal_get(&escrow_id);
         let caller = env::predecessor_account_id();
@@ -961,6 +1004,7 @@ impl Sweeft {
         escrow.terms_hash = format!("{}|dispute:{}:{}", escrow.terms_hash, side, reason_hash);
         escrow.state = EscrowState::ReviewRequired;
         log!("dispute opened by {} on {}", side, escrow_id);
+        self.note_dispute_time(&escrow_id);
         self.escrows.insert(escrow_id, escrow);
         bump_reputation(&caller, |r| r.disputes_opened += 1);
     }
@@ -1342,36 +1386,42 @@ impl Sweeft {
         );
     }
 
-    /// Buyer refund path. Two cases:
+    /// Buyer refund paths:
     ///  1. Seller never dispatched: after the dispatch deadline with no
-    ///     shipment registered (logistics forfeits).
-    ///  2. Long-stop: a shipment was registered but delivery was never
-    ///     TEE-verified within `LONG_STOP_MS` after the dispatch deadline —
-    ///     frozen funds can always find their way back, even if dispute
-    ///     resolution stalls. Nothing can be paid twice: the payout is
-    ///     flag-guarded and logistics is deducted if already settled.
+    ///     shipment registered, including when the seller opened a dispute.
+    ///  2. Long-stop: delivery was never TEE-verified within `LONG_STOP_MS`
+    ///     after the dispatch deadline, including while a dispute is open.
+    ///  3. Dispute timeout: seven days after a problem was first reported,
+    ///     the buyer receives the remaining pot if the board has not resolved.
+    /// A resolved seller leg or outstanding buyer due can never be refunded a
+    /// second time. Logistics is deducted only if that transfer already paid.
     pub fn refund_buyer(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer can claim this refund");
+        require!(!escrow.seller_paid, "seller payout already settled");
+        require!(review_due(&escrow_id) == 0, "resolved buyer payout pending retry");
         let now = env::block_timestamp() / 1_000_000;
-        let no_dispatch = (escrow.state == EscrowState::Funded || escrow.state == EscrowState::ShipmentPending)
+        let in_review = escrow.state == EscrowState::ReviewRequired;
+        let no_dispatch = (escrow.state == EscrowState::Funded
+            || escrow.state == EscrowState::ShipmentPending
+            || in_review)
             && !escrow.shipment_registered
             && now >= escrow.dispatch_deadline_ms;
-        let long_stop = escrow.state == EscrowState::Shipped
+        let long_stop = (escrow.state == EscrowState::Shipped || in_review)
             && !escrow.delivered_verified
-            && !escrow.problem_reported
             && now >= escrow.dispatch_deadline_ms.saturating_add(LONG_STOP_MS);
-        require!(no_dispatch || long_stop, "refund not available yet");
+        let dispute_timeout = in_review
+            && dispute_times_map()
+                .get(&escrow_id)
+                .is_some_and(|opened_ms| now >= opened_ms.saturating_add(DISPUTE_TIMEOUT_MS));
+        require!(no_dispatch || long_stop || dispute_timeout, "refund not available yet");
         let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
         let amount = U128(escrow.total_amount.0 - logistics_deduction);
+        refund_return_state_map().insert(escrow_id.clone(), escrow.state.clone());
         escrow.state = EscrowState::Refunded;
         let buyer = escrow.buyer.clone().unwrap();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        if !counted(&escrow_id, COUNTED_REFUND) {
-            mark_counted(&escrow_id, COUNTED_REFUND);
-            bump_reputation(&buyer, |r| r.refunds_claimed += 1);
-        }
         payout(token, buyer, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -1408,6 +1458,12 @@ impl Sweeft {
     pub fn delivery_time_ms(&self, escrow_id: String) -> Option<u64> {
         let times = delivery_times_map();
         times.get(&escrow_id).copied()
+    }
+
+    /// Unix ms when the current dispute was opened. The buyer's fallback
+    /// refund becomes available at this time plus `DISPUTE_TIMEOUT_MS`.
+    pub fn dispute_time_ms(&self, escrow_id: String) -> Option<u64> {
+        dispute_times_map().get(&escrow_id).copied()
     }
 
     pub fn escrows_for(&self, account_id: AccountId) -> Vec<Escrow> {
@@ -1490,6 +1546,14 @@ impl Sweeft {
             times.insert(key, env::block_timestamp() / 1_000_000);
         }
     }
+
+    fn note_dispute_time(&mut self, escrow_id: &str) {
+        let mut times = dispute_times_map();
+        let key = escrow_id.to_string();
+        if times.get(&key).is_none() {
+            times.insert(key, env::block_timestamp() / 1_000_000);
+        }
+    }
 }
 
 fn pop_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &str) {
@@ -1545,6 +1609,17 @@ fn reputation_map() -> LookupMap<AccountId, Reputation> {
 /// prefix needs no state migration on upgrade.
 fn delivery_times_map() -> LookupMap<String, u64> {
     LookupMap::new(b"dt1".to_vec())
+}
+
+/// Dispute clock: escrow id -> first transition to ReviewRequired.
+fn dispute_times_map() -> LookupMap<String, u64> {
+    LookupMap::new(b"dp1".to_vec())
+}
+
+/// State to restore when a refund transfer fails. Keeping this separately
+/// avoids treating every refund as a no-dispatch refund.
+fn refund_return_state_map() -> LookupMap<String, EscrowState> {
+    LookupMap::new(b"rr1".to_vec())
 }
 
 /// Read-modify-write a wallet's reputation, initialising `first_seen_ms`.
@@ -1770,6 +1845,10 @@ mod tests {
     }
 
     fn create_native(c: &mut Sweeft) -> String {
+        create_native_with_provider(c, None)
+    }
+
+    fn create_native_with_provider(c: &mut Sweeft, provider: Option<AccountId>) -> String {
         testing_env!(as_account(accounts(1))
             .block_timestamp(1)
             .attached_deposit(NearToken::from_near(1))
@@ -1785,7 +1864,7 @@ mod tests {
             1_000,
             MIN_INSPECTION_PERIOD_MS,
             "terms".to_string(),
-            None,
+            provider,
             None,
         )
     }
@@ -1800,6 +1879,38 @@ mod tests {
         testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(total)).build());
         c.fund_escrow(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Funded);
+    }
+
+    #[test]
+    fn precommitted_provider_can_be_confirmed_after_funding() {
+        let mut c = setup();
+        let id = create_native_with_provider(&mut c, Some(accounts(4)));
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(1)).build());
+        c.assign_logistics_provider(id.clone(), accounts(4));
+        let escrow = c.get_escrow(id).unwrap();
+        assert_eq!(escrow.state, EscrowState::ShipmentPending);
+        assert_eq!(escrow.logistics_provider, Some(accounts(4)));
+    }
+
+    #[test]
+    #[should_panic(expected = "logistics provider is fixed before funding")]
+    fn precommitted_provider_cannot_be_replaced_after_funding() {
+        let mut c = setup();
+        let id = create_native_with_provider(&mut c, Some(accounts(4)));
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(1)).build());
+        c.assign_logistics_provider(id, accounts(3));
     }
 
     #[test]
@@ -2003,6 +2114,23 @@ mod tests {
     }
 
     #[test]
+    fn failed_seller_payout_rolls_back_without_counting_reputation() {
+        let mut c = setup();
+        let id = delivered_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(40_000_000).build());
+        c.confirm_receipt(id.clone());
+        assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 0);
+        assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 0);
+        c.handle_seller_payout(id.clone(), false);
+        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::AwaitingBuyerConfirmation);
+        assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 0);
+        c.confirm_receipt(id.clone());
+        c.handle_seller_payout(id, true);
+        assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 1);
+        assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 1);
+    }
+
+    #[test]
     #[should_panic(expected = "inspection window not elapsed")]
     fn timeout_release_waits_for_the_window() {
         let mut c = setup();
@@ -2017,11 +2145,14 @@ mod tests {
         let id = delivered_native(&mut c);
         testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build()); // 2000 ms
         c.release_after_inspection(id.clone());
-        let escrow = c.get_escrow(id).unwrap();
+        let escrow = c.get_escrow(id.clone()).unwrap();
         assert!(escrow.seller_paid);
         assert!(escrow.platform_paid);
         assert_eq!(escrow.state, EscrowState::Completed);
-        // trust record moves for both sides on a timeout release too
+        // Reputation waits for the asynchronous seller payout callback.
+        assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 0);
+        assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 0);
+        c.handle_seller_payout(id, true);
         assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 1);
         assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 1);
     }
@@ -2305,6 +2436,69 @@ mod tests {
         testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
         c.refund_buyer(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
+    }
+
+    #[test]
+    fn seller_dispute_cannot_block_no_dispatch_refund() {
+        let mut c = setup();
+        let id = create_native(&mut c);
+        testing_env!(as_account(accounts(2)).block_timestamp(10_000_000).build());
+        c.accept_escrow(id.clone(), None);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(10_000_000)
+            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .build());
+        c.fund_escrow(id.clone());
+        testing_env!(as_account(accounts(1)).block_timestamp(20_000_000).build());
+        c.open_dispute(id.clone(), "not shipping".to_string());
+        assert_eq!(c.dispute_time_ms(id.clone()), Some(20));
+        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        c.refund_buyer(id.clone());
+        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::Refunded);
+        c.handle_payout_result(id.clone(), "refund".to_string(), false);
+        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::ReviewRequired);
+        assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 0);
+        c.refund_buyer(id.clone());
+        c.handle_payout_result(id, "refund".to_string(), true);
+        assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 1);
+    }
+
+    #[test]
+    fn unresolved_dispute_defaults_to_buyer_refund_after_seven_days() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp((40 + DISPUTE_TIMEOUT_MS) * 1_000_000)
+            .build());
+        c.refund_buyer(id.clone());
+        assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
+    }
+
+    #[test]
+    #[should_panic(expected = "refund not available yet")]
+    fn dispute_refund_waits_for_seven_day_deadline() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp((40 + DISPUTE_TIMEOUT_MS - 1) * 1_000_000)
+            .build());
+        c.refund_buyer(id);
+    }
+
+    #[test]
+    fn failed_long_stop_refund_restores_shipped_state() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_592_001_001_000_000)
+            .build());
+        c.refund_buyer(id.clone());
+        c.handle_payout_result(id.clone(), "refund".to_string(), false);
+        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::Shipped);
+        assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 0);
+        c.refund_buyer(id.clone());
+        c.handle_payout_result(id, "refund".to_string(), true);
+        assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 1);
     }
 
     #[test]

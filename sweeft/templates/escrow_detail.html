@@ -17,8 +17,12 @@
 
 {% if chain.state == 'ReviewRequired' %}
   <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm px-4 py-3">
-    <b>Funds are locked pending resolution.</b> A party can escalate to the <b>Review board</b> (council-approved on-chain proposal);
-    funds move only when that resolves, and the platform owner holds no fallback key.
+    <b>Funds are locked pending resolution.</b> A party can escalate to the <b>Review board</b> (council-approved on-chain proposal),
+    and the platform owner holds no fallback key.
+    {% if dispute_refund_ms %}
+      If the board has not resolved the dispute, the buyer can reclaim the remaining balance after
+      <b id="dispute-refund-when" data-ms="{{ dispute_refund_ms }}"></b> (less any logistics payment already made).
+    {% endif %}
   </div>
 {% endif %}
 
@@ -234,6 +238,7 @@
   const GOV_DAO = "{{ gov.dao|default:''|escapejs }}";
   const GOV_BOND = "{{ gov.proposal_bond_yocto|default:'0' }}";
   const RELAYER_ENABLED = {{ relayer_enabled|yesno:"true,false" }};
+  const DISPUTE_REFUND_MS = {{ dispute_refund_ms|default:"null" }};
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function fmtAmount(value) {
@@ -270,9 +275,14 @@
     if (state === 'Funded' && isSeller) {
       const input = el('<input class="flex-1 min-w-[11rem] border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500" placeholder="Provider wallet (e.g. log.testnet)">');
       input.setAttribute('list', 'provider-list');
+      const providerLocked = Boolean(CHAIN.logistics_provider);
+      if (providerLocked) {
+        input.value = CHAIN.logistics_provider;
+        input.readOnly = true;
+      }
       const box = el('<div class="flex flex-wrap items-center gap-2"></div>');
       box.appendChild(input);
-      const b = el('<button class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Assign logistics provider</button>');
+      const b = el(`<button class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">${providerLocked ? 'Confirm committed logistics provider' : 'Assign logistics provider'}</button>`);
       b.onclick = async () => {
         try {
           status('Assigning…');
@@ -281,7 +291,7 @@
         } catch (e) { status(''); alert('Failed: ' + e.message); }
       };
       box.appendChild(b);
-      const hint = el('<div class="w-full text-xs text-slate-500">Approved logistics providers are suggested — pick one from the directory.</div>');
+      const hint = el(`<div class="w-full text-xs text-slate-500">${providerLocked ? 'This beneficiary was committed before funding and cannot be replaced.' : 'Approved logistics providers are suggested — the first assignment fixes the beneficiary.'}</div>`);
       box.appendChild(hint);
       document.getElementById('actions').appendChild(box);
     }
@@ -334,6 +344,11 @@
         const panel = document.getElementById('rb-pct');
         if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 'ghost');
+      const noDispatchRefund = !CHAIN.shipment_registered && deadlinePassed();
+      const disputeTimeoutRefund = DISPUTE_REFUND_MS !== null && DISPUTE_REFUND_MS <= Date.now();
+      if (isBuyer && !CHAIN.seller_paid && (noDispatchRefund || disputeTimeoutRefund)) {
+        addButton('Claim buyer refund', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
+      }
     }
     if (ns(state) && !CHAIN.problem_reported && !CHAIN.seller_paid) {
       addButton('Open Demo shipment controls', () => window.location.href = '/partners/portal/', 'ghost');
@@ -512,15 +527,10 @@
     window.location.reload();
   }
 
-  // Format deadline timestamps
-  (function () {
-    const el = document.getElementById('dispatch-deadline');
-    if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
-  })();
-  (function () {
-    const el = document.getElementById('auto-release-when');
-    if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
-  })();
+  // Format dispatch, inspection-release and dispute-refund timestamps.
+  document.querySelectorAll('[data-ms]').forEach((el) => {
+    if (el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
+  });
 
   // --- Demo Carrier live tracking (SIMULATED) --------------------------
   // The standalone simulator (tools/demo-carrier/) drives the ~60-second run

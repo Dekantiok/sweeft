@@ -7,7 +7,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 DEPLOYER="${DEPLOYER:-steepdata3968.testnet}"
 DEPLOYER_KEY="${DEPLOYER_KEY:?set DEPLOYER_KEY=ed25519:...}"
-SWEEFT_ACCOUNT="${SWEEFT_ACCOUNT:-sweeft.testnet}"
+SWEEFT_ACCOUNT="${SWEEFT_ACCOUNT:-sweeft-pay.testnet}"
 BUDGET_ACCOUNT="${BUDGET_ACCOUNT:-budget.${DEPLOYER}}"
 AGENT_ACCOUNT="${AGENT_ACCOUNT:-agent.${DEPLOYER}}"
 RELAYER_ACCOUNT="${RELAYER_ACCOUNT:-relayer.${DEPLOYER}}"
@@ -48,6 +48,9 @@ near contract deploy "$SWEEFT_ACCOUNT" use-file contracts/sweeft/target/near/swe
 near contract call-function as-transaction "$SWEEFT_ACCOUNT" new \
   json-args "{\"owner\":\"$DEPLOYER\",\"outlayer_contract\":\"$OUTLAYER_CONTRACT\",\"outlayer_project\":\"$OUTLAYER_PROJECT\",\"platform_fee_bps\":$PLATFORM_FEE_BPS,\"arbiter\":\"$BOARD_ACCOUNT\",\"provider_id\":\"$CARRIER_PROVIDER_ID\",\"carrier_pubkey\":\"$CARRIER_PUBKEY\"}" \
   prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as "$SWEEFT_ACCOUNT" network-config testnet sign-with-legacy-keychain send
+near contract call-function as-transaction "$SWEEFT_ACCOUNT" set_treasury \
+  json-args "{\"account_id\":\"$BOARD_ACCOUNT\"}" \
+  prepaid-gas '50 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
 
 echo "== 5. Deploy + init the native co-pilot budget"
 near contract deploy "$BUDGET_ACCOUNT" use-file contracts/near-budget/target/near/near_budget.wasm \

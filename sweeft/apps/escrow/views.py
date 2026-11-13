@@ -206,6 +206,16 @@ def escrow_detail(request, escrow_id: str):
             delivered_ms = None
         if delivered_ms:
             auto_release_ms = int(delivered_ms) + int(chain.get("inspection_period_ms") or 0)
+    # A stalled review cannot lock funds forever: the contract exposes the
+    # dispute start so the buyer can see and claim the seven-day fallback.
+    dispute_refund_ms = None
+    if chain and chain.get("state") == "ReviewRequired" and not chain.get("seller_paid"):
+        try:
+            dispute_ms = near.view_call(settings.SWEEFT_CONTRACT, "dispute_time_ms", {"escrow_id": escrow_id})
+        except Exception:  # noqa: BLE001 — contracts deployed before the dispute clock
+            dispute_ms = None
+        if dispute_ms is not None:
+            dispute_refund_ms = int(dispute_ms) + 7 * 24 * 60 * 60 * 1000
     relayer_enabled = bool(settings.RELAYER_ENABLED and settings.RELAYER_ACCOUNT and settings.RELAYER_PRIVATE_KEY)
 
     # Review board (governed dispute resolution). Shown while a dispute is
@@ -245,6 +255,7 @@ def escrow_detail(request, escrow_id: str):
             "dispute": dispute,
             "gov": gov_ctx,
             "auto_release_ms": auto_release_ms,
+            "dispute_refund_ms": dispute_refund_ms,
             "relayer_enabled": relayer_enabled,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
