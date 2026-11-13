@@ -1,0 +1,69 @@
+# Render blueprint — SWEEFT (Django web app + managed Postgres).
+#
+# Usage: Render dashboard → New + → Blueprint → select this repo → Apply.
+# Secrets marked `sync: false` are prompted for on first deploy — paste them
+# from your local sweeft/.env, or leave blank (carrier signing / co-pilot
+# payments / relayer stay disabled until the keys are provided).
+databases:
+  - name: sweeft-db
+    plan: free
+    databaseName: sweeft
+    user: sweeft
+
+services:
+  - type: web
+    name: sweeft
+    runtime: python
+    plan: free
+    rootDir: sweeft
+    buildCommand: bash build.sh
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120
+    healthCheckPath: /health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: "localhost,127.0.0.1"
+      - key: SESSION_COOKIE_SECURE
+        value: "1"
+      - key: NEAR_NETWORK
+        value: "testnet"
+      - key: NEAR_RPC_URL
+        value: "https://test.rpc.fastnear.com"
+      - key: SWEEFT_CONTRACT
+        value: "sweeft.testnet"
+      - key: OUTLAYER_CONTRACT
+        value: "outlayer.testnet"
+      - key: OUTLAYER_PROJECT
+        value: "steepdata3968.testnet/sweeft-verify"
+      - key: GOVERNANCE_DAO
+        value: "sweeft-board.testnet"
+      - key: DEMO_CARRIER_WALLET
+        value: "logistics.steepdata3968.testnet"
+      - key: DEMO_CARRIER_PUBKEY
+        value: "f2468a892f7fcdd89124bb4a3ee6a89c0fdd4f883198a95c3c9280297911cc0b"
+      # --- optional server-side keys (set to enable live features) -----------
+      - key: DEMO_CARRIER_PRIVATE_KEY
+        sync: false
+      - key: AI_PROVIDER
+        value: "echo"
+      - key: AI_AGENT_ENABLED
+        value: "0"
+      - key: AI_AGENT_ACCOUNT
+        sync: false
+      - key: AI_AGENT_PRIVATE_KEY
+        sync: false
+      - key: RELAYER_ENABLED
+        value: "0"
+      - key: RELAYER_ACCOUNT
+        sync: false
+      - key: RELAYER_PRIVATE_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sweeft-db
+          property: connectionString
