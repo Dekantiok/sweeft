@@ -13,9 +13,6 @@ import urllib.request
 
 from django.conf import settings
 
-YOCTO = 10**24
-TOKEN_DECIMALS = 6  # legacy tUSD decimals (existing escrows remain readable)
-NATIVE_NEAR_TOKEN = "near"
 NATIVE_NEAR_DECIMALS = 24
 
 
@@ -79,11 +76,6 @@ def escrows_for(account_id: str):
     return view_call(settings.SWEEFT_CONTRACT, "escrows_for", {"account_id": account_id}) or []
 
 
-def token_balance(token_contract: str, account_id: str) -> str:
-    result = view_call(token_contract, "ft_balance_of", {"account_id": account_id})
-    return result or "0"
-
-
 def native_balance(account_id: str) -> str:
     """Native NEAR balance in yoctoNEAR (no token contract needed)."""
     result = _rpc(
@@ -114,11 +106,13 @@ def get_config_cached(ttl_seconds: int = 30) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Formatting helpers (token has 6 decimals by convention in this MVP)
+# Amount formatting and parsing (native NEAR, 24 decimals).
 # ---------------------------------------------------------------------------
 
+NATIVE_NEAR_DECIMALS = 24
 
-def format_token(amount_yocto: str | int, decimals: int = TOKEN_DECIMALS) -> str:
+
+def _format_units(amount_yocto: str | int, decimals: int) -> str:
     try:
         value = int(amount_yocto or 0)
     except (TypeError, ValueError):
@@ -131,11 +125,7 @@ def format_token(amount_yocto: str | int, decimals: int = TOKEN_DECIMALS) -> str
     return f"{whole:,}.{frac_text}"
 
 
-def format_near(amount_yocto: str | int) -> str:
-    return format_token(amount_yocto, 24)
-
-
-def parse_token(text: str, decimals: int = TOKEN_DECIMALS) -> int:
+def _parse_units(text: str, decimals: int) -> int:
     text = (text or "0").strip().replace(",", "")
     if not text:
         return 0
@@ -146,22 +136,9 @@ def parse_token(text: str, decimals: int = TOKEN_DECIMALS) -> int:
 
 def format_near_amount(amount: str | int) -> str:
     """Compact native NEAR display (up to 6 decimals, zeros trimmed)."""
-    return format_token(amount, NATIVE_NEAR_DECIMALS)
+    return _format_units(amount, NATIVE_NEAR_DECIMALS)
 
 
 def parse_near_amount(text: str) -> int:
     """Parse a human NEAR amount (e.g. '0.115') into yoctoNEAR."""
-    return parse_token(text, NATIVE_NEAR_DECIMALS)
-
-
-def format_currency(amount: str | int, token: str | None = NATIVE_NEAR_TOKEN) -> str:
-    """Format by the escrow's currency; legacy FT escrows keep their units."""
-    if (token or NATIVE_NEAR_TOKEN) == NATIVE_NEAR_TOKEN:
-        return format_near_amount(amount)
-    return format_token(amount)
-
-
-def parse_currency(text: str, token: str | None = NATIVE_NEAR_TOKEN) -> int:
-    if (token or NATIVE_NEAR_TOKEN) == NATIVE_NEAR_TOKEN:
-        return parse_near_amount(text)
-    return parse_token(text)
+    return _parse_units(text, NATIVE_NEAR_DECIMALS)

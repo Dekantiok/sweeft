@@ -140,15 +140,10 @@ def summary() -> dict:
     dao = dao_account()
     treasury = {
         "near": 0,
-        "tusd": 0,
     }
     try:
         account = near._rpc("query", {"request_type": "view_account", "finality": "final", "account_id": dao}, timeout=15)
         treasury["near"] = int(((account.get("result") or {}).get("amount")) or 0)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        treasury["tusd"] = int(near.token_balance(settings.TUSD_CONTRACT, dao) or 0) if settings.TUSD_CONTRACT else 0
     except Exception:  # noqa: BLE001
         pass
     gov = {}
@@ -160,12 +155,11 @@ def summary() -> dict:
         "dao": dao,
         "council": council,
         "policy": policy,
-        "proposal_bond_display": near.format_near(proposal_bond_yocto(policy)),
+        "proposal_bond_display": near.format_near_amount(proposal_bond_yocto(policy)),
         "proposal_bond_yocto": str(proposal_bond_yocto(policy)),
         "proposals": proposals,
         "active_count": len(active),
         "treasury_near_display": _fmt_near_round(treasury["near"]),
-        "treasury_tusd_display": near.format_token(treasury["tusd"]),
         "gov": gov,
     }
 

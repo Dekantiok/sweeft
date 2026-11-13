@@ -95,7 +95,7 @@ class ToolTests(TestCase):
     def test_prepare_purchase_affordability(self):
         listing = Listing.objects.get(title="Solar inverter batch")
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep(completed_as_seller=3)), mock.patch(
-            "apps.ai.tools.near.token_balance", return_value="500000000000"
+            "apps.ai.tools.near.native_balance", return_value="2000000000000000000000000"
         ):
             card = tools.prepare_purchase(listing_slug=listing.slug, wallet="buyer.testnet")
         self.assertEqual(card["type"], "purchase_proposal")
@@ -124,7 +124,7 @@ class KeywordRouteTests(TestCase):
     @override_settings(AI_PROVIDER="echo")
     def test_buy_flow_routes_to_proposal(self):
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep(completed_as_seller=4)), mock.patch(
-            "apps.ai.tools.near.token_balance", return_value="500000000000"
+            "apps.ai.tools.near.native_balance", return_value="2000000000000000000000000"
         ):
             result = agent.keyword_route("buy solar inverter under 1.5 NEAR", "buyer.testnet")
         self.assertTrue(result["cards"])

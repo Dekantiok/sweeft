@@ -13,7 +13,7 @@ from .providers.base import AIProviderError
 from .registry import get_provider
 
 ACCOUNT_RE = re.compile(r"\b([a-z0-9._-]{2,64}\.(?:testnet|near))\b", re.IGNORECASE)
-AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tusd|usd|near)?", re.IGNORECASE)
+AMOUNT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(usd|near)?", re.IGNORECASE)
 DAYS_RE = re.compile(r"(\d+)\s*(day|days|week|weeks)", re.IGNORECASE)
 
 
@@ -41,7 +41,7 @@ def extract_json(text: str) -> dict | None:
 
 PARSE_SYSTEM = (
     "You extract structured deal terms for a NEAR escrow. Reply with JSON only: "
-    '{"product": string, "amount": number|null, "token": "tUSD"|"NEAR"|null, '
+    '{"product": string, "amount": number|null, "token": "NEAR"|null, '
     '"beneficiary": string|null, "deadlineDays": number|null, "terms": string}. '
     "beneficiary must be a NEAR account id if one appears, else null."
 )

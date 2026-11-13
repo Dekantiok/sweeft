@@ -63,7 +63,7 @@ class PartnerApiCredential(models.Model):
 
     @staticmethod
     def generate(partner: LogisticsPartner):
-        raw = f"vp_{secrets.token_urlsafe(32)}"
+        raw = f"swft_{secrets.token_urlsafe(32)}"
         prefix = raw[:10]
         hashed = hashlib.sha256(raw.encode()).hexdigest()
         cred = PartnerApiCredential.objects.create(partner=partner, prefix=prefix, hashed_key=hashed)

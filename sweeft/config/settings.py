@@ -165,7 +165,6 @@ EXPLORER_URL = os.environ.get(
 
 # Deployed contract accounts (filled by scripts/deploy_*.sh output)
 SWEEFT_CONTRACT = os.environ.get("SWEEFT_CONTRACT", "")
-TUSD_CONTRACT = os.environ.get("TUSD_CONTRACT", "")
 OUTLAYER_CONTRACT = os.environ.get("OUTLAYER_CONTRACT", "outlayer.testnet")
 OUTLAYER_PROJECT = os.environ.get("OUTLAYER_PROJECT", "")
 
@@ -196,10 +195,10 @@ AI_TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
 # ---------------------------------------------------------------------------
 # AI co-pilot payments (scoped, revocable on-chain allowance)
 #
-# The co-pilot agent holds NO user keys. A user grants it a tUSD allowance
-# with one wallet signature (`approve` on the token); the agent can then pay
-# within that budget without a popup per payment. The token contract enforces
-# the allowance on-chain — that is the security boundary.
+# The co-pilot agent holds NO user keys. A user deposits native NEAR into the
+# on-chain budget with one wallet signature; the agent can then pay within that
+# budget without a popup per payment. The budget contract enforces the limit
+# on-chain — that is the security boundary.
 #
 # Testnet disclosure: AI_AGENT_PRIVATE_KEY lives on the demo server because
 # this is a testnet MVP; on mainnet the key would sit inside a TEE/KMS.
@@ -207,7 +206,7 @@ AI_TIMEOUT_SECONDS = int(os.environ.get("AI_TIMEOUT_SECONDS", "30"))
 AI_AGENT_ENABLED = os.environ.get("AI_AGENT_ENABLED", "1") == "1"
 AI_AGENT_ACCOUNT = os.environ.get("AI_AGENT_ACCOUNT", "")
 AI_AGENT_PRIVATE_KEY = os.environ.get("AI_AGENT_PRIVATE_KEY", "")
-# Native-NEAR budget contract (replaces the legacy tUSD allowance extension).
+# Native-NEAR budget contract.
 AI_BUDGET_CONTRACT = os.environ.get("AI_BUDGET_CONTRACT", "budget.steepdata3968.testnet")
 AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000000000000000000"))  # 0.1 NEAR
 AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000000000000000000"))  # 0.25 NEAR (UI)

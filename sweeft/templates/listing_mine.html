@@ -69,12 +69,12 @@
 {% block scripts %}
 <script>
   async function setStatus(slug, status) {
-    const res = await VPApp.jsonPost(`/market/${slug}/status/`, { status });
+    const res = await SweftApp.jsonPost(`/market/${slug}/status/`, { status });
     if (!res.ok) { alert(res.error || 'failed'); return; }
     window.location.reload();
   }
   async function declineRequest(id) {
-    const res = await VPApp.jsonPost(`/api/v1/market/requests/${id}/decline/`, {});
+    const res = await SweftApp.jsonPost(`/api/v1/market/requests/${id}/decline/`, {});
     if (!res.ok) { alert(res.error || 'failed'); return; }
     window.location.reload();
   }

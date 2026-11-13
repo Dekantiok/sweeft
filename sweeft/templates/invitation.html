@@ -32,7 +32,7 @@
 
     <div class="mt-5 text-center">
       {% if not wallet_account %}
-        <button onclick="VPApp.connect()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet to accept</button>
+        <button onclick="SweftApp.connect()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet to accept</button>
       {% elif invitation.status == 'accepted' %}
         <div class="text-emerald-700 text-sm font-medium">Already accepted by <code>{{ invitation.accepted_by }}</code>.</div>
       {% elif chain.buyer and wallet_account != chain.buyer %}
@@ -54,9 +54,9 @@
     const status = document.getElementById('accept-status');
     try {
       status.textContent = 'Confirm in your wallet (accept_escrow)…';
-      await VPApp.callContract('accept_escrow', { escrow_id: ESCROW_ID, invite_secret: TOKEN });
+      await SweftApp.callContract('accept_escrow', { escrow_id: ESCROW_ID, invite_secret: TOKEN });
       status.textContent = 'Saving…';
-      const res = await VPApp.jsonPost(`/api/v1/invitations/${TOKEN}/accept/`, {});
+      const res = await SweftApp.jsonPost(`/api/v1/invitations/${TOKEN}/accept/`, {});
       if (!res.ok) throw new Error(res.error);
       window.location.href = '/escrow/' + ESCROW_ID + '/';
     } catch (e) { status.textContent = ''; alert('Accept failed: ' + (e.message || e)); }
@@ -64,7 +64,7 @@
   async function rejectInvitation() {
     if (!confirm('Decline this agreement?')) return;
     try {
-      await VPApp.callContract('reject_escrow', { escrow_id: ESCROW_ID });
+      await SweftApp.callContract('reject_escrow', { escrow_id: ESCROW_ID });
       window.location.href = '/dashboard/';
     } catch (e) { alert('Decline failed: ' + (e.message || e)); }
   }

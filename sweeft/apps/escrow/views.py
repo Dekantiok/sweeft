@@ -20,7 +20,6 @@ from .models import ContractEvent, EscrowAgreement, EscrowInvitation, Settlement
 def config_context(request):
     return {
         "SWEEFT_CONTRACT": settings.SWEEFT_CONTRACT,
-        "TUSD_CONTRACT": settings.TUSD_CONTRACT,
         "OUTLAYER_CONTRACT": settings.OUTLAYER_CONTRACT,
         "NEAR_NETWORK": settings.NEAR_NETWORK,
         "EXPLORER_URL": settings.EXPLORER_URL,
@@ -195,12 +194,6 @@ def escrow_detail(request, escrow_id: str):
     from .models import Dispute
 
     dispute = Dispute.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
-    arbitration = None
-    if chain:
-        try:
-            arbitration = near.view_call(settings.SWEEFT_CONTRACT, "arbitration_status", {"escrow_id": escrow_id})
-        except Exception:  # noqa: BLE001
-            arbitration = None
 
     # Inspection window: once delivery is TEE-verified, the seller allocation
     # auto-releases after `inspection_period_ms` unless a problem is reported
@@ -229,7 +222,7 @@ def escrow_detail(request, escrow_id: str):
                 "dao": gov_mod.dao_account(),
                 "council": council,
                 "proposals": gov_mod.proposals_for_escrow(escrow_id),
-                "proposal_bond_display": near.format_near(gov_mod.proposal_bond_yocto(policy)),
+                "proposal_bond_display": near.format_near_amount(gov_mod.proposal_bond_yocto(policy)),
                 "proposal_bond_yocto": str(gov_mod.proposal_bond_yocto(policy)),
                 "is_council": bool(wallet and wallet in (council["members"] or [])),
                 "is_party": bool(wallet and wallet in (chain.get("seller"), chain.get("buyer"))),
@@ -250,14 +243,11 @@ def escrow_detail(request, escrow_id: str):
             "provider_options": provider_options,
             "invitation_link": invitation_link,
             "dispute": dispute,
-            "arbitration": arbitration,
             "gov": gov_ctx,
             "auto_release_ms": auto_release_ms,
             "relayer_enabled": relayer_enabled,
             "events": ContractEvent.objects.filter(escrow_id=escrow_id)[:20],
             "settlements": SettlementRecord.objects.filter(escrow_id=escrow_id)[:20],
-            "fmt": near.format_token,
-            "fmt_near": near.format_near,
         },
     )
 
@@ -280,7 +270,6 @@ def invitation_view(request, token: str):
             "chain": chain,
             "chain_error": chain_error,
             "wallet_account": current_wallet(request),
-            "fmt": near.format_token,
         },
     )
 
@@ -297,11 +286,9 @@ def api_config(request):
             "network": settings.NEAR_NETWORK,
             "rpc_url": settings.NEAR_RPC_URL,
             "sweeft_contract": settings.SWEEFT_CONTRACT,
-            "tusd_contract": settings.TUSD_CONTRACT,
             "outlayer_contract": settings.OUTLAYER_CONTRACT,
             "outlayer_project": settings.OUTLAYER_PROJECT,
             "explorer": settings.EXPLORER_URL,
-            "token_decimals": near.TOKEN_DECIMALS,
         }
     )
 

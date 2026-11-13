@@ -143,10 +143,10 @@
     const status = document.getElementById('create-status');
     const btn = document.getElementById('btn-create');
     try {
-      if (!VPApp.requireWallet()) return;
+      if (!SweftApp.requireWallet()) return;
       btn.disabled = true;
       status.textContent = 'Preparing…';
-      const c = await VPApp.cfg();
+      const c = await SweftApp.cfg();
       const sellerAmount = toUnits(document.getElementById('f-seller').value);
       const logisticsAmount = toUnits(document.getElementById('f-logistics').value);
       if (sellerAmount <= 0n) throw new Error('seller amount must be greater than zero');
@@ -179,7 +179,7 @@
       }
 
       status.textContent = 'Confirm in your wallet (create_escrow)…';
-      const res = await VPApp.callContract('create_escrow', {
+      const res = await SweftApp.callContract('create_escrow', {
         product_name: document.getElementById('f-product').value.trim(),
         product_desc_hash: await sha256Hex(desc),
         seller_amount: sellerAmount.toString(),
@@ -198,7 +198,7 @@
         throw new Error('could not read escrow id from the transaction result');
       }
       status.textContent = 'Saving metadata…';
-      const saved = await VPApp.jsonPost('/api/v1/agreements/', {
+      const saved = await SweftApp.jsonPost('/api/v1/agreements/', {
         escrow_id: escrowId,
         product_name: document.getElementById('f-product').value.trim(),
         product_description: desc,
@@ -211,7 +211,7 @@
         // The tracking ID was committed on-chain at creation; this records the
         // Demo Carrier shipment row so the item can be tracked immediately.
         status.textContent = 'Registering the shipment tracking…';
-        const ship = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
+        const ship = await SweftApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
         if (ship && ship.ok === false) throw new Error(ship.error || 'failed to register tracking');
       }
       window.location.href = '/escrow/' + escrowId + '/';

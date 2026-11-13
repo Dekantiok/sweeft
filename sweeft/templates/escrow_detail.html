@@ -17,8 +17,8 @@
 
 {% if chain.state == 'ReviewRequired' %}
   <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm px-4 py-3">
-    <b>Funds are locked pending resolution.</b> A party can escalate to the <b>Review board</b> (council-approved on-chain proposal)
-    or settle through the <b>arbitration pool</b> — funds move only when one of those resolves, and the platform owner holds no fallback key.
+    <b>Funds are locked pending resolution.</b> A party can escalate to the <b>Review board</b> (council-approved on-chain proposal);
+    funds move only when that resolves, and the platform owner holds no fallback key.
   </div>
 {% endif %}
 
@@ -48,7 +48,7 @@
       <div class="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm">
         <b>AI advisory: {{ dispute.ai_recommendation.pct }}% to the seller.</b>
         {{ dispute.ai_recommendation.reason }}
-        <div class="text-xs text-slate-500 mt-1">source: {{ dispute.ai_recommendation.source }} — advisory only; the review board (or arbitration pool) confirms the split on-chain.</div>
+        <div class="text-xs text-slate-500 mt-1">source: {{ dispute.ai_recommendation.source }} — advisory only; the review board confirms the split on-chain.</div>
       </div>
     {% endif %}
 
@@ -74,61 +74,6 @@
   <section class="mt-4 bg-white border border-rose-200 rounded-xl p-4 text-sm">
     <b>On-chain dispute detected</b> — no case file registered yet. A party can file the details here:
     <button onclick="openDispute()" class="ml-2 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Register dispute details</button>
-  </section>
-{% endif %}
-
-{% if chain.state == 'ReviewRequired' or arbitration %}
-  <section class="mt-4 bg-white border border-indigo-200 rounded-xl p-4">
-    <div class="flex items-center gap-3 flex-wrap">
-      <h2 class="font-semibold">Arbitration pool</h2>
-      <span class="text-xs text-indigo-700 bg-indigo-50 rounded-full px-2 py-0.5">NEAR holders decide</span>
-      {% if arbitration %}
-        <span class="text-xs text-slate-500">{{ arbitration.votes|length }} vote(s) · {{ arbitration.total_stake }} yoctoNEAR staked</span>
-      {% endif %}
-    </div>
-    <p class="text-xs text-slate-500 mt-1">
-      Any NEAR holder can stake NEAR to choose the seller's share of the remaining escrow balance.
-      The dispute's parties cannot vote on their own case. Settlement is permissionless once quorum is met.
-    </p>
-
-    {% if arbitration and arbitration.votes %}
-      <div class="mt-3 space-y-1">
-        {% for v in arbitration.votes %}
-          <div class="text-sm flex items-center gap-2 flex-wrap">
-            <code class="text-xs">{{ v.voter }}</code>
-            <span class="text-xs bg-slate-100 rounded-full px-2 py-0.5">{{ v.seller_pct }}% to seller</span>
-            <span class="text-xs text-slate-500">{{ v.stake }} yoctoNEAR{% if v.claimed %} · claimed{% endif %}</span>
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
-
-    {% if not arbitration or not arbitration.finalized %}
-      <div class="mt-4 grid sm:grid-cols-3 gap-3">
-        <div>
-          <label class="block text-sm font-medium mb-1">Seller share (%)</label>
-          <input id="arb-pct" type="number" min="0" max="100" value="70" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-1">Stake (NEAR, min 0.01)</label>
-          <input id="arb-amount" value="0.02" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-        </div>
-        <div class="flex items-end">
-          <button onclick="arbitrateVote()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Stake &amp; vote</button>
-        </div>
-      </div>
-      {% if arbitration and arbitration.total_stake|floatformat:0 >= 50000000000000000000000 %}
-        <button onclick="finalizeArbitration()" class="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Finalize settlement (quorum met)</button>
-      {% else %}
-        <p class="text-xs text-slate-500 mt-2">Quorum: at least 0.05 NEAR total stake, then anyone can finalize.</p>
-      {% endif %}
-    {% else %}
-      <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
-        <b>Arbitration finalized: {{ arbitration.winning_pct }}% to the seller.</b>
-        <button onclick="claimStake()" class="ml-3 border border-emerald-300 hover:bg-emerald-100 rounded-lg px-3 py-1.5 text-xs">Claim my stake back</button>
-      </div>
-    {% endif %}
-    <p id="arb-status" class="text-xs text-slate-500 mt-2"></p>
   </section>
 {% endif %}
 
@@ -209,7 +154,7 @@
         <tr><td class="py-1.5 text-slate-500">Logistics fee</td><td class="py-1.5">{{ chain.logistics_amount|money:chain.token }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Platform fee</td><td class="py-1.5">{{ chain.platform_fee|money:chain.token }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Total to fund</td><td class="py-1.5 font-semibold">{{ chain.total_amount|money:chain.token }}</td></tr>
-        <tr><td class="py-1.5 text-slate-500">Token</td><td class="py-1.5"><code>{{ chain.token|default:agreement.token_contract }}</code></td></tr>
+        <tr><td class="py-1.5 text-slate-500">Currency</td><td class="py-1.5"><code>{{ chain.token|default:"near" }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Logistics provider</td><td class="py-1.5"><code>{{ chain.logistics_provider|default:"—" }}</code></td></tr>
         <tr><td class="py-1.5 text-slate-500">Tracking</td><td class="py-1.5">{{ chain.tracking_number|default:"—" }}</td></tr>
         <tr><td class="py-1.5 text-slate-500">Dispatch deadline</td><td class="py-1.5" id="dispatch-deadline" data-ms="{{ chain.dispatch_deadline_ms|default:agreement.dispatch_deadline_ms }}"></td></tr>
@@ -292,10 +237,7 @@
 
   function el(html) { const d = document.createElement('div'); d.innerHTML = html; return d.firstElementChild; }
   function fmtAmount(value) {
-    if (CHAIN && CHAIN.token === 'near') {
-      return (Number(value) / 1e24).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' NEAR';
-    }
-    return (Number(value) / 1e6).toLocaleString() + ' tUSD';
+    return (Number(value) / 1e24).toLocaleString(undefined, { maximumFractionDigits: 6 }) + ' NEAR';
   }
   function addButton(label, fn, style='primary') {
     const cls = style === 'primary'
@@ -334,7 +276,7 @@
       b.onclick = async () => {
         try {
           status('Assigning…');
-          await VPApp.callContract('assign_logistics_provider', { escrow_id: AGREEMENT.escrow_id, provider: input.value.trim() });
+          await SweftApp.callContract('assign_logistics_provider', { escrow_id: AGREEMENT.escrow_id, provider: input.value.trim() });
           status('Assigned — refreshing…'); setTimeout(() => window.location.reload(), 2500);
         } catch (e) { status(''); alert('Failed: ' + e.message); }
       };
@@ -385,8 +327,8 @@
       addButton('Claim refund (seller did not dispatch)', () => simpleCall('refund_buyer', 'Refund claimed', '150000000000000'), 'ghost');
     }
     // Disputes are governed now: resolution happens via the Review board
-    // (council-approved DAO proposal) or the community arbitration pool —
-    // the platform owner has no resolution action. Point people at the panel.
+    // (council-approved DAO proposal) — the platform owner has no resolution action.
+    // Point people at the panel.
     if (state === 'ReviewRequired') {
       addButton('Decide via Review board (below) ↓', () => {
         const panel = document.getElementById('rb-pct');
@@ -406,27 +348,15 @@
   async function doAccept(inviteSecret) {
     try {
       status('Accepting (wallet signature)…');
-      await VPApp.callContract('accept_escrow', { escrow_id: AGREEMENT.escrow_id, invite_secret: inviteSecret });
+      await SweftApp.callContract('accept_escrow', { escrow_id: AGREEMENT.escrow_id, invite_secret: inviteSecret });
       status('Accepted — refreshing…'); setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
   }
 
   async function doFund() {
     try {
-      if (CHAIN.token === 'near') {
-        status('Funding escrow with native NEAR…');
-        await VPApp.callContract('fund_escrow', { escrow_id: AGREEMENT.escrow_id }, '100000000000000', CHAIN.total_amount);
-      } else {
-        // Legacy NEP-141 escrows keep their original funding path.
-        status('Funding escrow with tUSD…');
-        const c = await VPApp.cfg();
-        await VPApp.callToken('ft_transfer_call', {
-          receiver_id: c.sweeft_contract,
-          amount: CHAIN.total_amount,
-          msg: AGREEMENT.escrow_id,
-          memo: null,
-        }, '1');
-      }
+      status('Funding escrow with native NEAR…');
+      await SweftApp.callContract('fund_escrow', { escrow_id: AGREEMENT.escrow_id }, '100000000000000', CHAIN.total_amount);
       status('Funded — refreshing…'); setTimeout(() => window.location.reload(), 3000);
     } catch (e) { status(''); alert('Funding failed: ' + e.message); }
   }
@@ -438,16 +368,16 @@
       let tracking = CHAIN ? CHAIN.tracking_number : null;
       if (!tracking) {
         status('Creating simulated tracking number…');
-        const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, scenario });
+        const created = await SweftApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, scenario });
         if (!created.ok) throw new Error(created.error);
         tracking = created.tracking_number;
       } else {
         // Tracking was pre-registered at creation (marketplace flow): make sure
         // the Demo Carrier row exists, then mark dispatched on-chain.
-        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking, scenario });
+        await SweftApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking, scenario });
       }
       status('Registering ' + tracking + ' on-chain…');
-      await VPApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
+      await SweftApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
       status('Registered — the carrier run starts now (SIMULATED)…');
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
@@ -456,16 +386,16 @@
   async function doVerify() {
     try {
       status('Building carrier payload…');
-      const payload = await VPApp.jsonPost('/api/v1/verification/payload/', { escrow_id: AGREEMENT.escrow_id });
+      const payload = await SweftApp.jsonPost('/api/v1/verification/payload/', { escrow_id: AGREEMENT.escrow_id });
       if (!payload.ok) throw new Error(payload.error);
       status('Requesting OutLayer TEE execution (attach 0.05 NEAR)…');
-      const res = await VPApp.callContract('request_delivery_verification', {
+      const res = await SweftApp.callContract('request_delivery_verification', {
         escrow_id: AGREEMENT.escrow_id,
         carrier_payload: payload.carrier_payload,
       }, '50000000000000000000000');
       status('Recording result…');
       await new Promise((r) => setTimeout(r, 4000));
-      await VPApp.jsonPost('/api/v1/verification/sync/', { escrow_id: AGREEMENT.escrow_id, tx_hash: res.txHash });
+      await SweftApp.jsonPost('/api/v1/verification/sync/', { escrow_id: AGREEMENT.escrow_id, tx_hash: res.txHash });
       status('Verified — refreshing…'); setTimeout(() => window.location.reload(), 2000);
     } catch (e) { status(''); alert('Verification failed: ' + e.message); }
   }
@@ -480,39 +410,6 @@
     if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return '0';
     const [w = '0', f = ''] = clean.split('.');
     return (BigInt(w) * 10n ** 24n + BigInt((f + '0'.repeat(24)).slice(0, 24) || '0')).toString();
-  }
-
-  async function arbitrateVote() {
-    const pct = Math.max(0, Math.min(100, parseInt(document.getElementById('arb-pct').value || '0', 10)));
-    const amount = toYoctoNEAR(document.getElementById('arb-amount').value);
-    if (BigInt(amount) < 10000000000000000000000n) { alert('Stake at least 0.01 NEAR.'); return; }
-    const el = document.getElementById('arb-status');
-    try {
-      el.textContent = 'Confirm your vote in the wallet…';
-      await VPApp.callContract('vote_dispute', { escrow_id: AGREEMENT.escrow_id, seller_pct: pct }, '150000000000000', amount);
-      el.textContent = 'Vote recorded — refreshing…';
-      setTimeout(() => window.location.reload(), 2500);
-    } catch (e) { el.textContent = ''; alert('Vote failed: ' + e.message); }
-  }
-
-  async function finalizeArbitration() {
-    const el = document.getElementById('arb-status');
-    try {
-      el.textContent = 'Finalizing settlement…';
-      await VPApp.callContract('finalize_arbitration', { escrow_id: AGREEMENT.escrow_id }, '150000000000000', '0');
-      el.textContent = 'Arbitration finalized — refreshing…';
-      setTimeout(() => window.location.reload(), 2500);
-    } catch (e) { el.textContent = ''; alert('Finalize failed: ' + e.message); }
-  }
-
-  async function claimStake() {
-    const el = document.getElementById('arb-status');
-    try {
-      el.textContent = 'Claiming your stake…';
-      await VPApp.callContract('claim_stake', { escrow_id: AGREEMENT.escrow_id }, '150000000000000', '0');
-      el.textContent = 'Stake reclaimed — refreshing…';
-      setTimeout(() => window.location.reload(), 2500);
-    } catch (e) { el.textContent = ''; alert('Claim failed: ' + e.message); }
   }
 
   // --- Review board (Sputnik DAO) ---------------------------------------
@@ -537,7 +434,7 @@
     };
     try {
       el.textContent = 'Confirm the escalation in your wallet (bond attached)…';
-      await VPApp.callContractOn(GOV_DAO, 'add_proposal', args, GOV_BOND, '150000000000000');
+      await SweftApp.callContractOn(GOV_DAO, 'add_proposal', args, GOV_BOND, '150000000000000');
       el.textContent = 'Proposal filed — refreshing…';
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { el.textContent = ''; alert('Escalation failed: ' + e.message); }
@@ -548,7 +445,7 @@
     try {
       el.textContent = 'Confirm your vote in the wallet…';
       // Final approvals execute the proposal → needs the higher gas budget.
-      await VPApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
+      await SweftApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
       el.textContent = 'Vote recorded — refreshing…';
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { el.textContent = ''; alert('Vote failed: ' + e.message); }
@@ -560,9 +457,9 @@
     try {
       status(label + ' — confirm in your wallet…');
       const hex = await sha256Hex(reason);
-      const res = await VPApp.callContract(method, { escrow_id: AGREEMENT.escrow_id, reason_hash: hex }, '0', '150000000000000');
+      const res = await SweftApp.callContract(method, { escrow_id: AGREEMENT.escrow_id, reason_hash: hex }, '0', '150000000000000');
       status('Recording the case file…');
-      const saved = await VPApp.jsonPost('/api/v1/disputes/', {
+      const saved = await SweftApp.jsonPost('/api/v1/disputes/', {
         escrow_id: AGREEMENT.escrow_id, reason, tx_hash: res.txHash,
       });
       if (!saved.ok) throw new Error(saved.error);
@@ -584,7 +481,7 @@
     if (!text) { el.textContent = 'Write your statement first.'; return; }
     el.textContent = 'Filing…';
     try {
-      const res = await VPApp.jsonPost(`/api/v1/disputes/${disputeId}/evidence/`, { text });
+      const res = await SweftApp.jsonPost(`/api/v1/disputes/${disputeId}/evidence/`, { text });
       if (!res.ok) throw new Error(res.error);
       el.textContent = 'Filed — refreshing…';
       setTimeout(() => window.location.reload(), 1200);
@@ -595,7 +492,7 @@
     const el = document.getElementById('dispute-status');
     el.textContent = 'Asking the AI arbiter (advisory)…';
     try {
-      const res = await VPApp.jsonPost(`/api/v1/disputes/${disputeId}/ai-review/`, {});
+      const res = await SweftApp.jsonPost(`/api/v1/disputes/${disputeId}/ai-review/`, {});
       if (!res.ok) throw new Error(res.error);
       const rec = res.recommendation;
       el.textContent = `AI advisory: ${rec.pct}% to seller (${rec.source}) — ${rec.reason}`;
@@ -605,13 +502,13 @@
   async function simpleCall(method, label, gas) {
     try {
       status(label + '…');
-      await VPApp.callContract(method, { escrow_id: AGREEMENT.escrow_id }, '0', gas);
+      await SweftApp.callContract(method, { escrow_id: AGREEMENT.escrow_id }, '0', gas);
       status(label + ' — refreshing…'); setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
   }
 
   async function syncFromChain() {
-    await VPApp.jsonPost('/api/v1/agreements/{{ agreement.escrow_id|default:escrow_id }}/sync/', {});
+    await SweftApp.jsonPost('/api/v1/agreements/{{ agreement.escrow_id|default:escrow_id }}/sync/', {});
     window.location.reload();
   }
 
@@ -727,7 +624,7 @@
   let trackingRendered = '';
   async function pollTracking() {
     try {
-      const res = await VPApp.jsonGet('/api/v1/shipments/by-escrow/' + encodeURIComponent(AGREEMENT.escrow_id) + '/');
+      const res = await SweftApp.jsonGet('/api/v1/shipments/by-escrow/' + encodeURIComponent(AGREEMENT.escrow_id) + '/');
       if (!res || !res.ok) return;
       renderTracking(res.shipment);
       const escrowState = res.shipment && res.shipment.escrow_state;

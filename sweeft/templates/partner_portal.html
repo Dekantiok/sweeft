@@ -4,7 +4,7 @@
 {% if not wallet_account %}
   <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg mx-auto text-center">
     <p class="text-sm">Connect your wallet to open the partner portal.</p>
-    <button onclick="VPApp.connect()" class="mt-3 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
+    <button onclick="SweftApp.connect()" class="mt-3 bg-slate-900 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
   </div>
 {% else %}
   <h1 class="text-2xl font-semibold text-center">Partner portal</h1>
@@ -87,14 +87,14 @@
 
   async function refreshOne(id) {
     try {
-      const res = await VPApp.jsonGet(`/api/v1/shipments/${id}/`);
+      const res = await SweftApp.jsonGet(`/api/v1/shipments/${id}/`);
       const entry = PORTAL_SHIPMENTS.find((s) => s.id === id);
       if (entry && res && res.shipment) paint(entry, res.shipment);
     } catch (e) { /* transient */ }
   }
 
   async function advance(id, status) {
-    const res = await VPApp.jsonPost(`/api/v1/shipments/${id}/events/`, { status });
+    const res = await SweftApp.jsonPost(`/api/v1/shipments/${id}/events/`, { status });
     if (!res.ok) { alert(res.error || 'failed'); return; }
     refreshOne(id);
   }

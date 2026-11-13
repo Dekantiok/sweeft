@@ -5,7 +5,7 @@
   <div class="max-w-lg bg-white border border-slate-200 rounded-xl p-6 mx-auto text-center">
     <h1 class="text-xl font-semibold">Platform operations</h1>
     <p class="text-sm text-slate-600 mt-2">Connect the platform owner wallet to open the operations console.</p>
-    <button onclick="VPApp.connect()" class="mt-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
+    <button onclick="SweftApp.connect()" class="mt-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
   </div>
 {% elif not_owner %}
   <div class="max-w-lg bg-white border border-slate-200 rounded-xl p-6 mx-auto text-center">
@@ -31,27 +31,20 @@
   <div class="grid lg:grid-cols-3 gap-4 mt-6">
     <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
       <div class="flex items-center gap-3">
-        <h2 class="font-semibold">Arbitration & disputes</h2>
+        <h2 class="font-semibold">Disputes in review</h2>
         <a class="text-xs text-emerald-700" href="/disputes/">full console →</a>
       </div>
-      {% for row in arbitration %}
+      {% for e in disputed_escrows %}
         <div class="mt-3 border border-rose-100 rounded-lg p-3 text-sm">
           <div class="flex items-center gap-2 flex-wrap">
-            <a class="font-medium text-emerald-700" href="/escrow/{{ row.escrow.id }}/">{{ row.escrow.id }}</a>
+            <a class="font-medium text-emerald-700" href="/escrow/{{ e.id }}/">{{ e.id }}</a>
             <span class="text-xs bg-rose-100 text-rose-800 rounded-full px-2 py-0.5">ReviewRequired</span>
-            {% if row.case %}
-              <span class="text-xs text-indigo-700">{{ row.case.votes|length }} votes · quorum {% if row.case.total_stake|floatformat:0 >= 50000000000000000000000 %}met{% else %}pending{% endif %}</span>
-            {% else %}
-              <span class="text-xs text-slate-500">no votes yet</span>
-            {% endif %}
           </div>
-          <div class="text-xs text-slate-500 mt-1">seller {{ row.escrow.seller }} · buyer {{ row.escrow.buyer }}</div>
-          {% if row.case and not row.case.finalized %}
-            <div class="text-xs text-slate-500 mt-1">any NEAR holder can vote on the split; once quorum is met, settlement is permissionless.</div>
-          {% endif %}
+          <div class="text-xs text-slate-500 mt-1">seller {{ e.seller }} · buyer {{ e.buyer }}</div>
+          <div class="text-xs text-slate-500 mt-1">resolution runs through the review board (council-approved proposal).</div>
         </div>
       {% empty %}
-        <p class="text-sm text-slate-500 mt-2">No disputes in review. The arbitration pool is ready for the next case.</p>
+        <p class="text-sm text-slate-500 mt-2">No disputes in review.</p>
       {% endfor %}
 
       {% if open_disputes_list %}
@@ -108,7 +101,7 @@
           Review board <code>{{ gov.dao }}</code> — disputes resolve only via council proposals; fees accrue to the treasury.
         </p>
         <div class="text-sm mt-2">
-          <b>{{ gov.active_count }}</b> open proposal(s) · treasury <b>{{ gov.treasury_tusd_display }}</b> tUSD / <b>{{ gov.treasury_near_display }}</b> NEAR
+          <b>{{ gov.active_count }}</b> open proposal(s) · treasury <b>{{ gov.treasury_near_display }}</b> NEAR
         </div>
         <a class="inline-block mt-2 text-xs text-emerald-700" href="/governance/">Open governance console →</a>
       </div>
@@ -124,7 +117,7 @@
     const el = document.getElementById('ops-fee-status');
     try {
       el.textContent = 'Confirm the fee update in your wallet…';
-      await VPApp.callContract('update_platform_fee_bps', { bps }, '0', '100000000000000');
+      await SweftApp.callContract('update_platform_fee_bps', { bps }, '0', '100000000000000');
       el.textContent = 'Fee updated — refreshing…';
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { el.textContent = ''; alert('Failed: ' + e.message); }

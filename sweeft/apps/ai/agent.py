@@ -42,7 +42,7 @@ ESCROW_RE = re.compile(r"\b(SWFT-\d{6})\b", re.I)
 PRICE_RE = re.compile(r"(?:under|below|max(?:imum)?|less than|cheaper than)\s*(?:t?USD\s*)?([\d,.]+)", re.I)
 SLUG_RE = re.compile(r"\b([a-z0-9]+(?:-[a-z0-9]+)+)\b", re.I)
 PAY_VERB_RE = re.compile(r"\b(pay|paying|send|sending|transfer|tip)\b", re.I)
-PAY_AMOUNT_RE = re.compile(r"([\d][\d,]*(?:\.\d+)?)\s*(?:near|tusd|usd|\$)", re.I)
+PAY_AMOUNT_RE = re.compile(r"([\d][\d,]*(?:\.\d+)?)\s*(?:near|usd|\$)", re.I)
 PAY_MEMO_RE = re.compile(r"\bfor\s+(.+)$", re.I)
 
 
@@ -159,7 +159,7 @@ def keyword_route(message: str, wallet: str) -> dict:
         stopwords = {
             "buy", "purchase", "find", "search", "looking", "want", "need", "for",
             "me", "an", "item", "a", "the", "under", "below", "less", "than",
-            "maximum", "max", "cheaper", "tusd", "usd", "near", "please",
+            "maximum", "max", "cheaper", "usd", "near", "please",
         }
         query = " ".join(
             tok for tok in lowered.split()

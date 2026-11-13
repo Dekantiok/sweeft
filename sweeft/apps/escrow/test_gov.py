@@ -100,7 +100,6 @@ class GovConsoleTests(TestCase):
             "proposals": [],
             "active_count": 0,
             "treasury_near_display": "10",
-            "treasury_tusd_display": "25",
             "gov": {"arbiter": "sweeft-board.testnet", "treasury": "sweeft-board.testnet"},
         }
 
@@ -111,7 +110,6 @@ class GovConsoleTests(TestCase):
         body = res.content.decode()
         self.assertIn("Review board", body)
         self.assertIn("sweeft-board.testnet", body)
-        self.assertIn("25", body)  # treasury tUSD
 
     def test_console_marks_council_member(self):
         session = self.client.session

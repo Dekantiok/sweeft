@@ -3,7 +3,6 @@
   const state = {
     network: 'testnet',
     contractId: '',
-    tokenId: '',
     explorer: '',
     walletAccount: null,
     cfg: null,
@@ -20,7 +19,7 @@
   function requireWallet() {
     if (!state.walletAccount) {
       alert('Connect your wallet first.');
-      VPWallet.showModal();
+      SweftWallet.showModal();
       return false;
     }
     return true;
@@ -35,9 +34,9 @@
     try {
       const c = await cfg();
       const network = (state.network || c.network || 'testnet').trim() || 'testnet';
-      await VPWallet.init({ network, contractId: state.contractId || c.sweeft_contract });
-      VPWallet.showModal();
-      VPWallet.onChange(async (accountId) => {
+      await SweftWallet.init({ network, contractId: state.contractId || c.sweeft_contract });
+      SweftWallet.showModal();
+      SweftWallet.onChange(async (accountId) => {
         if (accountId && accountId !== state.walletAccount) {
           await login(accountId);
         }
@@ -54,7 +53,7 @@
       const ch = await chRes.json();
       // wallet-selector core requires a real Buffer of exactly 32 bytes.
       const nonceBytes = Buffer.from(ch.nonce, 'base64');
-      const signed = await VPWallet.signLogin(ch.message, ch.recipient, nonceBytes);
+      const signed = await SweftWallet.signLogin(ch.message, ch.recipient, nonceBytes);
       const res = await fetch('/api/v1/wallet/verify/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
@@ -87,8 +86,8 @@
     try {
       const c = await cfg();
       const network = (state.network || c.network || 'testnet').trim() || 'testnet';
-      await VPWallet.init({ network, contractId: state.contractId || c.sweeft_contract });
-      await VPWallet.signOut();
+      await SweftWallet.init({ network, contractId: state.contractId || c.sweeft_contract });
+      await SweftWallet.signOut();
     } catch (e) {
       console.warn('wallet disconnect failed', e);
     }
@@ -105,19 +104,13 @@
   async function callContract(method, args, deposit = '0', gas = '150000000000000') {
     if (!requireWallet()) throw new Error('wallet not connected');
     const c = await cfg();
-    return VPWallet.callMethod(c.sweeft_contract, method, args, gas, deposit);
+    return SweftWallet.callMethod(c.sweeft_contract, method, args, gas, deposit);
   }
 
   // Call any contract (e.g. the governance DAO: add_proposal / act_proposal).
   async function callContractOn(contractId, method, args, deposit = '0', gas = '150000000000000') {
     if (!requireWallet()) throw new Error('wallet not connected');
-    return VPWallet.callMethod(contractId, method, args, gas, deposit);
-  }
-
-  async function callToken(method, args, deposit = '1', gas = '100000000000000') {
-    if (!requireWallet()) throw new Error('wallet not connected');
-    const c = await cfg();
-    return VPWallet.callMethod(c.tusd_contract, method, args, gas, deposit);
+    return SweftWallet.callMethod(contractId, method, args, gas, deposit);
   }
 
   function explorerTx(hash) {
@@ -150,8 +143,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Native NEAR helpers: balance display + faucet link. Legacy tUSD reads
-  // remain available through tokenBalance for old escrows.
+  // Native NEAR helpers: balance display + faucet link.
   // ------------------------------------------------------------------
 
   async function nativeBalance(accountId) {
@@ -170,30 +162,7 @@
 
   async function sendNear(receiverId, amountYocto) {
     if (!requireWallet()) throw new Error('wallet not connected');
-    return VPWallet.sendNear(receiverId, amountYocto);
-  }
-
-  async function tokenBalance(accountId) {
-    const c = await cfg();
-    const r = await fetch(c.rpc_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'bal',
-        method: 'query',
-        params: {
-          request_type: 'call_function',
-          finality: 'final',
-          account_id: c.tusd_contract,
-          method_name: 'ft_balance_of',
-          args_base64: btoa(JSON.stringify({ account_id: accountId })),
-        },
-      }),
-    });
-    const j = await r.json();
-    const text = new TextDecoder().decode(Uint8Array.from(j.result?.result || []));
-    return text ? BigInt(JSON.parse(text)) : 0n;
+    return SweftWallet.sendNear(receiverId, amountYocto);
   }
 
   function fmtUnits(units) {
@@ -203,8 +172,8 @@
     return frac ? `${whole}.${frac}` : whole;
   }
 
-  async function refreshTokenBalance() {
-    const el = document.getElementById('tusd-balance');
+  async function refreshBalance() {
+    const el = document.getElementById('near-balance');
     if (!el || !state.walletAccount) return;
     try {
       el.textContent = fmtUnits(await nativeBalance(state.walletAccount)) + ' NEAR';
@@ -247,7 +216,7 @@
   async function checkWalletConnection() {
     if (!state.walletAccount) return;
     try {
-      const connected = await VPWallet.isConnected();
+      const connected = await SweftWallet.isConnected();
       if (!connected) showWalletMismatchBanner();
       else hideWalletMismatchBanner();
     } catch (e) {
@@ -257,26 +226,26 @@
 
   function init(options) {
     Object.assign(state, options || {});
-    window.VPApp = window.VPApp || {};
-    Object.assign(window.VPApp, {
-      state, cfg, connect, disconnect, login, callContract, callToken,
+    window.SweftApp = window.SweftApp || {};
+    Object.assign(window.SweftApp, {
+      state, cfg, connect, disconnect, login, callContract,
       callContractOn, sendNear,
-      explorerTx, jsonPost, jsonGet, requireWallet, tokenBalance, nativeBalance, refreshTokenBalance, faucet,
+      explorerTx, jsonPost, jsonGet, requireWallet, nativeBalance, refreshBalance, faucet,
       checkWalletConnection,
     });
     if (state.walletAccount) {
       // Logged-in session: warm up the wallet selector so on-chain actions work
       // without re-clicking Connect, then flag a disconnected wallet clearly.
       cfg()
-        .then((c) => VPWallet.init({
+        .then((c) => SweftWallet.init({
           network: (state.network || c.network || 'testnet').trim() || 'testnet',
           contractId: state.contractId || c.sweeft_contract,
         }))
         .then(() => checkWalletConnection())
         .catch((e) => console.warn('wallet warm-up failed', e));
-      refreshTokenBalance();
+      refreshBalance();
     }
   }
 
-  window.VPApp = { init };
+  window.SweftApp = { init };
 })();

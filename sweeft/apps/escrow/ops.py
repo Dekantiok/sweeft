@@ -1,9 +1,8 @@
 """Platform operations console (`/ops/`).
 
 Owner-only overview of the whole ecosystem: live escrow stats, partner
-approvals queue, arbitration cases, platform fee configuration and the
-dispute review queue. Reads chain data where possible (the contract is the
-source of truth).
+approvals queue, platform fee configuration and the dispute review queue.
+Reads chain data where possible (the contract is the source of truth).
 """
 from __future__ import annotations
 
@@ -45,18 +44,8 @@ def ops_console(request):
 
     completed = [e for e in escrows if e.get("state") == "Completed"]
     disputed = [e for e in escrows if e.get("state") == "ReviewRequired"]
-    # Do not mix denominations: legacy tUSD escrows stay out of native totals.
-    native_completed = [e for e in completed if e.get("token") == "near"]
-    total_volume = sum(int(e.get("seller_amount") or 0) for e in native_completed)
-    total_fees = sum(int(e.get("platform_fee") or 0) for e in native_completed)
-
-    arbitration = []
-    for e in disputed:
-        try:
-            case = near.view_call(settings.SWEEFT_CONTRACT, "arbitration_status", {"escrow_id": e["id"]})
-        except Exception:  # noqa: BLE001
-            case = None
-        arbitration.append({"escrow": e, "case": case})
+    total_volume = sum(int(e.get("seller_amount") or 0) for e in completed)
+    total_fees = sum(int(e.get("platform_fee") or 0) for e in completed)
 
     stats.update(
         {
@@ -78,7 +67,7 @@ def ops_console(request):
             "owner": owner,
             "stats": stats,
             "recent_escrows": escrows[:12],
-            "arbitration": arbitration,
+            "disputed_escrows": disputed,
             "gov": gov,
             "pending_partners_list": LogisticsPartner.objects.filter(status__in=["PENDING", "UNDER_REVIEW"]),
             "open_disputes_list": Dispute.objects.filter(status="open")[:20],

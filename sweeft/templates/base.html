@@ -29,11 +29,11 @@
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261113b">
-  <script src="{% static 'js/sweeft-wallet.js' %}?v=20261113c"></script>
-  <script src="{% static 'js/app.js' %}?v=20261113c"></script>
-  <script src="{% static 'js/chat.js' %}?v=20261113d"></script>
+  <script src="{% static 'js/sweeft-wallet.js' %}?v=20261114a"></script>
+  <script src="{% static 'js/app.js' %}?v=20261114a"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261114a"></script>
 </head>
-<body class="h-full bg-slate-950 text-slate-100 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ SWEEFT_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
+<body class="h-full bg-slate-950 text-slate-100 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ SWEEFT_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
   <style>
     /* Dark theme overrides (applied on top of the Tailwind utilities). */
     body { background: #020617; }
@@ -111,7 +111,7 @@
         <div class="flex-1"></div>
         <div id="wallet-box" class="flex items-center gap-2">
           {% if wallet_account %}
-            <span id="tusd-balance" title="Native NEAR balance" class="hidden sm:inline-block text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1 whitespace-nowrap">… NEAR</span>
+            <span id="near-balance" title="Native NEAR balance" class="hidden sm:inline-block text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1 whitespace-nowrap">… NEAR</span>
             <div class="relative">
               <button onclick="toggleAccountMenu(event)" class="flex items-center gap-2 text-xs text-slate-200 border border-slate-700 rounded-full px-3 py-1.5 hover:border-emerald-500 hover:text-emerald-300 transition-colors">
                 <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
@@ -130,13 +130,13 @@
                     <a href="/disputes/">Disputes</a>
                     <a href="/ops/">Ops console</a>
                   {% endif %}
-                  <button id="faucet-btn" onclick="VPApp.faucet()">Get test NEAR</button>
-                  <button class="danger" onclick="VPApp.disconnect()">Disconnect</button>
+                  <button id="faucet-btn" onclick="SweftApp.faucet()">Get test NEAR</button>
+                  <button class="danger" onclick="SweftApp.disconnect()">Disconnect</button>
                 </div>
               </div>
             </div>
           {% else %}
-            <button class="text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-full px-4 py-2 font-medium shadow-[0_0_18px_rgba(16,185,129,0.25)] transition-all whitespace-nowrap" onclick="VPApp.connect()">Connect wallet</button>
+            <button class="text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-full px-4 py-2 font-medium shadow-[0_0_18px_rgba(16,185,129,0.25)] transition-all whitespace-nowrap" onclick="SweftApp.connect()">Connect wallet</button>
           {% endif %}
         </div>
       </div>
@@ -172,23 +172,21 @@
       <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-wrap gap-4 items-center justify-center text-center">
         <span class="text-emerald-700 font-medium">Testnet MVP</span>
         <span>Contract: <code>{{ SWEEFT_CONTRACT|default:"not deployed yet" }}</code></span>
-        <span>Legacy token: <code>{{ TUSD_CONTRACT|default:"not deployed yet" }}</code></span>
         <span>OutLayer: <code>{{ OUTLAYER_CONTRACT }}</code></span>
-        <span class="text-slate-400">Escrows use native NEAR — no token mint required. Get test NEAR from the public faucet. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine. Legacy tUSD escrows remain readable.</span>
+        <span class="text-slate-400">Escrows use native NEAR — no token mint required. Get test NEAR from the public faucet. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine.</span>
       </div>
     </footer>
   </div>
   <script>
-    VPApp.init({
+    SweftApp.init({
       network: document.body.dataset.network,
       contractId: document.body.dataset.contract,
-      tokenId: document.body.dataset.token,
       explorer: document.body.dataset.explorer,
       walletAccount: "{{ wallet_account|default:'' }}",
     });
     // Deep links like /?connect=1 open the wallet modal immediately.
     if (!{{ wallet_account|yesno:"true,false" }} && new URLSearchParams(location.search).get('connect') === '1') {
-      VPApp.connect();
+      SweftApp.connect();
     }
   </script>
   {% block scripts %}{% endblock %}

@@ -63,7 +63,7 @@ class FallbackTests(SimpleTestCase):
                 raise AIProviderError("provider down")
 
         with mock.patch("apps.ai.services.get_provider", return_value=Boom()):
-            parsed = services.parse_deal_text("pay 5 tUSD to carol.testnet tomorrow")
+            parsed = services.parse_deal_text("pay 5 NEAR to carol.testnet tomorrow")
         self.assertEqual(parsed["source"], "rules")
         self.assertEqual(parsed["beneficiary"], "carol.testnet")
 
@@ -84,7 +84,7 @@ class EndpointTests(SimpleTestCase):
     def test_parse_endpoint(self):
         res = self.client.post(
             "/api/v1/ai/parse/",
-            data=json.dumps({"text": "pay 10 tUSD to dave.testnet in 5 days"}),
+            data=json.dumps({"text": "pay 10 NEAR to dave.testnet in 5 days"}),
             content_type="application/json",
         )
         body = res.json()

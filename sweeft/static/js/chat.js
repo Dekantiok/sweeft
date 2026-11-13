@@ -118,7 +118,7 @@
       a.style.color = '#6ee7b7';
       s.appendChild(a);
     }
-    if (window.VPApp && VPApp.refreshTokenBalance) VPApp.refreshTokenBalance().catch(() => {});
+    if (window.SweftApp && SweftApp.refreshTokenBalance) SweftApp.refreshBalance().catch(() => {});
   }
 
   function toUnits(display) {
@@ -147,7 +147,7 @@
     btns.style.display = 'none';
     try {
       setStatus(node, 'Confirm your NEAR budget deposit in your wallet (one signature)…');
-      await VPApp.callContractOn(budgetContract, 'deposit', {}, grantAmount, '100000000000000');
+      await SweftApp.callContractOn(budgetContract, 'deposit', {}, grantAmount, '100000000000000');
       setStatus(node, 'Budget deposited on-chain ✓ — co-pilot is paying…');
       await execPayment(node, intentId);
     } catch (e) {
@@ -161,7 +161,7 @@
     btns.style.display = 'none';
     try {
       setStatus(node, 'Confirm the transfer in your wallet…');
-      const res = await VPApp.sendNear(to, amount);
+      const res = await SweftApp.sendNear(to, amount);
       txLink(node, res && res.txHash);
     } catch (e) {
       btns.style.display = 'flex';

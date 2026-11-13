@@ -7,7 +7,7 @@
   <span class="text-sm text-slate-500">The board that decides disputes — not a platform hot key</span>
 </div>
 
-<div class="grid sm:grid-cols-4 gap-3 mt-6">
+<div class="grid sm:grid-cols-3 gap-3 mt-6">
   <div class="bg-white border border-slate-200 rounded-xl p-4">
     <div class="text-xs text-slate-500">Board account</div>
     <div class="text-sm mt-1"><code>{{ dao }}</code></div>
@@ -19,10 +19,6 @@
   <div class="bg-white border border-slate-200 rounded-xl p-4">
     <div class="text-xs text-slate-500">Treasury (NEAR)</div>
     <div class="text-sm mt-1 font-medium">{{ treasury_near_display }} NEAR</div>
-  </div>
-  <div class="bg-white border border-slate-200 rounded-xl p-4">
-    <div class="text-xs text-slate-500">Treasury (legacy tUSD fees)</div>
-    <div class="text-sm mt-1 font-medium">{{ treasury_tusd_display }} tUSD</div>
   </div>
 </div>
 
@@ -118,7 +114,7 @@
     try {
       govStatus('Confirm your vote in the wallet…');
       // Final approvals execute the proposal → needs the higher gas budget.
-      await VPApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
+      await SweftApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
       govStatus('Vote recorded — refreshing…');
       setTimeout(() => window.location.reload(), 2500);
     } catch (e) { govStatus(''); alert('Vote failed: ' + e.message); }
@@ -137,7 +133,7 @@
     if (!receiver || amount === '0') { alert('Enter a recipient and an amount.'); return; }
     try {
       govStatus('Confirm the proposal in the wallet (bond attached)…');
-      await VPApp.callContractOn(GOV_DAO, 'add_proposal', {
+      await SweftApp.callContractOn(GOV_DAO, 'add_proposal', {
         proposal: {
           description: `Treasury transfer: ${document.getElementById('tr-amount').value.trim()} NEAR to ${receiver}`,
           kind: { Transfer: { token_id: '', receiver_id: receiver, amount, msg: null } },

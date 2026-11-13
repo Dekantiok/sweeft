@@ -5,7 +5,7 @@
   <div class="bg-white border border-slate-200 rounded-xl p-6 max-w-lg mx-auto text-center">
     <h1 class="text-xl font-semibold">Connect your wallet</h1>
     <p class="text-slate-600 text-sm mt-2">Your NEAR wallet is your identity. Sign a message (free, no transaction) to sign in.</p>
-    <button onclick="VPApp.connect()" class="mt-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
+    <button onclick="SweftApp.connect()" class="mt-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm">Connect wallet</button>
   </div>
 {% else %}
   <h1 class="text-2xl font-semibold text-center">Dashboard</h1>
@@ -23,7 +23,7 @@
       <div class="text-xs text-slate-500">Escrows use native NEAR — no mint needed. New wallet? Get test NEAR from the public faucet.</div>
     </div>
     <div class="flex-1"></div>
-    <button id="faucet-btn-dash" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm" onclick="VPApp.faucet()">Get test NEAR</button>
+    <button id="faucet-btn-dash" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm" onclick="SweftApp.faucet()">Get test NEAR</button>
   </div>
 
   <div class="mt-5 bg-white border border-slate-200 rounded-xl p-4">
@@ -140,10 +140,10 @@
       }
       if (String(units) === '0') {
         // Revoke = withdraw all unspent NEAR back to this wallet.
-        await VPApp.callContractOn(d.budget_contract, 'withdraw', { amount: d.allowance }, '0', '100000000000000');
+        await SweftApp.callContractOn(d.budget_contract, 'withdraw', { amount: d.allowance }, '0', '100000000000000');
       } else {
         // Deposit exactly the amount the co-pilot may spend on your behalf.
-        await VPApp.callContractOn(d.budget_contract, 'deposit', {}, String(units), '100000000000000');
+        await SweftApp.callContractOn(d.budget_contract, 'deposit', {}, String(units), '100000000000000');
       }
       st.textContent = label + ' — refreshing…';
       setTimeout(() => window.location.reload(), 2000);
