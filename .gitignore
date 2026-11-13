@@ -2,9 +2,8 @@
 target/
 **/target/
 
-# Node (legacy SWEeft apps until removed)
+# Node (wallet bundle build only)
 node_modules/
-.next/
 
 # Python / Django
 __pycache__/

@@ -17,7 +17,6 @@ YOCTO = 10**24
 TOKEN_DECIMALS = 6  # legacy tUSD decimals (existing escrows remain readable)
 NATIVE_NEAR_TOKEN = "near"
 NATIVE_NEAR_DECIMALS = 24
-TOKEN_UNIT = 10**TOKEN_DECIMALS
 
 
 def _rpc(method: str, params: dict, timeout: int = 25):
@@ -54,10 +53,6 @@ def view_call(contract: str, method: str, args: dict):
     return json.loads(data.decode()) if data else None
 
 
-def tx_status(tx_hash: str, sender: str):
-    return _rpc("tx", {"tx_hash": tx_hash, "sender_account_id": sender, "wait_until": "EXECUTED_OPTIMISTIC"})
-
-
 def get_escrow(escrow_id: str):
     return view_call(settings.VERIPAY_CONTRACT, "get_escrow", {"escrow_id": escrow_id})
 
@@ -82,10 +77,6 @@ def get_escrow_cached(escrow_id: str, ttl_seconds: int = 8):
 
 def escrows_for(account_id: str):
     return view_call(settings.VERIPAY_CONTRACT, "escrows_for", {"account_id": account_id}) or []
-
-
-def pending_for(account_id: str):
-    return view_call(settings.VERIPAY_CONTRACT, "pending_for", {"account_id": account_id}) or []
 
 
 def token_balance(token_contract: str, account_id: str) -> str:
