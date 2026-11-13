@@ -174,3 +174,15 @@ All repository addresses and links now point to this stack.
 - **App check**: an authenticated NEP-413 session renders `/`, `/dashboard/`,
   `/escrow/VP-000001/` and `/governance/` with HTTP 200 and shows the current contract address
   (dashboard lists `VP-000001`, escrow page shows `Completed`, governance shows the board).
+
+## 10. Pre-submission key rotation (2026-11-14)
+
+- The development seed for `steepdata3968.testnet` was rotated as submission hygiene: a new
+  full-access key `ed25519:CTGNf5iRs1Uovrq8E11zGT51DZZMVDqqWtEjt4MVPP2Q` was added
+  (tx `8MorZ493EjqiQicMZFKFAEsbh2h8u86YaQbSDhbmNrj9`), proven with a signed 1-yocto
+  self-transfer (`HLpj65wfNrvf3hCAC8EMo9ih1ckFjgKNbmnYpigU2KUp`), and the old key
+  `ed25519:ELxotH9SWYHkGBJPkdybXY1ocdP9wVoDUipjnFZs8E2z` was deleted on-chain
+  (tx `BeJe8EiY5V9mA7bf5EP5kyp5NSLUpAZ5WVSLdvaVo9F4`). Credentials live at
+  `~/.near-credentials/testnet/steepdata3968.testnet.json` (mode 0600).
+- Reproducible via `scripts/rotate_key.py <account>`; the account's scoped FunctionCall key
+  (0.25 NEAR allowance) is unaffected.
