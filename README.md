@@ -91,12 +91,11 @@ sweeft/               Django modular monolith (product coordinator + projection)
   apps/escrow/         agreements, invitations, contract reads, settlement projection, relayer
   apps/logistics/      partners, Demo Carrier, shipments, verification records
   apps/market/         listings, purchase requests, trust profiles (/u/<wallet>/)
-  apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) + co-pilot payments — see docs/ai-copilot.md
+  apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) + co-pilot payments
   templates/ static/   Django templates + HTMX + Alpine + Tailwind; wallet bundle
 tools/web-bundle/      esbuild bundle of @near-wallet-selector (Meteor/HERE/Nightly)
 tools/demo-carrier/    standalone Demo Carrier simulator — SIMULATED, partner-API only
 scripts/               deploy + end-to-end scripts
-docs/                  architecture, lifecycle, settlement rules, verification, partner API
 ```
 
 **Source-of-truth rule:** the contract controls funds and permissions; Django coordinates the
@@ -287,7 +286,7 @@ Over-cap and no-budget paths refused correctly.
 ## Security & trust boundaries (post-review hardening)
 
 A pre-submission review surfaced real exploit paths; all critical findings are fixed and verified
-on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md`):
+on-chain:
 
 | Finding | Fix |
 |---|---|
