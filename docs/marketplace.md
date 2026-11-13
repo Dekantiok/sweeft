@@ -1,6 +1,6 @@
 # Marketplace & reputation
 
-The marketplace is the discovery layer of the VeriPay ecosystem. It never touches funds:
+The marketplace is the discovery layer of the SWEEFT ecosystem. It never touches funds:
 trading always happens through the on-chain escrow, and **one wallet** connects listings,
 profiles, escrows and logistics.
 

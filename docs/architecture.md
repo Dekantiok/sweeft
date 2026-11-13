@@ -5,7 +5,7 @@
 ```
 ┌────────────┐  wallet-signed txs   ┌──────────────────────┐
 │  Browser   │ ───────────────────► │  NEAR testnet        │
-│ Django     │    NEP-413 login     │  veripay.*.testnet   │
+│ Django     │    NEP-413 login     │  sweeft.*.testnet   │
 │ templates  │                      │  (Rust escrow)       │
 │ + wallet   │                      └──────┬───────────────┘
 │   bundle   │                             │ request_execution

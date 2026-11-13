@@ -48,11 +48,11 @@ lifecycle against this API — the same surface a real carrier integration would
 database state; run it next to `runserver`:
 
 ```bash
-# terminal 1 — VeriPay
-cd veripay && python3 manage.py runserver 0.0.0.0:8000
+# terminal 1 — SWEEFT
+cd sweeft && python3 manage.py runserver 0.0.0.0:8000
 
 # terminal 2 — the carrier (SIMULATED). Key from `seed_demo --issue-carrier-key`.
-VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
   python3 tools/demo-carrier/simulator.py
 ```
 

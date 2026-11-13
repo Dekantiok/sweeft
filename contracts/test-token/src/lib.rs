@@ -1,4 +1,4 @@
-//! VeriPay Test Dollar (tUSD) — NEP-141 fungible token for NEAR testnet demos.
+//! Sweeft Test Dollar (tUSD) — NEP-141 fungible token for NEAR testnet demos.
 //!
 //! This is a TESTNET DEMO TOKEN, not a stablecoin:
 //! - `mint` is open so demo wallets can self-serve test funds.
@@ -6,7 +6,7 @@
 //!
 //! On top of standard NEP-141 this token implements a minimal allowance
 //! ("approve / spender") extension. It exists so a wallet can grant the
-//! VeriPay AI co-pilot a scoped, revocable budget: one wallet signature, then
+//! Sweeft AI co-pilot a scoped, revocable budget: one wallet signature, then
 //! the agent may spend within that budget without a popup per payment. The
 //! allowance — not the agent's key custody — is the security boundary.
 
@@ -77,7 +77,7 @@ impl TestToken {
     // migration.
     // ------------------------------------------------------------------
 
-    /// Caller approves `spender` (e.g. the VeriPay AI agent account) to move
+    /// Caller approves `spender` (e.g. the Sweeft AI agent account) to move
     /// up to `amount` tUSD from the caller's balance. Set 0 to revoke.
     pub fn approve(&mut self, spender: AccountId, amount: U128) {
         let owner = env::predecessor_account_id();
@@ -208,7 +208,7 @@ mod tests {
 
     fn setup() -> TestToken {
         testing_env!(as_account(accounts(0)).build());
-        TestToken::new("VeriPay Test Dollar".to_string(), "tUSD".to_string(), 6)
+        TestToken::new("Sweeft Test Dollar".to_string(), "tUSD".to_string(), 6)
     }
 
     #[test]

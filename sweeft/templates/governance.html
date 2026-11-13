@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Governance — SWEEFT{% endblock %}
+{% block content %}
+<div class="flex items-center gap-3 flex-wrap justify-center text-center">
+  <h1 class="text-2xl font-semibold">Review board &amp; treasury</h1>
+  <span class="text-xs rounded-full px-3 py-1 bg-slate-900 text-white">Sputnik DAO</span>
+  <span class="text-sm text-slate-500">The board that decides disputes — not a platform hot key</span>
+</div>
+
+<div class="grid sm:grid-cols-4 gap-3 mt-6">
+  <div class="bg-white border border-slate-200 rounded-xl p-4">
+    <div class="text-xs text-slate-500">Board account</div>
+    <div class="text-sm mt-1"><code>{{ dao }}</code></div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4">
+    <div class="text-xs text-slate-500">Council</div>
+    <div class="text-sm mt-1">{{ council.members|length }} member(s) · {{ council.votes_needed }} approval(s) needed</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4">
+    <div class="text-xs text-slate-500">Treasury (NEAR)</div>
+    <div class="text-sm mt-1 font-medium">{{ treasury_near_display }} NEAR</div>
+  </div>
+  <div class="bg-white border border-slate-200 rounded-xl p-4">
+    <div class="text-xs text-slate-500">Treasury (legacy tUSD fees)</div>
+    <div class="text-sm mt-1 font-medium">{{ treasury_tusd_display }} tUSD</div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4 mt-6">
+  <section class="bg-white border border-slate-200 rounded-xl p-4 lg:col-span-2">
+    <div class="flex items-center gap-3 flex-wrap">
+      <h2 class="font-semibold">Proposals</h2>
+      <span class="text-xs text-slate-500">{{ active_count }} open · bond {{ proposal_bond_display }} NEAR per proposal (returned when finalised)</span>
+    </div>
+
+    {% for p in proposals %}
+      <div class="mt-3 border border-slate-200 rounded-lg p-3 text-sm">
+        <div class="flex items-center gap-2 flex-wrap">
+          <b>#{{ p.id }}</b>
+          <span>{{ p.description }}</span>
+          <span class="text-xs rounded-full px-2 py-0.5 {% if p.status == 'InProgress' %}bg-amber-100 text-amber-800{% elif p.status == 'Approved' %}bg-emerald-100 text-emerald-800{% elif p.status == 'Rejected' %}bg-rose-100 text-rose-800{% else %}bg-slate-100 text-slate-700{% endif %}">{{ p.status }}</span>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">
+          proposed by <code>{{ p.proposer }}</code>
+          {% with review=p.review %}{% if review %} · dispute target: <code>{{ review.escrow_id }}</code> — {{ review.seller_pct }}% to seller{% endif %}{% endwith %}
+        </div>
+        {% with votes=p.votes %}
+          {% if votes %}
+            <div class="mt-2 flex gap-2 flex-wrap">
+              {% for voter, action in votes.items %}
+                <span class="text-xs rounded-full px-2 py-0.5 {% if action == 'Approve' %}bg-emerald-100 text-emerald-800{% else %}bg-rose-100 text-rose-800{% endif %}">{{ voter }} → {{ action }}</span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-xs text-slate-500 mt-2">no votes yet</div>
+          {% endif %}
+        {% endwith %}
+        {% if p.status == 'InProgress' %}
+          {% if is_council %}
+            <div class="mt-2 flex gap-2 flex-wrap">
+              <button onclick="voteProposal({{ p.id }}, 'VoteApprove')" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Approve</button>
+              <button onclick="voteProposal({{ p.id }}, 'VoteReject')" class="border border-rose-400 text-rose-700 rounded-lg px-3 py-1.5 text-xs">Reject</button>
+            </div>
+          {% else %}
+            <div class="text-xs text-slate-500 mt-2">Connect a council member wallet to vote.</div>
+          {% endif %}
+        {% endif %}
+      </div>
+    {% empty %}
+      <p class="text-sm text-slate-500 mt-3">No proposals yet. When a dispute is escalated from an escrow page, it appears here for the council to decide.</p>
+    {% endfor %}
+    <p id="gov-status" class="text-xs text-slate-500 mt-3"></p>
+  </section>
+
+  <section class="space-y-4">
+    <div class="bg-white border border-slate-200 rounded-xl p-4">
+      <h2 class="font-semibold text-sm">Council members</h2>
+      <ul class="mt-2 space-y-1 text-sm">
+        {% for m in council.members %}<li class="flex items-center gap-2"><span class="inline-block h-1.5 w-1.5 rounded-full {% if wallet_account == m %}bg-emerald-400{% else %}bg-slate-400{% endif %}"></span><code>{{ m }}</code>{% if wallet_account == m %}<span class="text-xs text-emerald-700">you</span>{% endif %}</li>{% endfor %}
+      </ul>
+      <p class="text-xs text-slate-500 mt-2">On mainnet, council keys live on hardware wallets (Ledger/Trezor) — the board approves with M-of-N signatures.</p>
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl p-4">
+      <h2 class="font-semibold text-sm">Treasury</h2>
+      <p class="text-xs text-slate-500 mt-1">Platform fees accrue to the board account. Spending requires a council-approved Transfer proposal.</p>
+      {% if wallet_account %}
+        <div class="mt-3 space-y-2">
+          <input id="tr-receiver" placeholder="recipient.testnet" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <input id="tr-amount" placeholder="amount in NEAR (e.g. 0.5)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <button onclick="proposeTransfer()" class="w-full bg-slate-900 hover:bg-slate-700 text-white rounded-lg px-3 py-1.5 text-sm">Propose NEAR transfer</button>
+        </div>
+      {% else %}
+        <p class="text-xs text-slate-500 mt-2">Connect a wallet to propose treasury spending.</p>
+      {% endif %}
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl p-4 text-sm">
+      <h2 class="font-semibold text-sm">Escrow contract wiring</h2>
+      <ul class="mt-2 text-xs text-slate-500 space-y-1">
+        <li>arbiter → <code>{{ gov.arbiter|default:"—" }}</code></li>
+        <li>treasury → <code>{{ gov.treasury|default:"—" }}</code></li>
+        <li>disputes resolve only via board proposals</li>
+        <li>platform fees pay to the treasury</li>
+      </ul>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const GOV_DAO = "{{ dao|escapejs }}";
+  const GOV_BOND = "{{ proposal_bond_yocto|default:0 }}";
+
+  function govStatus(text) { document.getElementById('gov-status').textContent = text; }
+
+  async function voteProposal(id, action) {
+    try {
+      govStatus('Confirm your vote in the wallet…');
+      // Final approvals execute the proposal → needs the higher gas budget.
+      await VPApp.callContractOn(GOV_DAO, 'act_proposal', { id, action }, '0', '300000000000000');
+      govStatus('Vote recorded — refreshing…');
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { govStatus(''); alert('Vote failed: ' + e.message); }
+  }
+
+  function toYocto(v) {
+    const clean = String(v || '0').replace(/,/g, '').trim();
+    if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return '0';
+    const [w = '0', f = ''] = clean.split('.');
+    return (BigInt(w) * 10n ** 24n + BigInt((f + '0'.repeat(24)).slice(0, 24) || '0')).toString();
+  }
+
+  async function proposeTransfer() {
+    const receiver = document.getElementById('tr-receiver').value.trim();
+    const amount = toYocto(document.getElementById('tr-amount').value);
+    if (!receiver || amount === '0') { alert('Enter a recipient and an amount.'); return; }
+    try {
+      govStatus('Confirm the proposal in the wallet (bond attached)…');
+      await VPApp.callContractOn(GOV_DAO, 'add_proposal', {
+        proposal: {
+          description: `Treasury transfer: ${document.getElementById('tr-amount').value.trim()} NEAR to ${receiver}`,
+          kind: { Transfer: { token_id: '', receiver_id: receiver, amount, msg: null } },
+        },
+      }, GOV_BOND, '150000000000000');
+      govStatus('Proposal filed — refreshing…');
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (e) { govStatus(''); alert('Proposal failed: ' + e.message); }
+  }
+</script>
+{% endblock %}

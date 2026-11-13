@@ -2,11 +2,11 @@
 """Demo Carrier simulator — a standalone, clearly-simulated logistics service.
 
 Runs the ~60-second delivery lifecycle (receive → transport → deliver) against
-VeriPay's carrier Partner API, exactly like a real provider integration would:
+SWEEFT's carrier Partner API, exactly like a real provider integration would:
 HTTP only, API-key authenticated, no shared database, no Django imports.
 
     python3 manage.py seed_demo --issue-carrier-key        # prints the key once
-    VERIPAY_BASE_URL=http://127.0.0.1:8000 \
+    SWEEFT_BASE_URL=http://127.0.0.1:8000 \
     DEMO_CARRIER_API_KEY=vp_... \
     python3 tools/demo-carrier/simulator.py
 
@@ -76,7 +76,7 @@ def due_events(scenario: str, elapsed_seconds: float, posted_statuses: set[str])
     ]
 
 
-class VeriPayApi:
+class SWEEFTApi:
     """Thin HTTP client for the carrier Partner API (X-Api-Key auth)."""
 
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0):
@@ -109,7 +109,7 @@ def log(message: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}", flush=True)
 
 
-def tick(api: VeriPayApi, shipment: dict, started: dict[str, float]) -> None:
+def tick(api: SWEEFTApi, shipment: dict, started: dict[str, float]) -> None:
     """Advance one shipment if its scheduled events have come due."""
     tracking = shipment["tracking_number"]
     if shipment["status"] in TERMINAL_STATUSES:
@@ -126,7 +126,7 @@ def tick(api: VeriPayApi, shipment: dict, started: dict[str, float]) -> None:
 
 
 def run(base_url: str, api_key: str, poll_seconds: float, once: bool = False) -> None:
-    api = VeriPayApi(base_url, api_key)
+    api = SWEEFTApi(base_url, api_key)
     started: dict[str, float] = {}
     log(f"Demo Carrier (SIMULATED) up — {base_url}, polling every {poll_seconds:g}s")
     while True:
@@ -147,7 +147,7 @@ def run(base_url: str, api_key: str, poll_seconds: float, once: bool = False) ->
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Demo Carrier simulator (SIMULATED tracking)")
-    parser.add_argument("--base-url", default=os.environ.get("VERIPAY_BASE_URL", "http://127.0.0.1:8000"))
+    parser.add_argument("--base-url", default=os.environ.get("SWEEFT_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--api-key", default=os.environ.get("DEMO_CARRIER_API_KEY", ""))
     parser.add_argument("--poll", type=float, default=float(os.environ.get("DEMO_CARRIER_POLL_SECONDS", "2")))
     parser.add_argument("--once", action="store_true", help="run a single poll cycle (tests/demos) and exit")

@@ -1,4 +1,4 @@
-//! VeriPay co-pilot budget — native-NEAR allowance for agent payments.
+//! Sweeft co-pilot budget — native-NEAR allowance for agent payments.
 //!
 //! A user deposits exactly the amount they allow the AI co-pilot to spend.
 //! Only the configured agent account may call `pay`; every payment is capped

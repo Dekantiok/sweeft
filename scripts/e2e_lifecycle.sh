@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VeriPay end-to-end testnet lifecycle (reference + demo script).
+# SWEEFT end-to-end testnet lifecycle (reference + demo script).
 # Runs: create -> accept -> fund (native NEAR) -> assign provider ->
 # register shipment -> OutLayer TEE verification -> settle logistics ->
 # confirm receipt. Prints native NEAR balances at each settlement step.
@@ -8,7 +8,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
-VERIPAY="${VERIPAY:-veripay.steepdata3968.testnet}"
+SWEEFT="${SWEEFT:-sweeft-escrow.testnet}"
 SELLER="${SELLER:-seller.steepdata3968.testnet}"
 BUYER="${BUYER:-steepdata3968.testnet}"
 PROVIDER="${PROVIDER:-logistics.steepdata3968.testnet}"
@@ -22,7 +22,7 @@ PLATFORM_FEE=$(python3 -c "print($SELLER_AMOUNT * 500 // 10000)") # 5% enforced 
 TOTAL=$(python3 -c "print($SELLER_AMOUNT + $LOGISTICS_AMOUNT + $PLATFORM_FEE)") # 0.115 NEAR
 
 call() { # account key method args [deposit] [gas]
-  near contract call-function as-transaction "$VERIPAY" "$3" json-args "$4" \
+  near contract call-function as-transaction "$SWEEFT" "$3" json-args "$4" \
     prepaid-gas "${6:-100} Tgas" attached-deposit "${5:-0 NEAR}" sign-as "$1" \
     network-config testnet sign-with-legacy-keychain --signer-public-key "$2" send
 }
@@ -49,22 +49,17 @@ call "$SELLER" "$SELLER_KEY" assign_logistics_provider "{\"escrow_id\":\"$ESCROW
 call "$SELLER" "$SELLER_KEY" register_shipment "{\"escrow_id\":\"$ESCROW_ID\",\"tracking_number\":\"$TRACKING\"}" '0 NEAR' >/dev/null
 
 echo "== TEE verification via OutLayer"
-PAYLOAD=$(python3 - <<PY
-import json
-carrier = {"provider_id":"LOG-DEMO-001","tracking_number":"$TRACKING","status":"DELIVERED",
-           "events":[{"status":"PICKED_UP"},{"status":"DELIVERED"}]}
-print(json.dumps({"escrow_id":"$ESCROW_ID","carrier_payload":json.dumps(carrier)}))
-PY
-)
-call "$SELLER" "$SELLER_KEY" request_delivery_verification "$PAYLOAD" '0.05 NEAR' 200 >/dev/null
+# Signed carrier payload (mandatory: the TEE verifies the carrier signature).
+PAYLOAD=$(python3 scripts/carrier_payload.py "$ESCROW_ID")
+call "$SELLER" "$SELLER_KEY" request_delivery_verification "{\"escrow_id\":\"$ESCROW_ID\",\"carrier_payload\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$PAYLOAD")}" '0.05 NEAR' 200 >/dev/null
 echo "   waiting for the OutLayer TEE callback (polling up to 4 minutes)…"
 for i in $(seq 1 24); do
   sleep 10
-  VERIFIED=$(near contract call-function as-read-only "$VERIPAY" get_escrow \
+  VERIFIED=$(near contract call-function as-read-only "$SWEEFT" get_escrow \
     json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>/dev/null \
     | grep -o '"delivered_verified": *[a-z]*' | awk '{print $2}' | head -1)
   if [ "$VERIFIED" = "true" ]; then echo "   TEE verified (poll $i)"; break; fi
-  PENDING=$(near contract call-function as-read-only "$VERIPAY" get_escrow \
+  PENDING=$(near contract call-function as-read-only "$SWEEFT" get_escrow \
     json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>/dev/null \
     | grep -o '"verification_pending": *[a-z]*' | awk '{print $2}' | head -1)
   if [ "$PENDING" = "false" ] && [ "$VERIFIED" != "true" ]; then
@@ -83,6 +78,6 @@ echo "   seller before: $(bal "$SELLER")"
 call "$BUYER" "$BUYER_KEY" confirm_receipt "{\"escrow_id\":\"$ESCROW_ID\"}" '0 NEAR' >/dev/null
 sleep 5
 echo "   seller after:  $(bal "$SELLER")"
-echo "   treasury:      $(bal "veripay-board.testnet")"
+echo "   treasury:      $(bal "sweeft-board.testnet")"
 echo "== state:"
-near contract call-function as-read-only "$VERIPAY" get_escrow json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>&1 | grep -E '"(state|logistics_paid|seller_paid|platform_paid|delivered_verified|pickup_verified)"'
+near contract call-function as-read-only "$SWEEFT" get_escrow json-args "{\"escrow_id\":\"$ESCROW_ID\"}" network-config testnet now 2>&1 | grep -E '"(state|logistics_paid|seller_paid|platform_paid|delivered_verified|pickup_verified)"'

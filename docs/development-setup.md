@@ -14,7 +14,7 @@
 ## Run the web app
 
 ```bash
-cd veripay
+cd sweeft
 cp .env.example .env          # pre-filled with the deployed testnet addresses
 python3 -m pip install django django-environ
 python3 manage.py migrate
@@ -30,7 +30,7 @@ It needs a partner API key (printed once):
 
 ```bash
 python3 manage.py seed_demo --issue-carrier-key
-VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
   python3 tools/demo-carrier/simulator.py
 ```
 
@@ -54,17 +54,17 @@ Pages: `/` (landing), `/dashboard/`, `/escrow/new/`, `/escrow/<id>/`, `/invitati
 
 ## Environment variables
 
-See `veripay/.env.example`. Never commit real values; the repo contains none.
+See `sweeft/.env.example`. Never commit real values; the repo contains none.
 
 ## Rebuild artifacts
 
 ```bash
 # contracts
 (cd contracts/test-token && cargo near build non-reproducible-wasm --no-abi)
-(cd contracts/veripay   && cargo near build non-reproducible-wasm --no-abi)
+(cd contracts/sweeft   && cargo near build non-reproducible-wasm --no-abi)
 
 # TEE verification module (WASI Preview 2 — required by the OutLayer worker)
-(cd wasi/veripay-verify && cargo build --target wasm32-wasip2 --release)
+(cd wasi/sweeft-verify && cargo build --target wasm32-wasip2 --release)
 
 # wallet bundle (static JS used by the Django templates)
 (cd tools/web-bundle && npm install && npm run build)
@@ -76,7 +76,7 @@ See `veripay/.env.example`. Never commit real values; the repo contains none.
 python3 manage.py check                                # Django system check
 python3 manage.py test                                # Django unit tests (logistics + relayer + API)
 (cd tools/demo-carrier && python3 -m unittest test_simulator -v)   # carrier simulator schedule
-(cd contracts/veripay && cargo test)                   # contract unit tests (22: state machine + permissionless gates)
+(cd contracts/sweeft && cargo test)                   # contract unit tests (22: state machine + permissionless gates)
 SELLER_KEY=... BUYER_KEY=... scripts/e2e_lifecycle.sh  # full testnet lifecycle
 ```
 

@@ -1,4 +1,4 @@
-# VeriPay
+# SWEEFT
 
 **Wallet-based escrow, logistics verification, settlement — and a reputation marketplace — for physical commerce on NEAR testnet.**
 
@@ -26,7 +26,7 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`veripay.steepdata3968.testnet`) |
+| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-escrow.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -45,6 +45,12 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
+**Current deployment:** escrow contract `sweeft-escrow.testnet`, review board `sweeft-board.testnet`
+(both keyless/immutable), TEE project `steepdata3968.testnet/sweeft-verify`, carrier key registered
+on-chain. `VP-000001` on this deployment completed the full lifecycle — signed-carrier TEE
+verification (first poll), logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**, platform fee
+**+0.005 NEAR** to the board treasury, all payout flags true.
+
 ### Native NEAR (current default)
 
 - **`VP-000014`** — full lifecycle in native NEAR: buyer funded **0.115 NEAR** with the payable
@@ -58,7 +64,7 @@ inspection window — and a reported problem freezes them into the review path.
   `settle_logistics` + `confirm_receipt` (all payout flags true). Representative txs:
   VP-000027 TEE-request `8fcf2M3t…`, settle `FnYKtT9G…`, confirm `7oSrmZiX…`;
   VP-000028 settle `2D3K1WuP…`, confirm `EbaDUc8A…` (full hashes in the explorer under
-  `veripay.steepdata3968.testnet`).
+  `sweeft-escrow.testnet`).
 
 ### Relayer: zero-signature happy path (`VP-000017`, historical)
 
@@ -92,7 +98,7 @@ Full lifecycle proven with real transactions and exact balances (see `scripts/e2
   provider `logistics.steepdata3968.testnet`
   - funded 115 tUSD via `ft_transfer_call`
   - OutLayer TEE executed the published verifier (`3153c52b…`, active version of the
-    `steepdata3968.testnet/veripay-verify` project) and returned `verified: true` for the
+    `steepdata3968.testnet/sweeft-verify` project) and returned `verified: true` for the
     registered tracking number; the contract recorded `pickup_verified` + `delivered_verified`
   - `settle_logistics` paid the provider **+10 tUSD**
   - `confirm_receipt` paid the seller **+100 tUSD** and the platform **+5 tUSD**
@@ -109,7 +115,7 @@ TEE negative case also verified: a tampered tracking number returns
 
 ### Governance verified on testnet (Sputnik DAO review board)
 
-Board: [`veripay-board.testnet`](https://testnet.near.org/accounts/veripay-board.testnet) — council 2-of-3
+Board: [`sweeft-board.testnet`](https://testnet.near.org/accounts/sweeft-board.testnet) — council 2-of-3
 (`steepdata3968` + `seller.steepdata3968` + `logistics.steepdata3968`), default Sputnik policy.
 
 - **Proposal #0** — council voted to lower the proposal bond to 0.1 NEAR (governance parameter change, executed).
@@ -125,16 +131,16 @@ Board: [`veripay-board.testnet`](https://testnet.near.org/accounts/veripay-board
 The escrow contract's `get_gov_info` shows `arbiter`/`treasury` = the DAO; the platform owner can appoint the board
 but **cannot resolve disputes** — that power is gone by design.
 
-Explorer: <https://testnet.near.org/accounts/veripay.steepdata3968.testnet>
+Explorer: <https://testnet.near.org/accounts/sweeft-escrow.testnet>
 
 ## Architecture
 
 ```
-contracts/veripay/     Rust (near-sdk) escrow contract — funds & authorization source of truth
+contracts/sweeft/     Rust (near-sdk) escrow contract — funds & authorization source of truth
 contracts/test-token/  Legacy NEP-141 tUSD (only for pre-native escrows)
 contracts/near-budget/ Native-NEAR co-pilot budget (deposit / agent pay / withdraw)
-wasi/veripay-verify/   TEE verification program → wasm32-wasip2, published on OutLayer
-veripay/               Django modular monolith (product coordinator + projection)
+wasi/sweeft-verify/   TEE verification program → wasm32-wasip2, published on OutLayer
+sweeft/               Django modular monolith (product coordinator + projection)
   apps/wallets/        NEP-413 challenge/verify, sessions
   apps/escrow/         agreements, invitations, contract reads, settlement projection, relayer
   apps/logistics/      partners, Demo Carrier, shipments, verification records
@@ -168,7 +174,7 @@ payable `fund_escrow` method.
 
 ```bash
 # 1. Django app (Python 3.10+, Django 5)
-cd veripay
+cd sweeft
 python3 -m pip install django django-environ   # already present on the dev machine
 cp .env.example .env                            # testnet addresses are pre-filled
 python3 manage.py migrate
@@ -181,7 +187,7 @@ Environment variables (`.env`, never commit real values):
 
 | Variable | Meaning |
 |---|---|
-| `VERIPAY_CONTRACT` | deployed escrow account |
+| `SWEEFT_CONTRACT` | deployed escrow account |
 | `AI_BUDGET_CONTRACT` | native-NEAR co-pilot budget account |
 | `TUSD_CONTRACT` | legacy NEP-141 token account (old escrows only) |
 | `OUTLAYER_CONTRACT` / `OUTLAYER_PROJECT` | OutLayer receiver + published verification project |
@@ -196,7 +202,7 @@ methods whose destinations and amounts are fixed by the escrow, so the key can n
 funds. Fund a dedicated testnet account and set it in `.env`:
 
 ```bash
-# in veripay/.env
+# in sweeft/.env
 RELAYER_ENABLED=1
 RELAYER_ACCOUNT=relayer.<your>.testnet
 RELAYER_PRIVATE_KEY=ed25519:…
@@ -214,12 +220,12 @@ gracefully. Testnet MVP only: on mainnet the key would live inside a TEE/KMS.
 rustup target add wasm32-unknown-unknown wasm32-wasip2
 cargo install cargo-near          # or grab the prebuilt release
 
-(cd contracts/veripay && cargo near build non-reproducible-wasm --no-abi)
+(cd contracts/sweeft && cargo near build non-reproducible-wasm --no-abi)
 (cd contracts/near-budget && cargo near build non-reproducible-wasm --no-abi)
 # legacy token only if you need it: (cd contracts/test-token && cargo near build non-reproducible-wasm --no-abi)
 
 # deploy + init (see scripts/deploy_testnet.sh for the full flow)
-near contract deploy <acct> use-file target/near/veripay.wasm without-init-call ...
+near contract deploy <acct> use-file target/near/sweeft.wasm without-init-call ...
 near contract call-function as-transaction <acct> new json-args '{...}' ...
 ```
 
@@ -229,15 +235,15 @@ near contract call-function as-transaction <acct> new json-args '{...}' ...
 curl -fsSL https://raw.githubusercontent.com/out-layer/outlayer-cli/main/install.sh | sh
 # (or: cargo install outlayer-cli)
 outlayer login testnet
-(cd wasi/veripay-verify && cargo build --target wasm32-wasip2 --release)
-outlayer upload wasi/veripay-verify/target/wasm32-wasip2/release/veripay-verify.wasm
-outlayer deploy veripay-verify <FastFS URL printed by upload>
+(cd wasi/sweeft-verify && cargo build --target wasm32-wasip2 --release)
+outlayer upload wasi/sweeft-verify/target/wasm32-wasip2/release/sweeft-verify.wasm
+outlayer deploy sweeft-verify <FastFS URL printed by upload>
 ```
 
 ### Frontend bundle (only if you change wallet code)
 
 ```bash
-cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js/veripay-wallet.js
+cd tools/web-bundle && npm install && npm run build   # writes sweeft/static/js/sweeft-wallet.js
 ```
 
 ## Demo workflow
@@ -277,7 +283,7 @@ state. Start it next to `runserver`:
 
 ```bash
 python3 manage.py seed_demo --issue-carrier-key          # one-time: prints the vp_… key
-VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+SWEEFT_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
   python3 tools/demo-carrier/simulator.py
 ```
 
@@ -333,7 +339,7 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
 | Frozen funds if the board stalls | Buyer **long-stop refund**: if a shipment is registered but delivery is never TEE-verified, the buyer can reclaim the unspent balance after a 30-day grace period (`refund_buyer`), independent of any review outcome. |
-| Upgrade key could redeploy the contract | After the final deployment the contract account's **full-access key was deleted** (`ed25519:51KXxJwb…`, tx `DJ7JTgyg…`); `view_access_key_list` on `veripay.steepdata3968.testnet` now returns **empty** — no key can deploy new code, ever. Code control sits with no one; owner actions (fees, config) remain separate accounts. |
+| Upgrade key could redeploy the contract | After the final deployment the deploy keys were deleted on **both** `sweeft-escrow.testnet` (tx `GEibn3MX…`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
 | Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
@@ -366,7 +372,7 @@ Residual (disclosed) risks:
 - Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
-- Rust unit tests: `cargo test` in `contracts/veripay` — state machine, permissionless
+- Rust unit tests: `cargo test` in `contracts/sweeft` — state machine, permissionless
   verification/settlement/release gates, inspection-clock behavior (22 tests).
 
 ## Known limitations / roadmap

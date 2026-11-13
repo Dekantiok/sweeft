@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}New agreement — SWEEFT{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-semibold text-center">Create an escrow agreement</h1>
+  <p class="text-sm text-slate-500 mt-1 text-center">You are the seller. The buyer accepts and funds exactly this total. Fees are disclosed before funding and enforced by the contract.</p>
+
+  {% if prefill.listing_title %}
+    <div class="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm px-4 py-2">
+      Trading marketplace listing “{{ prefill.listing_title }}”. Terms are prefilled — review, then create.
+    </div>
+  {% endif %}
+
+  <div class="bg-white border border-slate-200 rounded-xl p-5 mt-5 space-y-4">
+    <div>
+      <label class="block text-sm font-medium mb-1">Product name</label>
+      <input id="f-product" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.product }}" placeholder="e.g. 200 units of cotton fabric">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Description (stored off-chain; keeps a hash on-chain)</label>
+      <textarea id="f-desc" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Specs, condition, what is included…"></textarea>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Seller amount (NEAR)</label>
+        <input id="f-seller" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.amount }}" placeholder="0.10">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Logistics fee (NEAR)</label>
+        <input id="f-logistics" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="0.01">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Dispatch deadline</label>
+        <input id="f-deadline" type="date" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Buyer inspection period after delivery (days)</label>
+        <input id="f-inspection" type="number" min="1" value="{{ prefill.inspection_days }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        <p class="text-xs text-slate-500 mt-1">On-chain minimum 1 hour; 72h (3 days) recommended — after this window the seller can be released without your confirmation.</p>
+      </div>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Who can accept this escrow?</label>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <label id="mode-wallet-label" class="cursor-pointer rounded-xl border border-slate-300 p-3 transition-colors">
+          <input type="radio" name="cp-mode" value="wallet" class="accent-emerald-600" checked>
+          <span class="ml-2 text-sm font-medium">Only a specific wallet</span>
+          <span class="block ml-6 text-xs text-emerald-700">Recommended — the contract rejects every other wallet.</span>
+        </label>
+        <label id="mode-link-label" class="cursor-pointer rounded-xl border border-slate-300 p-3 transition-colors">
+          <input type="radio" name="cp-mode" value="link" class="accent-emerald-600">
+          <span class="ml-2 text-sm font-medium">Anyone with the invite link</span>
+          <span class="block ml-6 text-xs text-slate-500">High-entropy link; only its hash is committed on-chain.</span>
+        </label>
+      </div>
+
+      <div id="wallet-field" class="mt-3">
+        <label class="block text-xs text-slate-500 mb-1">Counterparty wallet (required — only this wallet can accept)</label>
+        <input id="f-buyer" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.counterparty }}" placeholder="buyer.testnet">
+      </div>
+
+      <div id="link-note" class="hidden mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+        An invite link will be generated after creation and shown on the escrow page. The link is a locator,
+        not authorization: the accepting wallet must still sign on-chain, and the secret is verified against
+        the hash committed at creation.
+      </div>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Logistics provider (optional — from the approved directory)</label>
+      <input id="f-provider" list="provider-options" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.provider }}" placeholder="Pick a provider — or leave empty and assign later">
+      <datalist id="provider-options">
+        {% for p in providers %}<option value="{{ p.settlement_wallet }}">{{ p.company_name }}</option>{% endfor %}
+      </datalist>
+      <p class="text-xs text-slate-500 mt-1">Choosing a provider now creates the shipment tracking ID with the escrow, so delivery can be tracked from day one.</p>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Terms (short, hashed on-chain)</label>
+      <input id="f-terms" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.terms }}" placeholder="Delivery to Abuja within 7 days; inspection 48h.">
+    </div>
+
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm" id="fee-summary">
+      Platform fee: <span class="font-medium" id="fee-value">—</span> (5% of seller amount, enforced on-chain)
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button id="btn-create" onclick="createAgreement()" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Create on-chain</button>
+      <span id="create-status" class="text-sm text-slate-500"></span>
+    </div>
+    <p class="text-xs text-slate-500">
+      This performs a wallet-signed transaction on <code>{{ SWEEFT_CONTRACT }}</code>. With a named counterparty,
+      the contract accepts <b>only that wallet</b>; with an invite link, the link's hash is committed on-chain and
+      the accepting wallet must still sign — the link alone authorizes nothing.
+    </p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const DECIMALS = 24;
+  function toUnits(text) {
+    const clean = String(text || '0').replace(/,/g, '').trim();
+    if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return 0n;
+    const [w = '0', f = ''] = clean.split('.');
+    const frac = (f + '0'.repeat(DECIMALS)).slice(0, DECIMALS);
+    return BigInt(w || '0') * BigInt(10 ** DECIMALS) + BigInt(frac || '0');
+  }
+  async function sha256Hex(text) {
+    const data = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  function randomToken() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  const ACCOUNT_RE = /^[a-z0-9][a-z0-9._-]*\.(testnet|near)$/;
+  function counterpartyMode() {
+    return document.querySelector('input[name="cp-mode"]:checked').value;
+  }
+  function updateCounterpartyMode() {
+    const mode = counterpartyMode();
+    const walletField = document.getElementById('wallet-field');
+    const linkNote = document.getElementById('link-note');
+    walletField.classList.toggle('hidden', mode === 'link');
+    linkNote.classList.toggle('hidden', mode === 'wallet');
+    document.getElementById('mode-wallet-label').classList.toggle('border-emerald-500', mode === 'wallet');
+    document.getElementById('mode-link-label').classList.toggle('border-emerald-500', mode === 'link');
+  }
+  document.querySelectorAll('input[name="cp-mode"]').forEach((el) => el.addEventListener('change', updateCounterpartyMode));
+  updateCounterpartyMode();
+
+  document.getElementById('f-seller').addEventListener('input', updateFee);
+  function updateFee() {
+    try {
+      const seller = toUnits(document.getElementById('f-seller').value);
+      const fee = seller * 5n / 100n;
+      document.getElementById('fee-value').textContent = (Number(fee) / 10 ** DECIMALS).toFixed(6) + ' NEAR';
+    } catch (e) { document.getElementById('fee-value').textContent = '—'; }
+  }
+
+  async function createAgreement() {
+    const status = document.getElementById('create-status');
+    const btn = document.getElementById('btn-create');
+    try {
+      if (!VPApp.requireWallet()) return;
+      btn.disabled = true;
+      status.textContent = 'Preparing…';
+      const c = await VPApp.cfg();
+      const sellerAmount = toUnits(document.getElementById('f-seller').value);
+      const logisticsAmount = toUnits(document.getElementById('f-logistics').value);
+      if (sellerAmount <= 0n) throw new Error('seller amount must be greater than zero');
+      const mode = counterpartyMode();
+      const buyer = document.getElementById('f-buyer').value.trim().toLowerCase();
+      if (mode === 'wallet' && !ACCOUNT_RE.test(buyer)) {
+        throw new Error('enter the counterparty NEAR account (e.g. buyer.testnet) — or switch to "Anyone with the invite link"');
+      }
+      const deadline = document.getElementById('f-deadline').value;
+      if (!deadline) throw new Error('pick a dispatch deadline');
+      const inspectionDays = parseInt(document.getElementById('f-inspection').value || '0', 10);
+      const terms = document.getElementById('f-terms').value.trim();
+      const desc = document.getElementById('f-desc').value.trim();
+
+      let invitationToken = null;
+      let inviteHash = null;
+      if (mode === 'link') {
+        invitationToken = randomToken();
+        inviteHash = await sha256Hex(invitationToken);
+      }
+
+      // A chosen provider comes with a tracking ID at creation, so the item
+      // can be tracked from day one (OutLayer verification uses this ID).
+      const provider = document.getElementById('f-provider').value.trim().toLowerCase();
+      let tracking = null;
+      if (provider) {
+        const bytes = new Uint8Array(4);
+        crypto.getRandomValues(bytes);
+        tracking = 'DEMO-' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      }
+
+      status.textContent = 'Confirm in your wallet (create_escrow)…';
+      const res = await VPApp.callContract('create_escrow', {
+        product_name: document.getElementById('f-product').value.trim(),
+        product_desc_hash: await sha256Hex(desc),
+        seller_amount: sellerAmount.toString(),
+        logistics_amount: logisticsAmount.toString(),
+        buyer: mode === 'wallet' ? buyer : null,
+        invite_hash: inviteHash,
+        token: 'near', // native NEAR escrow — no token mint or registration
+        dispatch_deadline_ms: new Date(deadline + 'T23:59:59Z').getTime(),
+        inspection_period_ms: inspectionDays * 86400000,
+        terms_hash: await sha256Hex(terms),
+        logistics_provider: provider || null,
+        tracking_number: tracking,
+      });
+      let escrowId = res.successValue;
+      if (typeof escrowId !== 'string' || !escrowId.startsWith('VP-')) {
+        throw new Error('could not read escrow id from the transaction result');
+      }
+      status.textContent = 'Saving metadata…';
+      const saved = await VPApp.jsonPost('/api/v1/agreements/', {
+        escrow_id: escrowId,
+        product_name: document.getElementById('f-product').value.trim(),
+        product_description: desc,
+        invitation_token: invitationToken,
+        listing_slug: "{{ prefill.listing_slug|escapejs }}",
+        tx_hash: res.txHash,
+      });
+      if (!saved.ok) throw new Error(saved.error || 'failed to save metadata');
+      if (tracking) {
+        // The tracking ID was committed on-chain at creation; this records the
+        // Demo Carrier shipment row so the item can be tracked immediately.
+        status.textContent = 'Registering the shipment tracking…';
+        const ship = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: escrowId, tracking_number: tracking });
+        if (ship && ship.ok === false) throw new Error(ship.error || 'failed to register tracking');
+      }
+      window.location.href = '/escrow/' + escrowId + '/';
+    } catch (e) {
+      status.textContent = '';
+      alert('Create failed: ' + (e && e.message ? e.message : e));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+</script>
+{% endblock %}

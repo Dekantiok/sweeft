@@ -1,0 +1,197 @@
+{% load static %}<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23059669'/%3E%3Ctext x='16' y='22' font-size='18' font-family='sans-serif' font-weight='bold' fill='white' text-anchor='middle'%3EV%3C/text%3E%3C/svg%3E">
+  <title>{% block title %}SWEEFT — escrow for physical commerce{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          boxShadow: {
+            soft: '0 4px 20px rgba(15, 23, 42, 0.06)',
+            card: '0 10px 32px rgba(15, 23, 42, 0.10)',
+          },
+          colors: {
+            brand: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', 800: '#065f46', 900: '#064e3b' },
+          },
+        },
+      },
+    };
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="{% static 'css/wallet-modal.css' %}?v=20261113b">
+  <script src="{% static 'js/sweeft-wallet.js' %}?v=20261113c"></script>
+  <script src="{% static 'js/app.js' %}?v=20261113c"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261113d"></script>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 font-sans" data-network="{{ NEAR_NETWORK }}" data-contract="{{ SWEEFT_CONTRACT }}" data-token="{{ TUSD_CONTRACT }}" data-explorer="{{ EXPLORER_URL }}">
+  <style>
+    /* Dark theme overrides (applied on top of the Tailwind utilities). */
+    body { background: #020617; }
+    h1, h2, h3, h4, h5, h6 { color: #f8fafc; }
+    .text-slate-900 { color: #f8fafc !important; }
+    .text-slate-700, .text-slate-600 { color: #cbd5e1 !important; }
+    .text-slate-500 { color: #94a3b8 !important; }
+    .text-slate-400 { color: #64748b !important; }
+    .bg-white { background-color: #0f172a !important; }
+    .bg-slate-50 { background-color: #0f172a !important; }
+    .bg-slate-100 { background-color: #1e293b !important; }
+    .border-slate-200, .border-slate-100 { border-color: #334155 !important; }
+    .divide-slate-100 > * + * { border-color: #334155; }
+    .border-slate-300 { border-color: #475569 !important; }
+    input, textarea, select { background-color: #020617; color: #e2e8f0; border-color: #334155; }
+    input::placeholder, textarea::placeholder { color: #64748b; }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.15); }
+    code { color: #a5f3fc; background: rgba(15,23,42,0.65); border-radius: 4px; }
+    a { color: #34d399; }
+    .text-emerald-700, .text-emerald-800 { color: #6ee7b7 !important; }
+    .bg-emerald-50 { background-color: rgba(6,78,59,0.45) !important; }
+    .border-emerald-200 { border-color: #065f46 !important; }
+    .bg-rose-50 { background-color: rgba(76,5,25,0.5) !important; }
+    .text-rose-700, .text-rose-800, .text-rose-900 { color: #fecdd3 !important; }
+    .bg-rose-100 { background-color: #4c0519 !important; }
+    .bg-amber-50 { background-color: rgba(69,26,3,0.55) !important; }
+    .text-amber-700, .text-amber-800, .text-amber-900 { color: #fcd34d !important; }
+    .bg-amber-100 { background-color: #451a03 !important; }
+    .border-amber-200, .border-amber-300 { border-color: #92400e !important; }
+    .bg-blue-50, .bg-blue-50\/50 { background-color: rgba(12,26,51,0.6) !important; }
+    .border-blue-200 { border-color: #1e40af !important; }
+    .text-blue-900 { color: #bfdbfe !important; }
+    .border-blue-100 { border-color: #1e3a8a !important; }
+    .bg-indigo-200 { background-color: #312e81 !important; }
+    .border-indigo-200 { border-color: #4338ca !important; }
+    .text-indigo-700 { color: #c7d2fe !important; }
+    .bg-indigo-50 { background-color: rgba(49,46,129,0.45) !important; }
+    .bg-violet-50 { background-color: rgba(46,16,101,0.5) !important; }
+    .text-violet-800 { color: #c4b5fd !important; }
+    .bg-sky-50 { background-color: rgba(8,47,73,0.55) !important; }
+    .text-sky-700, .text-sky-800 { color: #7dd3fc !important; }
+    .bg-slate-900 { background-color: #0f172a !important; }
+    .text-white { color: #f8fafc; }
+    .border-emerald-300 { border-color: #10b981 !important; }
+    .bg-violet-100 { background-color: #3b0764 !important; }
+    .text-violet-700, .text-violet-800 { color: #c4b5fd !important; }
+    .text-sky-800 { color: #7dd3fc !important; }
+    /* Compact action grid (escrow actions): small buttons in a responsive grid. */
+    #actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+    #actions > button { width: auto !important; padding: 7px 12px !important; font-size: 12.5px !important; line-height: 1.3; }
+    #actions > div:not(#action-status) { grid-column: 1 / -1; }
+    /* Account menu: wallet actions live in one compact grid, not the top bar. */
+    #account-menu-grid a, #account-menu-grid button {
+      display: block; width: 100%; text-align: left; font-size: 12.5px; padding: 8px 10px;
+      border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; background: #0b1323;
+      text-decoration: none; cursor: pointer; transition: border-color .15s, color .15s;
+    }
+    #account-menu-grid a:hover, #account-menu-grid button:hover { border-color: #10b981; color: #6ee7b7; }
+    #account-menu-grid .danger:hover { border-color: #fb7185; color: #fda4af; }
+  </style>
+  <div class="min-h-full">
+    <header class="bg-slate-900/95 backdrop-blur border-b border-slate-800 sticky top-0 z-20 shadow-soft">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
+        <a href="/" class="flex items-center gap-2.5 group">
+          <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white font-extrabold shadow-[0_0_16px_rgba(16,185,129,0.35)] group-hover:scale-105 transition-transform">V</span>
+          <span class="font-semibold text-lg text-white tracking-tight">SWEEFT</span>
+          <span class="hidden sm:inline text-[11px] text-emerald-300 border border-emerald-800/60 bg-emerald-900/40 rounded-full px-2 py-0.5">testnet</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-5 text-sm text-slate-300 ml-5">
+          {% if wallet_account %}
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/market/">Marketplace</a>
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/dashboard/">Dashboard</a>
+            <a class="hover:text-emerald-300 transition-colors whitespace-nowrap" href="/logistics/">Logistics</a>
+          {% endif %}
+        </nav>
+        <div class="flex-1"></div>
+        <div id="wallet-box" class="flex items-center gap-2">
+          {% if wallet_account %}
+            <span id="tusd-balance" title="Native NEAR balance" class="hidden sm:inline-block text-xs bg-emerald-900/50 text-emerald-200 border border-emerald-800/60 rounded-full px-2.5 py-1 whitespace-nowrap">… NEAR</span>
+            <div class="relative">
+              <button onclick="toggleAccountMenu(event)" class="flex items-center gap-2 text-xs text-slate-200 border border-slate-700 rounded-full px-3 py-1.5 hover:border-emerald-500 hover:text-emerald-300 transition-colors">
+                <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+                <span class="max-w-[11rem] truncate">{{ wallet_account }}</span>
+                <span class="text-slate-500">▾</span>
+              </button>
+              <div id="account-menu" class="hidden absolute right-0 mt-2 w-[19rem] bg-slate-900 border border-slate-700 rounded-xl p-3 shadow-card z-40">
+                <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-2 px-1">Your wallet</div>
+                <div class="grid grid-cols-2 gap-2" id="account-menu-grid">
+                  <a href="/escrow/new/">＋ New agreement</a>
+                  <a href="/market/mine/">My listings</a>
+                  {% if my_partner %}<a href="/partners/portal/">Partner portal</a>{% endif %}
+                  <a href="/u/{{ wallet_account }}/">Trust profile</a>
+                  <a href="/governance/">Governance board</a>
+                  {% if wallet_account == PLATFORM_OWNER %}
+                    <a href="/disputes/">Disputes</a>
+                    <a href="/ops/">Ops console</a>
+                  {% endif %}
+                  <button id="faucet-btn" onclick="VPApp.faucet()">Get test NEAR</button>
+                  <button class="danger" onclick="VPApp.disconnect()">Disconnect</button>
+                </div>
+              </div>
+            </div>
+          {% else %}
+            <button class="text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-full px-4 py-2 font-medium shadow-[0_0_18px_rgba(16,185,129,0.25)] transition-all whitespace-nowrap" onclick="VPApp.connect()">Connect wallet</button>
+          {% endif %}
+        </div>
+      </div>
+    </header>
+    <script>
+      function toggleAccountMenu(e) {
+        if (e) e.stopPropagation();
+        const menu = document.getElementById('account-menu');
+        if (menu) menu.classList.toggle('hidden');
+      }
+      document.addEventListener('click', function (e) {
+        const menu = document.getElementById('account-menu');
+        if (menu && !menu.classList.contains('hidden') && !menu.contains(e.target)) menu.classList.add('hidden');
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { const menu = document.getElementById('account-menu'); if (menu) menu.classList.add('hidden'); }
+      });
+    </script>
+
+    {% if messages %}
+      <div class="max-w-6xl mx-auto px-4 mt-4">
+        {% for message in messages %}
+          <div class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm px-4 py-2 mb-2">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <main class="max-w-6xl mx-auto px-4 py-6">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="border-t border-slate-200 mt-10 bg-white">
+      <div class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-wrap gap-4 items-center justify-center text-center">
+        <span class="text-emerald-700 font-medium">Testnet MVP</span>
+        <span>Contract: <code>{{ SWEEFT_CONTRACT|default:"not deployed yet" }}</code></span>
+        <span>Legacy token: <code>{{ TUSD_CONTRACT|default:"not deployed yet" }}</code></span>
+        <span>OutLayer: <code>{{ OUTLAYER_CONTRACT }}</code></span>
+        <span class="text-slate-400">Escrows use native NEAR — no token mint required. Get test NEAR from the public faucet. Demo Carrier tracking is simulated; OutLayer TEE verification is genuine. Legacy tUSD escrows remain readable.</span>
+      </div>
+    </footer>
+  </div>
+  <script>
+    VPApp.init({
+      network: document.body.dataset.network,
+      contractId: document.body.dataset.contract,
+      tokenId: document.body.dataset.token,
+      explorer: document.body.dataset.explorer,
+      walletAccount: "{{ wallet_account|default:'' }}",
+    });
+    // Deep links like /?connect=1 open the wallet modal immediately.
+    if (!{{ wallet_account|yesno:"true,false" }} && new URLSearchParams(location.search).get('connect') === '1') {
+      VPApp.connect();
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

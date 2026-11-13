@@ -11,8 +11,8 @@ carrier as the source of tracking information.
 
 ## The published module
 
-`wasi/veripay-verify` — Rust, compiled to `wasm32-wasip2`, published on OutLayer testnet as the
-project **`steepdata3968.testnet/veripay-verify`** (hash-pinned; the worker refuses bytes that do
+`wasi/sweeft-verify` — Rust, compiled to `wasm32-wasip2`, published on OutLayer testnet as the
+project **`steepdata3968.testnet/sweeft-verify`** (hash-pinned; the worker refuses bytes that do
 not match the recorded SHA-256).
 
 Input (stdin JSON, built by the contract):

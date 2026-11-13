@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}New listing — SWEEFT Marketplace{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto">
+  <h1 class="text-2xl font-semibold text-center">List an item or service</h1>
+  <p class="text-sm text-slate-500 mt-1 text-center">Listings are the discovery layer; trading always happens through the on-chain escrow, and your wallet reputation carries across every deal.</p>
+
+  <form method="post" class="bg-white border border-slate-200 rounded-xl p-5 mt-5 space-y-4">
+    {% csrf_token %}
+    <div>
+      <label class="block text-sm font-medium mb-1">Title *</label>
+      <input name="title" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="e.g. 200 units of cotton fabric">
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Type</label>
+        <select name="kind" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <option value="goods">Goods</option>
+          <option value="service">Service</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Category</label>
+        <input name="category" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="textiles, logistics, design…">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Price (NEAR) *</label>
+        <input name="price_amount" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="0.85">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Location</label>
+        <input name="location" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Lagos, Nigeria">
+      </div>
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium mb-1">Logistics provider (approved directory — optional)</label>
+        <select name="logistics_provider" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          <option value="">Assign later / provider arranges delivery</option>
+          {% for p in providers %}
+            <option value="{{ p.settlement_wallet }}">{{ p.company_name }} — pays to {{ p.settlement_wallet }}</option>
+          {% empty %}
+            <option value="" disabled>No ACTIVE providers yet — see /logistics/</option>
+          {% endfor %}
+        </select>
+        <p class="text-xs text-slate-500 mt-1">Chosen here, locked into every escrow for this listing — the provider ships and gets paid on verified pickup.</p>
+      </div>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Description</label>
+      <textarea name="description" rows="4" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Specs, condition, what is included…"></textarea>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Photo URLs (one per line, optional)</label>
+      <textarea name="photos" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="https://…"></textarea>
+    </div>
+    <div class="grid sm:grid-cols-3 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Dispatch within (days)</label>
+        <input name="dispatch_days" type="number" min="1" value="7" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Inspection window (days)</label>
+        <input name="inspection_days" type="number" min="0" value="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Logistics note</label>
+        <input name="logistics_note" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="provider arranges pickup">
+      </div>
+    </div>
+    <button class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Publish listing</button>
+  </form>
+</div>
+{% endblock %}

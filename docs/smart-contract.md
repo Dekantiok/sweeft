@@ -1,6 +1,6 @@
 # Smart contract
 
-Rust, `near-sdk` 5.x, deployed at **`veripay.steepdata3968.testnet`**.
+Rust, `near-sdk` 5.x, deployed at **`sweeft-escrow.testnet`**.
 The contract is the financial and authorization source of truth.
 
 ## Methods
@@ -84,12 +84,12 @@ no state migration is required.
 rustup target add wasm32-unknown-unknown
 cargo install cargo-near   # or prebuilt release
 
-(cd contracts/veripay && cargo near build non-reproducible-wasm --no-abi)
-near contract deploy veripay.<parent>.testnet use-file contracts/veripay/target/near/veripay.wasm \
+(cd contracts/sweeft && cargo near build non-reproducible-wasm --no-abi)
+near contract deploy sweeft.<parent>.testnet use-file contracts/sweeft/target/near/sweeft.wasm \
   without-init-call network-config testnet sign-with-legacy-keychain send
-near contract call-function as-transaction veripay.<parent>.testnet new \
-  json-args '{"owner":"<parent>.testnet","outlayer_contract":"outlayer.testnet","outlayer_project":"<parent>.testnet/veripay-verify","platform_fee_bps":500}' \
-  prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as veripay.<parent>.testnet network-config testnet sign-with-legacy-keychain send
+near contract call-function as-transaction sweeft.<parent>.testnet new \
+  json-args '{"owner":"<parent>.testnet","outlayer_contract":"outlayer.testnet","outlayer_project":"<parent>.testnet/sweeft-verify","platform_fee_bps":500}' \
+  prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as sweeft.<parent>.testnet network-config testnet sign-with-legacy-keychain send
 ```
 
 `scripts/deploy_testnet.sh` performs the whole flow including the token and OutLayer publish step.
