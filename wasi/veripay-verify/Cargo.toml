@@ -8,6 +8,7 @@ name = "veripay-verify"
 path = "src/main.rs"
 
 [dependencies]
+ed25519-dalek = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

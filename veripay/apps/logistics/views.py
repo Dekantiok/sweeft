@@ -223,6 +223,9 @@ def api_verification_payload(request):
         payload["shipment_id"] = chain.get("shipment_id")
     except Exception:  # noqa: BLE001
         payload["shipment_id"] = None
+    # Carrier-authenticity: signed by the Demo Carrier service key whose
+    # public counterpart is registered on-chain for the TEE to verify.
+    payload = carriers.sign_carrier_payload(payload)
     vr = VerificationRequest.objects.create(
         escrow_id=escrow_id,
         shipment=shipment,

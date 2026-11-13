@@ -2,7 +2,7 @@
 import json
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.escrow.models import Dispute, DisputeEvidence
 
@@ -65,6 +65,7 @@ class DisputeApiTests(TestCase):
         self.assertEqual(DisputeEvidence.objects.count(), 2)
         self.assertEqual({e.side for e in DisputeEvidence.objects.all()}, {"buyer", "seller"})
 
+    @override_settings(AI_PROVIDER="echo")
     def test_ai_review_is_advisory_and_labelled(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
             self._post("/api/v1/disputes/", {"escrow_id": "VP-000009", "reason": "damaged"})

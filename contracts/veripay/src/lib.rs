@@ -532,6 +532,7 @@ impl VeriPay {
                 "provider_wallet": escrow.logistics_provider,
                 "shipment_id": escrow.shipment_id,
                 "provider_id": self.get_provider_id(),
+                "carrier_pubkey": self.get_carrier_pubkey(),
             },
             "carrier": carrier,
         })
@@ -969,10 +970,12 @@ impl VeriPay {
         case.winning_pct = winning_pct;
         map.insert(escrow_id.clone(), case);
 
-        if !escrow.logistics_paid {
-            escrow.logistics_paid = true;
-        }
-        let remaining = escrow.total_amount.0 - if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        // Same ordering rule as `resolve_review`: compute the pot from the
+        // pre-flip logistics state so an unpaid allocation is folded into the
+        // split rather than stranded.
+        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let remaining = escrow.total_amount.0 - logistics_deduction;
+        escrow.logistics_paid = true;
         let seller_part = remaining * winning_pct as u128 / 100;
         let buyer_part = remaining - seller_part;
         escrow.seller_paid = true;
@@ -1097,6 +1100,30 @@ impl VeriPay {
         str_config_map().get(&"provider_id".to_string()).cloned()
     }
 
+    /// Carrier signing key (hex ed25519 pubkey). When configured, the TEE
+    /// verifier requires a valid carrier signature over the canonical payload
+    /// — caller-supplied "public" ids alone are no longer sufficient.
+    pub fn set_carrier_pubkey(&mut self, pubkey: Option<String>) {
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == self.owner || Some(caller) == self.get_arbiter(),
+            "only the owner or board can set the carrier key"
+        );
+        if let Some(p) = &pubkey {
+            require!(p.len() == 64 && p.chars().all(|c| c.is_ascii_hexdigit()), "pubkey must be 64 hex chars");
+        }
+        let mut map = str_config_map();
+        match pubkey {
+            Some(p) => map.insert("carrier_pubkey".to_string(), p.to_lowercase()),
+            None => map.remove(&"carrier_pubkey".to_string()),
+        };
+    }
+
+    /// Configured carrier signing key, if any.
+    pub fn get_carrier_pubkey(&self) -> Option<String> {
+        str_config_map().get(&"carrier_pubkey".to_string()).cloned()
+    }
+
     /// Review board account (None = owner bootstrap mode).
     pub fn get_arbiter(&self) -> Option<AccountId> {
         gov_config_map().get(&"arbiter".to_string()).cloned()
@@ -1151,14 +1178,17 @@ impl VeriPay {
         require!(escrow.state == EscrowState::ReviewRequired, "wrong state");
         require!(!escrow.seller_paid, "already settled");
         require!(review_due(&escrow_id) == 0, "buyer payout pending retry");
-        // An unpaid logistics allocation is folded into this split — mark it
-        // paid so `settle_logistics` can never pay it a second time.
-        if !escrow.logistics_paid {
-            escrow.logistics_paid = true;
-        }
+        // Compute the split pot BEFORE flipping the logistics flag: an unpaid
+        // logistics allocation is folded into the split (it goes to the
+        // parties), so it must NOT be subtracted from `remaining`. Subtracting
+        // it after marking it paid would strand that share in the contract.
+        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let remaining = escrow.total_amount.0 - logistics_deduction;
+        // Record that no separate logistics payout will happen (folded above);
+        // `settle_logistics` is also state-gated, so this can never double-pay.
+        escrow.logistics_paid = true;
         // Unlock any open arbitration stakes (the case is closed by the board).
         close_arbitration_case(&escrow_id, seller_pct);
-        let remaining = escrow.total_amount.0 - if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
         let seller_part = remaining * seller_pct as u128 / 100;
         let buyer_part = remaining - seller_part;
         escrow.seller_paid = true;
@@ -1945,8 +1975,44 @@ mod tests {
         // can never be settled twice.
         assert!(escrow.logistics_paid);
         assert_eq!(escrow.state, EscrowState::Refunded);
-        // 115 total - 10 logistics folded = 105 remaining; 60% seller.
-        assert_eq!(review_due(&id), 42_000_000_000_000_000_000_000_000);
+        // Folded means the FULL 115 is the split pot: buyer due = 40% of 115.
+        assert_eq!(review_due(&id), 46_000_000_000_000_000_000_000_000);
+    }
+
+    #[test]
+    fn dispute_split_with_unpaid_logistics_covers_the_full_total() {
+        let mut c = setup();
+        c.set_arbiter(accounts(5));
+        let id = disputed_native(&mut c); // logistics NOT paid
+        testing_env!(as_account(accounts(5)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        let total = escrow.total_amount.0;
+        let seller_part = total * 60 / 100;
+        let buyer_part = review_due(&id);
+        // Every unit of the escrow is allocated: seller + buyer == total.
+        assert_eq!(seller_part + buyer_part, total, "all balances must sum to total_amount");
+        assert_eq!(buyer_part, total - seller_part);
+    }
+
+    #[test]
+    fn arbitration_split_with_unpaid_logistics_covers_the_full_total() {
+        let mut c = setup();
+        // No board: the pool path is only reachable in bootstrap mode (it is
+        // disabled in every reviewed deployment — see deploy script).
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(50_000_000)
+            .attached_deposit(NearToken::from_millinear(50)) // meets the 0.05 NEAR quorum
+            .build());
+        c.vote_dispute(id.clone(), 40);
+        testing_env!(as_account(accounts(5)).block_timestamp(60_000_000).build());
+        c.finalize_arbitration(id.clone());
+        let escrow = c.get_escrow(id.clone()).unwrap();
+        let total = escrow.total_amount.0;
+        let seller_part = total * 40 / 100;
+        let buyer_part = review_due(&id);
+        assert_eq!(seller_part + buyer_part, total, "all balances must sum to total_amount");
     }
 
     #[test]

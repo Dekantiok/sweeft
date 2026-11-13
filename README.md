@@ -29,13 +29,13 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 | Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`veripay.steepdata3968.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
-| Delivery verification | **Real TEE execution, honesty-scoped claim** — OutLayer (Intel TDX) runs our published verifier on the caller-supplied carrier payload; the contract enforces tracking + carrier-provider identity, and the verifier enforces shipment id, timeline and pickup-before-delivery consistency. It cannot prove a lying carrier (signed carrier reports are the roadmap) |
+| Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
 | Verification & settlement automation | **Real on-chain** — the platform relayer (`manage.py run_relayer`) triggers permissionless TEE verification, the logistics payout, and the inspection-window release; the contract state machine gates every call and fixes every destination/amount |
 | Carrier tracking data | **SIMULATED** — Demo Carrier; labelled `SIMULATED DATA` in the DB (`simulated=True`), API responses and UI |
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
 | AI co-pilot payments | **Real on-chain** — scoped, revocable native-NEAR budget (`budget.steepdata3968.testnet`); the agent pays only within the user's deposited limit |
 | Dispute arbitration pool | **Real** — any NEAR holder stakes NEAR to vote the split; quorum → permissionless settlement; voters reclaim stake |
-| Review board (Sputnik DAO) | **Real** — disputes resolve ONLY via council-approved on-chain proposals (2-of-3); the platform owner has no resolution key |
+| Review board (Sputnik DAO) | **Real, demo council** — disputes resolve ONLY via council-approved on-chain proposals (2-of-3). On testnet all three council members are operated by this project; production would use independent members with hardware/multisig keys |
 | Treasury (DAO multisig) | **Real** — platform fees accrue to the board account; spending requires a council-approved Transfer proposal |
 | Fiat payouts / real carriers | **Not implemented** (out of MVP scope) |
 
@@ -315,7 +315,7 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 
 | Finding | Fix |
 |---|---|
-| Seller sockpuppet arbitration (open dispute → fake vote → settle → reclaim stake) | The arbitration pool is **disabled whenever a review board is set** (`vote_dispute`/`finalize_arbitration` revert); the board is the only resolution path. Votes are one-per-wallet and board resolutions finalize open cases so stakes stay claimable. Tie-break is buyer-favourable. |
+| Seller sockpuppet arbitration (open dispute → fake vote → settle → reclaim stake) | The arbitration pool is **disabled whenever a review board is set** (`vote_dispute`/`finalize_arbitration` revert); the board is the only resolution path. Votes are one-per-wallet and board resolutions finalize open cases so stakes stay claimable. Tie-break is buyer-favourable. **`deploy_testnet.sh` now requires `BOARD_ACCOUNT` and calls `set_arbiter` before anything else**, so a fresh deployment is never left exploitable. |
 | Owner could drain escrowed NEAR via `withdraw` | **Removed.** No owner sweep exists; value leaves only through settlement/board paths. |
 | Owner could retake dispute power via `set_arbiter(owner)` | `set_arbiter`/`set_treasury` are **bootstrap-only for the owner**; afterwards only the current board/treasury can rotate them. Verified live: owner call reverts. |
 | Double payouts from failed buyer legs / folded logistics | Independent per-leg settlement: the buyer remainder is stored and retried via permissionless `retry_review_buyer_payout`; resolution paths mark folded logistics paid; `settle_logistics` is state-gated; reputation counters are exactly-once and value-filtered. |
@@ -324,9 +324,11 @@ on-chain (transaction evidence in `docs/verified-two-wallet-e2e.md` and the comm
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
 | AI budget cap lived only in server settings | Enforced **on-chain** in the budget contract (`get_max_payment`/`set_max_payment`, default 0.1 NEAR per payment). |
 
-Residual (disclosed) risks: the review-board council keys are operator-held on testnet (multisig/hardware
-on mainnet), the demo agent key is server-side (allowance/on-chain cap bounds it), and the arbitration
-pool has no slashing — which is why it is disabled in favour of the board.
+Residual (disclosed) risks: the review-board council is a **demo council** on testnet (single operator;
+multisig/hardware on mainnet), the demo agent key is server-side (on-chain cap + budget bound it), and the
+arbitration pool has no slashing — which is why it is disabled in favour of the board. OutLayer compute
+refunds accumulate in the contract unspent: there is deliberately no owner sweep, so they are dust on
+testnet rather than a drain vector.
 
 ## Tests
 

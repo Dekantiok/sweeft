@@ -14,7 +14,41 @@ from __future__ import annotations
 
 import hashlib
 
+from django.conf import settings
+
 from .models import Shipment, ShipmentEvent
+
+
+def canonical_carrier_message(payload: dict) -> str:
+    """Canonical signing message — MUST match the TEE verifier byte-for-byte.
+
+    `v1|provider_id|tracking_number|shipment_id|status|<event statuses, joined>`
+    Statuses are raw payload strings, in payload order.
+    """
+    statuses = ",".join(
+        str((event or {}).get("status", "")) for event in (payload.get("events") or [])
+    )
+    return (
+        f"v1|{payload.get('provider_id', '')}|{payload.get('tracking_number', '')}"
+        f"|{payload.get('shipment_id', '')}|{payload.get('status', '')}|{statuses}"
+    )
+
+
+def sign_carrier_payload(payload: dict) -> dict:
+    """Attach the Demo Carrier service's ed25519 signature when configured.
+
+    The matching public key is registered on-chain (`set_carrier_pubkey`), so
+    the TEE verifier only accepts carrier data signed by this key — a caller
+    can no longer fabricate a payload from public ids alone.
+    """
+    seed_hex = getattr(settings, "DEMO_CARRIER_PRIVATE_KEY", "") or ""
+    if not seed_hex:
+        return payload
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))
+    payload["signature"] = key.sign(canonical_carrier_message(payload).encode()).hex()
+    return payload
 
 HAPPY_FLOW = [
     "CREATED",

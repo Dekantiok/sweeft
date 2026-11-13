@@ -124,6 +124,8 @@ def _advance_one(shipment: Shipment, report: RelayerReport) -> None:
         payload = carriers.get_carrier().tracking(shipment.tracking_number)
         # Contract-side identity checks need the on-chain shipment id.
         payload["shipment_id"] = chain.get("shipment_id")
+        # Carrier signature for the TEE (public key registered on-chain).
+        payload = carriers.sign_carrier_payload(payload)
         if payload.get("status") != "DELIVERED":
             return  # wait for the carrier's final scan
         if not VerificationRequest.objects.filter(escrow_id=escrow_id, status="PENDING").exists():

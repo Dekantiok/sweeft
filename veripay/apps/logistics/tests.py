@@ -6,7 +6,7 @@ timelines, failure statuses only at the end, no duplicate events.
 import json
 from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.logistics import carriers
 from apps.logistics.models import LogisticsPartner, PartnerApiCredential, Shipment, ShipmentEvent
@@ -216,3 +216,42 @@ class WalletShipmentApiTests(TestCase):
         self.assertEqual(statuses[-1], "DELIVERED")
         self.assertIn("PICKED_UP", statuses)
         self.assertEqual(payload["status"], "DELIVERED")
+
+
+class CarrierPayloadSigningTests(TestCase):
+    """Carrier-authenticity: canonical message + ed25519 signature."""
+
+    SEED_HEX = "07" * 32  # matches the verifier's test key
+
+    def _payload(self):
+        return {
+            "provider_id": "LOG-DEMO-001",
+            "tracking_number": "DEMO-1",
+            "shipment_id": "SHIP-VP-000001",
+            "status": "DELIVERED",
+            "events": [{"status": "PICKED_UP"}, {"status": "DELIVERED"}],
+        }
+
+    def test_canonical_message_matches_verifier_format(self):
+        self.assertEqual(
+            carriers.canonical_carrier_message(self._payload()),
+            "v1|LOG-DEMO-001|DEMO-1|SHIP-VP-000001|DELIVERED|PICKED_UP,DELIVERED",
+        )
+
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
+    def test_signed_payload_verifies_with_pubkey(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        payload = carriers.sign_carrier_payload(self._payload())
+        self.assertIn("signature", payload)
+        key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self.SEED_HEX))
+        # Verifies over the canonical message (signature field itself excluded).
+        key.public_key().verify(
+            bytes.fromhex(payload["signature"]),
+            carriers.canonical_carrier_message(payload).encode(),
+        )
+
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY="")
+    def test_unsigned_without_key_configuration(self):
+        payload = carriers.sign_carrier_payload(self._payload())
+        self.assertNotIn("signature", payload)

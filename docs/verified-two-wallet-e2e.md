@@ -75,6 +75,27 @@ rejection path (contract-side identity checks + verifier unit tests; OutLayer ex
 intermittently timing out at the RPC layer during the run — the positive path above is the
 authoritative TEE proof).
 
+## 6. Second review round — fixes and verification (2026-11-13, contract v11, verifier v3)
+
+- **Stranded logistics fix**: `resolve_review`/`finalize_arbitration` computed the split pot
+  *after* flipping `logistics_paid`, subtracting the logistics share from the split and locking it
+  in the contract. The pot is now computed from the pre-flip state, so an unpaid allocation is
+  genuinely folded into the split. Regression tests assert `seller_part + buyer_part == total_amount`
+  for both the board and pool paths (`dispute_split_with_unpaid_logistics_covers_the_full_total`,
+  `arbitration_split_with_unpaid_logistics_covers_the_full_total`).
+- **Carrier signatures (the real TEE fix)**: the Demo Carrier service signs the canonical payload
+  (`v1|provider|tracking|shipment|status|events`, ed25519) and the TEE verifier requires a valid
+  signature whenever a carrier pubkey is registered on-chain (`set_carrier_pubkey`).
+  - `VP-000024`: signed payload → TEE `verified: true`, full lifecycle Completed.
+  - `VP-000025`: tampered signature → TEE `verified: false — carrier signature invalid`,
+    escrow stayed `Shipped` (no state advance).
+- **Fresh-deploy safety**: `deploy_testnet.sh` now **requires `BOARD_ACCOUNT`** and calls
+  `set_arbiter` (plus `set_provider_id`/`set_carrier_pubkey`) before finishing — a fresh
+  deployment can no longer sit exploitable without a board.
+- **Demo-council labelling**: README and the governance UI now state that the 2-of-3 council is a
+  demo council operated by this project on testnet.
+- OutLayer compute refunds accumulate unspent by design (no owner sweep exists); documented as dust.
+
 ## Notes / follow-ups
 
 - The buyer-dispute state gate is intentional (disputes open at `Shipped`); sellers can

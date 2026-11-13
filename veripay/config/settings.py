@@ -147,6 +147,11 @@ OUTLAYER_PROJECT = os.environ.get("OUTLAYER_PROJECT", "")
 DEMO_CARRIER_PROVIDER_ID = "LOG-DEMO-001"
 DEMO_CARRIER_NAME = "Demo Carrier (simulated)"
 DEMO_CARRIER_WALLET = os.environ.get("DEMO_CARRIER_WALLET", "")
+# Carrier payload signing (ed25519). The public key is registered on-chain via
+# `set_carrier_pubkey`; the TEE verifier then requires a valid signature, so a
+# caller cannot fabricate carrier data from public ids alone.
+DEMO_CARRIER_PRIVATE_KEY = os.environ.get("DEMO_CARRIER_PRIVATE_KEY", "")
+DEMO_CARRIER_PUBKEY = os.environ.get("DEMO_CARRIER_PUBKEY", "")
 
 # ---------------------------------------------------------------------------
 # AI infrastructure (provider-neutral — swap via AI_PROVIDER, no code changes)

@@ -244,9 +244,9 @@
         <div>Status reported: <b>{{ chain.last_verification.reported_status }}</b> — verified: <b>{{ chain.last_verification.verified }}</b></div>
         <div class="text-slate-500">{{ chain.last_verification.reason }}</div>
         <div class="text-xs text-slate-400 mt-1">
-          Attested by OutLayer TEE for the published project code hash. The verifier checks the carrier
-          report's identity, tracking, shipment and timeline for consistency — it cannot prove the carrier
-          itself told the truth: carrier data is simulated here, and signed carrier payloads are the roadmap upgrade.
+          Attested by OutLayer TEE for the published project code hash. Carrier reports are ed25519-signed by
+          the Demo Carrier service (public key registered on-chain) and the TEE verifies that signature plus
+          identity, shipment and timeline consistency. Carrier data itself is simulated.
         </div>
       </div>
     {% elif relayer_enabled %}

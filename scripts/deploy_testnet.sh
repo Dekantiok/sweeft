@@ -14,6 +14,9 @@ RELAYER_ACCOUNT="${RELAYER_ACCOUNT:-relayer.${DEPLOYER}}"
 OUTLAYER_CONTRACT="${OUTLAYER_CONTRACT:-outlayer.testnet}"
 OUTLAYER_PROJECT="${OUTLAYER_PROJECT:-${DEPLOYER}/veripay-verify}"
 PLATFORM_FEE_BPS="${PLATFORM_FEE_BPS:-500}"
+RELAYER_ACCOUNT="${RELAYER_ACCOUNT:-relayer.${DEPLOYER}}"
+CARRIER_PROVIDER_ID="${CARRIER_PROVIDER_ID:-LOG-DEMO-001}"
+# CARRIER_PUBKEY (64 hex chars) registers the Demo Carrier signing key on-chain.
 
 sign() { network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send; }
 
@@ -46,7 +49,26 @@ near contract call-function as-transaction "$BUDGET_ACCOUNT" new \
   json-args "{\"agent\":\"$AGENT_ACCOUNT\"}" \
   prepaid-gas '100 Tgas' attached-deposit '0 NEAR' sign-as "$BUDGET_ACCOUNT" network-config testnet sign-with-legacy-keychain send
 
-echo "== 6. Publish the TEE verification module to OutLayer"
+echo "== 6. MANDATORY governance wiring (disables the arbitration pool)"
+# SECURITY: the arbitration pool is exploitable on a fresh deployment until a
+# review board is set (a seller can sockpuppet-settle). Never leave a fresh
+# escrow contract without set_arbiter. BOARD_ACCOUNT is required.
+BOARD_ACCOUNT="${BOARD_ACCOUNT:?set BOARD_ACCOUNT=<review board (Sputnik DAO) account>}"
+near contract call-function as-transaction "$VERIPAY_ACCOUNT" set_arbiter \
+  json-args "{\"account_id\":\"$BOARD_ACCOUNT\"}" \
+  prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
+# Carrier identity + signing key: the TEE rejects unsigned or mismatched
+# carrier data once these are set.
+near contract call-function as-transaction "$VERIPAY_ACCOUNT" set_provider_id \
+  json-args "{\"provider_id\":\"${CARRIER_PROVIDER_ID:-LOG-DEMO-001}\"}" \
+  prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
+if [ -n "${CARRIER_PUBKEY:-}" ]; then
+  near contract call-function as-transaction "$VERIPAY_ACCOUNT" set_carrier_pubkey \
+    json-args "{\"pubkey\":\"$CARRIER_PUBKEY\"}" \
+    prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as "$DEPLOYER" network-config testnet sign-with-legacy-keychain --signer-public-key "$DEPLOYER_KEY" send
+fi
+
+echo "== 7. Publish the TEE verification module to OutLayer"
 printf '%s\n%s\n' "$DEPLOYER" "$DEPLOYER_KEY" | outlayer login testnet
 WASM=wasi/veripay-verify/target/wasm32-wasip2/release/veripay-verify.wasm
 outlayer upload "$WASM"
