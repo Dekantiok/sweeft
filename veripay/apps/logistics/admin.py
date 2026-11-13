@@ -31,8 +31,8 @@ class PartnerApiCredentialAdmin(admin.ModelAdmin):
 
 @admin.register(Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
-    list_display = ("tracking_number", "escrow_id", "provider", "status", "simulated", "created_at")
-    list_filter = ("status", "simulated", "carrier")
+    list_display = ("tracking_number", "escrow_id", "provider", "status", "simulation_scenario", "simulated", "created_at")
+    list_filter = ("status", "simulated", "carrier", "simulation_scenario")
     search_fields = ("tracking_number", "escrow_id")
 
 

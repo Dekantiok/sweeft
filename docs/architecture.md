@@ -35,8 +35,11 @@
   The catalog can be rebuilt by anyone from chain data (`escrows_range`, `reputation_of`).
 - **OutLayer** — off-chain verifiable execution. Our verification WASM is published (hash-pinned);
   the contract calls `request_execution`; the TEE result returns through the promise callback.
-- **Demo Carrier** — a simulated carrier adapter behind a `CarrierAdapter` interface
-  (`apps/logistics/carriers.py`). All its data is flagged `simulated=True` and labelled in the UI.
+- **Demo Carrier** — a simulated carrier. The shipment state machine lives behind a
+  `CarrierAdapter` interface (`apps/logistics/carriers.py`, forward-only and idempotent); the
+  service a real carrier would run is emulated by a **standalone simulator**
+  (`tools/demo-carrier/simulator.py`) that only talks to the partner API over HTTP — no database
+  access. All its data is flagged `simulated=True` and labelled in the UI.
 
 ## Source-of-truth rule
 

@@ -22,6 +22,21 @@ python3 manage.py createsuperuser    # partner approvals live in /admin/
 python3 manage.py runserver 0.0.0.0:8000
 ```
 
+### Run the Demo Carrier simulator (second terminal)
+
+The Demo Carrier is a standalone service (`tools/demo-carrier/`) that plays a ~60-second
+delivery lifecycle over the carrier Partner API, starting once an escrow is dispatched on-chain.
+It needs a partner API key (printed once):
+
+```bash
+python3 manage.py seed_demo --issue-carrier-key
+VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+  python3 tools/demo-carrier/simulator.py
+```
+
+Without it, shipments simply wait at `CREATED` — the escrow page shows “waiting for carrier”.
+Its unit tests run standalone: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
+
 Pages: `/` (landing), `/dashboard/`, `/escrow/new/`, `/escrow/<id>/`, `/invitations/<token>/`,
 `/logistics/`, `/partners/register/`, `/partners/portal/`, `/admin/`.
 
@@ -47,6 +62,8 @@ See `veripay/.env.example`. Never commit real values; the repo contains none.
 
 ```bash
 python3 manage.py check                                # Django system check
+python3 manage.py test                                # Django unit tests (logistics state machine + partner API)
+(cd tools/demo-carrier && python3 -m unittest test_simulator -v)   # carrier simulator schedule
 (cd contracts/veripay && cargo test)                   # contract unit tests
 SELLER_KEY=... BUYER_KEY=... scripts/e2e_lifecycle.sh  # full testnet lifecycle
 ```

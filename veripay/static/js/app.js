@@ -134,6 +134,16 @@
     }
   }
 
+  async function jsonGet(url) {
+    const r = await fetch(url, { headers: { Accept: 'application/json' } });
+    const text = await r.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (e) {
+      throw new Error(`${url} → HTTP ${r.status}: ${text.slice(0, 120).replace(/<[^>]*>/g, ' ').trim()}`);
+    }
+  }
+
   // ------------------------------------------------------------------
   // Native NEAR helpers: balance display + faucet link. Legacy tUSD reads
   // remain available through tokenBalance for old escrows.
@@ -246,7 +256,7 @@
     Object.assign(window.VPApp, {
       state, cfg, connect, disconnect, login, callContract, callToken,
       callContractOn, sendNear,
-      explorerTx, jsonPost, requireWallet, tokenBalance, nativeBalance, refreshTokenBalance, faucet,
+      explorerTx, jsonPost, jsonGet, requireWallet, tokenBalance, nativeBalance, refreshTokenBalance, faucet,
       checkWalletConnection,
     });
     if (state.walletAccount) {

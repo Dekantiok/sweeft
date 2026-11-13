@@ -103,7 +103,8 @@ def api_create_shipment(request):
 
     `tracking_number` may be supplied when the escrow was created with a
     pre-registered tracking ID (marketplace flow); otherwise the Demo Carrier
-    generates one.
+    generates one. `scenario` chooses the simulated run outcome
+    (`delivered` | `failed` | `lost`) for the standalone simulator.
     """
     body = json.loads(request.body or "{}")
     escrow_id = (body.get("escrow_id") or "").strip()
@@ -114,6 +115,11 @@ def api_create_shipment(request):
         return JsonResponse({"ok": False, "error": f"escrow is {chain['state']}"}, status=400)
     if request.wallet not in (chain["seller"], chain.get("logistics_provider")):
         return JsonResponse({"ok": False, "error": "only the seller or provider can register a shipment"}, status=403)
+
+    valid_scenarios = {choice[0] for choice in Shipment.SIMULATION_SCENARIOS}
+    scenario = (body.get("scenario") or "delivered").strip().lower()
+    if scenario not in valid_scenarios:
+        return JsonResponse({"ok": False, "error": f"scenario must be one of {sorted(valid_scenarios)}"}, status=400)
 
     carrier = carriers.get_carrier()
     provided = (body.get("tracking_number") or "").strip()
@@ -128,6 +134,7 @@ def api_create_shipment(request):
             "carrier": "demo",
             "status": "CREATED",
             "simulated": True,
+            "simulation_scenario": scenario,
             "registered_by": request.wallet,
         },
     )
@@ -136,12 +143,18 @@ def api_create_shipment(request):
         ContractEvent.objects.create(
             escrow_id=escrow_id, event_type="shipment_registered", payload={"tracking_number": shipment.tracking_number}
         )
+    elif shipment.status == "CREATED" and shipment.simulation_scenario != scenario:
+        # Marketplace flow: the row was pre-registered at escrow creation;
+        # the scenario is chosen at dispatch. Only meaningful before the run starts.
+        shipment.simulation_scenario = scenario
+        shipment.save(update_fields=["simulation_scenario", "updated_at"])
     return JsonResponse(
         {
             "ok": True,
             "shipment_id": shipment.id,
             "tracking_number": shipment.tracking_number,
             "status": shipment.status,
+            "scenario": shipment.simulation_scenario,
             "simulated": True,
         }
     )
@@ -152,6 +165,19 @@ def api_shipment(request, shipment_id: int):
     shipment = get_object_or_404(Shipment, pk=shipment_id)
     carrier = carriers.get_carrier()
     return JsonResponse({"ok": True, "shipment": carrier.tracking(shipment.tracking_number)})
+
+
+@require_GET
+def api_shipment_for_escrow(request, escrow_id: str):
+    """Latest shipment for an escrow — powers live tracking on the escrow page."""
+    shipment = Shipment.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
+    if not shipment:
+        return JsonResponse({"ok": True, "shipment": None})
+    carrier = carriers.get_carrier()
+    payload = carrier.tracking(shipment.tracking_number)
+    payload["id"] = shipment.id
+    payload["simulation_scenario"] = shipment.simulation_scenario
+    return JsonResponse({"ok": True, "shipment": payload})
 
 
 @csrf_exempt
@@ -165,7 +191,10 @@ def api_shipment_event(request, shipment_id: int):
         return JsonResponse({"ok": False, "error": "not your shipment"}, status=403)
     body = json.loads(request.body or "{}")
     carrier = carriers.get_carrier()
-    event = carrier.advance(shipment, to_status=body.get("status"), note=body.get("note", ""))
+    try:
+        event = carrier.advance(shipment, to_status=body.get("status"), note=body.get("note", ""))
+    except ValueError as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
     return JsonResponse({"ok": True, "status": event.status, "simulated": True})
 
 
@@ -233,20 +262,40 @@ def _api_partner(request):
 
 @require_GET
 def api_partner_shipments(request):
+    """Shipments assigned to this partner.
+
+    `?include_escrow_state=1` adds the on-chain escrow state (cached RPC read)
+    so an automated provider system can gate its run on actual dispatch —
+    the standalone Demo Carrier simulator uses this.
+    """
     partner = _api_partner(request)
     if not partner:
         return JsonResponse({"ok": False, "error": "invalid API key"}, status=401)
-    shipments = Shipment.objects.filter(provider=partner)
-    return JsonResponse(
-        {
-            "ok": True,
-            "simulated": True,
-            "shipments": [
-                {"id": s.id, "escrow_id": s.escrow_id, "tracking_number": s.tracking_number, "status": s.status}
-                for s in shipments
+    include_chain = request.GET.get("include_escrow_state") == "1"
+    shipments = Shipment.objects.filter(provider=partner).prefetch_related("events")
+    rows = []
+    for s in shipments:
+        row = {
+            "id": s.id,
+            "escrow_id": s.escrow_id,
+            "tracking_number": s.tracking_number,
+            "status": s.status,
+            "simulation_scenario": s.simulation_scenario,
+            "created_at": s.created_at.isoformat(),
+            "updated_at": s.updated_at.isoformat(),
+            "events": [
+                {"status": e.status, "note": e.note, "timestamp": e.created_at.isoformat()}
+                for e in s.events.all()
             ],
         }
-    )
+        if include_chain:
+            try:
+                chain = near.get_escrow_cached(s.escrow_id)
+                row["escrow_state"] = (chain or {}).get("state")
+            except Exception:  # RPC trouble must not break carrier polling
+                row["escrow_state"] = None
+        rows.append(row)
+    return JsonResponse({"ok": True, "simulated": True, "shipments": rows})
 
 
 @csrf_exempt
@@ -262,5 +311,8 @@ def api_partner_event(request, shipment_id: int):
     if status_value not in valid:
         return JsonResponse({"ok": False, "error": f"status must be one of {sorted(valid)}"}, status=400)
     carrier = carriers.get_carrier()
-    event = carrier.advance(shipment, to_status=status_value, note=body.get("note", "Partner-reported event"))
+    try:
+        event = carrier.advance(shipment, to_status=status_value, note=body.get("note", "Partner-reported event"))
+    except ValueError as e:
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
     return JsonResponse({"ok": True, "status": event.status, "simulated": True})

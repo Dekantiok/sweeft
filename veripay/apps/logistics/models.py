@@ -97,12 +97,24 @@ class Shipment(models.Model):
         ("CANCELLED", "Cancelled"),
     ]
 
+    SIMULATION_SCENARIOS = [
+        ("delivered", "Delivered — happy path (~60s run)"),
+        ("failed", "Delivery attempt fails"),
+        ("lost", "Lost in transit"),
+    ]
+
     escrow_id = models.CharField(max_length=32, db_index=True)
     provider = models.ForeignKey(LogisticsPartner, on_delete=models.PROTECT, related_name="shipments", null=True, blank=True)
     carrier = models.CharField(max_length=40, default="demo")
     tracking_number = models.CharField(max_length=80, unique=True)
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default="CREATED")
     simulated = models.BooleanField(default=True, help_text="Demo Carrier data — clearly labelled as simulated")
+    simulation_scenario = models.CharField(
+        max_length=16,
+        choices=SIMULATION_SCENARIOS,
+        default="delivered",
+        help_text="Demo Carrier simulated run outcome (the standalone simulator reads this)",
+    )
     registered_by = models.CharField(max_length=64, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

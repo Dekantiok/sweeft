@@ -42,6 +42,7 @@
             <code>{{ s.tracking_number }}</code>
             <span class="text-xs rounded-full px-2 py-0.5 bg-slate-900 text-white" id="status-{{ s.id }}">{{ s.status }}</span>
             <span class="text-xs text-slate-500">escrow <code>{{ s.escrow_id }}</code></span>
+            <span class="text-xs text-slate-500">run: {{ s.get_simulation_scenario_display }}</span>
             <div class="flex-1"></div>
             <span class="text-xs bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">SIMULATED DATA</span>
           </div>
@@ -52,7 +53,7 @@
             <button class="text-xs border border-slate-300 rounded px-2 py-1 hover:bg-slate-100" onclick="advance({{ s.id }}, 'DELIVERED')">Simulate delivered</button>
             <button class="text-xs border border-rose-300 text-rose-700 rounded px-2 py-1 hover:bg-rose-50" onclick="advance({{ s.id }}, 'DELIVERY_FAILED')">Simulate failed</button>
           </div>
-          <div class="text-xs text-slate-500 mt-2">Timeline: {% for e in s.events.all %}{{ e.status }}{% if not forloop.last %} → {% endif %}{% endfor %}</div>
+          <div class="text-xs text-slate-500 mt-2" id="timeline-{{ s.id }}">Timeline: {% for e in s.events.all %}{{ e.status }}{% if not forloop.last %} → {% endif %}{% endfor %}</div>
         </div>
       {% empty %}
         <p class="text-sm text-slate-500 mt-2">No shipments assigned yet.</p>
@@ -72,10 +73,36 @@
 {% endblock %}
 {% block scripts %}
 <script>
+  // Auto-refresh while the Demo Carrier simulator runs (SIMULATED data).
+  const PORTAL_TERMINAL = ['DELIVERED', 'DELIVERY_FAILED', 'RETURNED', 'LOST', 'CANCELLED'];
+  const PORTAL_SHIPMENTS = [{% for s in shipments %}{ id: {{ s.id }}, status: "{{ s.status }}" },{% endfor %}];
+
+  function paint(entry, shipment) {
+    entry.status = shipment.status;  // stop polling once terminal
+    const badge = document.getElementById('status-' + entry.id);
+    if (badge) badge.textContent = shipment.status;
+    const line = document.getElementById('timeline-' + entry.id);
+    if (line) line.textContent = 'Timeline: ' + (shipment.events || []).map((e) => e.status).join(' → ');
+  }
+
+  async function refreshOne(id) {
+    try {
+      const res = await VPApp.jsonGet(`/api/v1/shipments/${id}/`);
+      const entry = PORTAL_SHIPMENTS.find((s) => s.id === id);
+      if (entry && res && res.shipment) paint(entry, res.shipment);
+    } catch (e) { /* transient */ }
+  }
+
   async function advance(id, status) {
     const res = await VPApp.jsonPost(`/api/v1/shipments/${id}/events/`, { status });
     if (!res.ok) { alert(res.error || 'failed'); return; }
-    document.getElementById('status-' + id).textContent = res.status;
+    refreshOne(id);
   }
+
+  function pollAll() {
+    PORTAL_SHIPMENTS.forEach((s) => { if (!PORTAL_TERMINAL.includes(s.status)) refreshOne(s.id); });
+  }
+  setInterval(() => { if (!document.hidden) pollAll(); }, 3000);
+  pollAll();
 </script>
 {% endblock %}

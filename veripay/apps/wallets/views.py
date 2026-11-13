@@ -17,6 +17,33 @@ def current_wallet(request) -> str | None:
     return request.session.get("wallet")
 
 
+def account_has_public_key(account_id: str, public_key: str) -> bool:
+    """Bind a login signature to the claimed NEAR account, not just a keypair.
+
+    NEP-413 proves possession of *a* private key. Without this on-chain check,
+    anyone could sign with their own key while claiming another account. We
+    fail closed on RPC errors: identity is never granted on an unverified key.
+    """
+    from apps.escrow.near import _rpc
+
+    try:
+        result = _rpc(
+            "query",
+            {
+                "request_type": "view_access_key_list",
+                "finality": "final",
+                "account_id": account_id,
+            },
+            timeout=15,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    if "error" in result:
+        return False
+    keys = (result.get("result") or {}).get("keys") or []
+    return any(k.get("public_key") == public_key for k in keys)
+
+
 @require_GET
 def challenge(request):
     """Create a single-use challenge bound to an optional account and domain."""
@@ -63,6 +90,11 @@ def verify(request):
         return JsonResponse({"ok": False, "error": "challenge account mismatch"}, status=400)
     if challenge_row.recipient != request.get_host():
         return JsonResponse({"ok": False, "error": "wrong domain"}, status=400)
+    if not account_has_public_key(account_id, public_key):
+        return JsonResponse(
+            {"ok": False, "error": "public key is not a live access key on this account"},
+            status=400,
+        )
 
     ok = verify_nep413(
         public_key=public_key,

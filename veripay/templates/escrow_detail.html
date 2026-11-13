@@ -318,7 +318,21 @@
       document.getElementById('actions').appendChild(box);
     }
     if (state === 'ShipmentPending' && (isSeller || isProvider)) {
-      addButton('Mark dispatched (register tracking on-chain)', doRegisterShipment);
+      const box = el('<div class="flex flex-wrap items-center gap-2"></div>');
+      const select = el('<select id="ship-scenario" class="border border-slate-600 bg-slate-900 rounded-lg px-3 py-1.5 text-xs text-slate-200"></select>');
+      [['delivered', 'Carrier run: delivered in ~60s'],
+       ['failed', 'Carrier run: delivery attempt fails'],
+       ['lost', 'Carrier run: lost in transit']].forEach(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        select.appendChild(option);
+      });
+      const button = el('<button class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Mark dispatched (register tracking on-chain)</button>');
+      button.onclick = doRegisterShipment;
+      box.appendChild(select);
+      box.appendChild(button);
+      document.getElementById('actions').appendChild(box);
     }
     if (state === 'Shipped' && (isSeller || isBuyer || isProvider)) {
       addButton('Request TEE delivery verification', doVerify);
@@ -389,20 +403,23 @@
 
   async function doRegisterShipment() {
     try {
+      const scenarioEl = document.getElementById('ship-scenario');
+      const scenario = scenarioEl ? scenarioEl.value : 'delivered';
       let tracking = CHAIN ? CHAIN.tracking_number : null;
       if (!tracking) {
         status('Creating simulated tracking number…');
-        const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id });
+        const created = await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, scenario });
         if (!created.ok) throw new Error(created.error);
         tracking = created.tracking_number;
       } else {
         // Tracking was pre-registered at creation (marketplace flow): make sure
         // the Demo Carrier row exists, then mark dispatched on-chain.
-        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
+        await VPApp.jsonPost('/api/v1/shipments/', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking, scenario });
       }
       status('Registering ' + tracking + ' on-chain…');
       await VPApp.callContract('register_shipment', { escrow_id: AGREEMENT.escrow_id, tracking_number: tracking });
-      status('Registered — refreshing…'); setTimeout(() => window.location.reload(), 2500);
+      status('Registered — the carrier run starts now (SIMULATED)…');
+      setTimeout(() => window.location.reload(), 2500);
     } catch (e) { status(''); alert('Failed: ' + e.message); }
   }
 
@@ -574,6 +591,121 @@
     if (el && el.dataset.ms) el.textContent = new Date(Number(el.dataset.ms)).toLocaleString();
   })();
 
+  // --- Demo Carrier live tracking (SIMULATED) --------------------------
+  // The standalone simulator (tools/demo-carrier/) drives the ~60-second run
+  // over the carrier Partner API; this panel polls the projection and renders
+  // the timeline. Labelled SIMULATED wherever it appears.
+  const TRACKING_FLOW = ['CREATED', 'ACCEPTED', 'PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'DELIVERED'];
+  const TRACKING_LABELS = {
+    CREATED: 'Tracking created',
+    ACCEPTED: 'Accepted by provider',
+    PICKED_UP: 'Picked up',
+    IN_TRANSIT: 'In transit',
+    OUT_FOR_DELIVERY: 'Out for delivery',
+    DELIVERED: 'Delivered',
+    DELIVERY_FAILED: 'Delivery failed',
+    RETURNED: 'Returned to sender',
+    LOST: 'Lost in transit',
+    CANCELLED: 'Cancelled',
+  };
+  const TRACKING_TERMINAL = ['DELIVERED', 'DELIVERY_FAILED', 'RETURNED', 'LOST', 'CANCELLED'];
+  const TRACKING_FAILURES = ['DELIVERY_FAILED', 'RETURNED', 'LOST', 'CANCELLED'];
+
+  function escHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  function trackingRow(step, event, status) {
+    const done = Boolean(event);
+    const dot = done
+      ? 'bg-emerald-400'
+      : step === status
+        ? 'animate-pulse bg-emerald-500'
+        : 'border border-slate-600';
+    const label = done ? 'font-medium text-slate-200' : 'text-slate-500';
+    const time = event ? `<span class="text-[11px] text-slate-500">${new Date(event.timestamp).toLocaleTimeString()}</span>` : '';
+    const note = event && event.note ? `<div class="text-xs text-slate-500">${escHtml(event.note)}</div>` : '';
+    return `<li class="flex items-start gap-3">
+      <span class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${dot}"></span>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-baseline gap-x-2">
+          <span class="${label}">${TRACKING_LABELS[step] || step}</span>${time}
+        </div>
+        ${note}
+      </div>
+    </li>`;
+  }
+
+  function renderTracking(shipment) {
+    const box = document.getElementById('shipment-box');
+    if (!box) return;
+    if (!shipment) {
+      if (trackingRendered !== 'none') {
+        box.innerHTML = '<p class="text-sm text-slate-500">Waiting for the carrier to register this shipment (SIMULATED — Demo Carrier).</p>';
+        trackingRendered = 'none';
+      }
+      return;
+    }
+    const signature = `${shipment.status}|${(shipment.events || []).length}`;
+    if (signature === trackingRendered) return;  // nothing new — don't churn the DOM
+    trackingRendered = signature;
+    const status = shipment.status;
+    const failed = TRACKING_FAILURES.includes(status);
+    const eventsByStatus = {};
+    (shipment.events || []).forEach((e) => { eventsByStatus[e.status] = e; });
+    const rows = TRACKING_FLOW.map((step) => trackingRow(step, eventsByStatus[step], status));
+    if (failed) rows.push(trackingRow(status, eventsByStatus[status], status));
+    const doneCount = TRACKING_FLOW.filter((step) => eventsByStatus[step]).length;
+    const percent = Math.round((doneCount / TRACKING_FLOW.length) * 100);
+    const statusClass = failed ? 'bg-rose-100 text-rose-800' : 'bg-slate-900 text-white';
+    const isParty = WALLET && CHAIN && (WALLET === AGREEMENT.seller || WALLET === AGREEMENT.buyer || WALLET === CHAIN.logistics_provider);
+    const delivered = status === 'DELIVERED';
+    const cta = delivered && CHAIN && CHAIN.state === 'Shipped'
+      ? isParty
+        ? `<div class="mt-3 rounded-lg border border-emerald-800/60 bg-emerald-900/30 p-3 text-sm">
+             <b>Delivery complete.</b> Request the OutLayer TEE verification — it records pickup + delivery on-chain.
+             <button id="tracking-verify" class="ml-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors">Request TEE verification</button>
+           </div>`
+        : '<div class="mt-3 text-xs text-slate-500">Delivery complete — any party can request the TEE verification.</div>'
+      : '';
+    box.innerHTML = `<section class="bg-white border border-slate-200 rounded-xl p-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="font-semibold">Live tracking</h2>
+        <span class="text-xs bg-amber-100 text-amber-800 rounded-full px-2 py-0.5">SIMULATED — Demo Carrier</span>
+        <div class="flex-1"></div>
+        <span class="text-xs rounded-full px-2.5 py-0.5 ${statusClass}">${TRACKING_LABELS[status] || status}</span>
+      </div>
+      <div class="mt-3 h-1 rounded-full bg-slate-800 overflow-hidden">
+        <div class="h-1 rounded-full ${failed ? 'bg-rose-400' : 'bg-emerald-500'} transition-all" style="width:${percent}%"></div>
+      </div>
+      <ol class="mt-4 space-y-3 text-sm">${rows.join('')}</ol>
+      ${cta}
+    </section>`;
+    const verifyBtn = document.getElementById('tracking-verify');
+    if (verifyBtn) verifyBtn.onclick = doVerify;
+  }
+
+  let trackingTimer = null;
+  let trackingRendered = '';
+  async function pollTracking() {
+    try {
+      const res = await VPApp.jsonGet('/api/v1/shipments/by-escrow/' + encodeURIComponent(AGREEMENT.escrow_id) + '/');
+      if (!res || !res.ok) return;
+      renderTracking(res.shipment);
+      if (res.shipment && TRACKING_TERMINAL.includes(res.shipment.status) && trackingTimer) {
+        clearInterval(trackingTimer);
+        trackingTimer = null;
+      }
+    } catch (e) { /* transient — the next tick retries */ }
+  }
+
   renderActions();
+
+  if (CHAIN && ['Shipped', 'AwaitingBuyerConfirmation'].includes(CHAIN.state)) {
+    pollTracking();
+    trackingTimer = setInterval(() => { if (!document.hidden) pollTracking(); }, 3000);
+  }
 </script>
 {% endblock %}

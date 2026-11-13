@@ -5,6 +5,7 @@ The byte layout is pinned to @near-wallet-selector/core's `payloadSchema`
 """
 import base64
 import hashlib
+from unittest import mock
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -100,6 +101,13 @@ class VerifyTests(SimpleTestCase):
 class VerifyEndpointTests(TestCase):
     """Full HTTP flow: challenge -> sign (as a wallet would) -> verify -> session."""
 
+    def setUp(self):
+        # The new on-chain ownership check is mocked per test; these tests
+        # otherwise use generated keys that do not exist on testnet.
+        patcher = mock.patch("apps.wallets.views.account_has_public_key", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _sign(self, message: str, nonce_b64: str, recipient: str):
         priv = Ed25519PrivateKey.generate()
         raw = priv.public_key().public_bytes(
@@ -158,3 +166,38 @@ class VerifyEndpointTests(TestCase):
         )
         self.assertEqual(res.status_code, 400)
         self.assertIn("verification failed", res.json()["error"])
+
+    def test_key_not_owned_by_account_rejected(self):
+        """A valid signature from another account's key must not log in."""
+        ch = self.client.get("/api/v1/wallet/challenge/?account_id=alice.testnet").json()
+        public_key, signature = self._sign(ch["message"], ch["nonce"], ch["recipient"])
+        with mock.patch("apps.wallets.views.account_has_public_key", return_value=False):
+            res = self.client.post(
+                "/api/v1/wallet/verify/",
+                data={
+                    "account_id": "alice.testnet",
+                    "public_key": public_key,
+                    "signature": signature,
+                    "nonce": ch["nonce"],
+                },
+                content_type="application/json",
+            )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("not a live access key", res.json()["error"])
+        self.assertNotIn("wallet", self.client.session)
+
+
+class AccountKeyBindingTests(SimpleTestCase):
+    def test_matches_live_onchain_key(self):
+        from apps.wallets.views import account_has_public_key
+
+        response = {"result": {"keys": [{"public_key": "ed25519:abc"}, {"public_key": "ed25519:def"}]}}
+        with mock.patch("apps.escrow.near._rpc", return_value=response):
+            self.assertTrue(account_has_public_key("alice.testnet", "ed25519:abc"))
+            self.assertFalse(account_has_public_key("alice.testnet", "ed25519:zzz"))
+
+    def test_rpc_failure_fails_closed(self):
+        from apps.wallets.views import account_has_public_key
+
+        with mock.patch("apps.escrow.near._rpc", return_value={"error": {"message": "down"}}):
+            self.assertFalse(account_has_public_key("alice.testnet", "ed25519:abc"))

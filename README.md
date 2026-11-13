@@ -26,7 +26,7 @@ Built at NEAR HACKATHON (Nov 2026). Baseline: new repository created 2026-11-09.
 |---|---|
 | Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`veripay.steepdata3968.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration. Legacy NEP-141 tUSD escrows remain supported |
-| Wallet identity + authorization | **Real** — NEP-413 signed challenges verified server-side; every financial action is wallet-signed |
+| Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action is wallet-signed |
 | Delivery verification | **Real TEE** — OutLayer (Intel TDX) executes our published WASM verifier; result returns on-chain via the contract callback |
 | Carrier tracking data | **SIMULATED** — Demo Carrier; labelled `SIMULATED DATA` in the DB (`simulated=True`), API responses and UI |
 | Platform fee | **Real** — 5% of seller amount, enforced by the contract, paid at completion |
@@ -109,6 +109,7 @@ veripay/               Django modular monolith (product coordinator + projection
   apps/ai/             provider-neutral AI (echo | openai_compat | anthropic) + co-pilot payments — see docs/ai-copilot.md
   templates/ static/   Django templates + HTMX + Alpine + Tailwind; wallet bundle
 tools/web-bundle/      esbuild bundle of @near-wallet-selector (Meteor/HERE/Nightly)
+tools/demo-carrier/    standalone Demo Carrier simulator — SIMULATED, partner-API only
 scripts/               deploy + end-to-end scripts
 docs/                  architecture, lifecycle, settlement rules, verification, partner API
 ```
@@ -194,17 +195,38 @@ cd tools/web-bundle && npm install && npm run build   # writes veripay/static/js
    from the listing — with a wallet-signed `create_escrow`.
 4. Buyer accepts, then **funds** the exact total in native NEAR. Logistics is assigned and the Demo
    Carrier tracking number is registered.
-5. Any party requests **TEE delivery verification** — OutLayer runs the published verifier and the
+5. **Dispatch starts the carrier run**: at "Mark dispatched" pick a scenario (`delivered` in ~60s,
+   or `failed` / `lost` for dispute demos). The standalone Demo Carrier simulator plays
+   receive → transport → deliver over the partner API; the escrow page shows the live timeline.
+6. Any party requests **TEE delivery verification** — OutLayer runs the published verifier and the
    contract callback records the attested result.
-6. Seller/provider **settle logistics** (verified pickup); buyer **confirms receipt** → seller +
+7. Seller/provider **settle logistics** (verified pickup); buyer **confirms receipt** → seller +
    platform payouts settle, the listing flips to `sold`, and **reputation moves on-chain for both
    wallets** — visible instantly on their profiles. Platform fees land in the **review-board treasury**.
-7. **Governance**: while an escrow is `ReviewRequired`, either party can **Escalate to the review board**
+8. **Governance**: while an escrow is `ReviewRequired`, either party can **Escalate to the review board**
    from the escrow page — a wallet-signed DAO proposal (`resolve_review`); council members approve on
    `/governance/`; at 2-of-3 the DAO executes the split on-chain. The arbitration pool stays as the
    permissionless community tier, the board is the governed tier.
 
 Scripted version of the escrow path: `scripts/e2e_lifecycle.sh`.
+
+### Demo Carrier simulator (SIMULATED — separate process)
+
+The carrier is a **standalone service**, not part of Django: it talks only to the key-authenticated
+partner API (the same surface a real GIG/DHL/FedEx integration would use) and holds no database
+state. Start it next to `runserver`:
+
+```bash
+python3 manage.py seed_demo --issue-carrier-key          # one-time: prints the vp_… key
+VERIPAY_BASE_URL=http://127.0.0.1:8000 DEMO_CARRIER_API_KEY=vp_… \
+  python3 tools/demo-carrier/simulator.py
+```
+
+It gates on the on-chain `Shipped` state, then POSTs scans at +5s `ACCEPTED`, +15s `PICKED_UP`,
++30s `IN_TRANSIT`, +45s `OUT_FOR_DELIVERY`, +60s `DELIVERED` (per-shipment scenario may instead
+end `DELIVERY_FAILED` at +60s or `LOST` at +30s). Server-side transitions are idempotent and
+forward-only, so retries and restarts cannot corrupt the timeline OutLayer validates. If the
+simulator is down, shipments wait at `CREATED` and the UI says so — nothing else breaks.
 
 ### AI co-pilot payments (native NEAR budget, user-set limit)
 
@@ -240,13 +262,18 @@ Over-cap and no-budget paths refused correctly.
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
   asserting exact token balances at each settlement step.
+- Django: `python3 manage.py test` — carrier state-machine guards (forward-only, idempotent,
+  failure-terminal), partner API auth + event round-trips, escrow tracking lookup, and the
+  verification payload matching the OutLayer invariants.
+- Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
 - Rust unit tests: `cargo test` in `contracts/veripay` (state-machine helpers).
 
 ## Known limitations / roadmap
 
-- Demo Carrier is simulated (real GIG/DHL/FedEx integrations require API access — not assumed).
+- Demo Carrier is simulated — a standalone service (`tools/demo-carrier/`) polling the partner API;
+  real GIG/DHL/FedEx integrations require API access (not assumed).
 - The verification module receives the carrier payload as input; fetching carrier APIs from inside
   the TEE is a WASI P2 upgrade path.
 - `REVIEW_REQUIRED` has an explicit, disclosed operator path (`resolve_review`) — this is a

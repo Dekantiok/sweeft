@@ -4,11 +4,12 @@ Idempotent — safe to run repeatedly. Everything is clearly demo/testnet data.
 
     python3 manage.py seed_demo
     python3 manage.py seed_demo --partner-owner <wallet> --seller <wallet>
+    python3 manage.py seed_demo --issue-carrier-key   # key for tools/demo-carrier/simulator.py
 """
 from django.core.management.base import BaseCommand
 
 from apps.escrow.near import parse_near_amount
-from apps.logistics.models import LogisticsPartner
+from apps.logistics.models import LogisticsPartner, PartnerApiCredential
 from apps.market.models import Listing
 
 
@@ -22,6 +23,8 @@ class Command(BaseCommand):
                             help="On-chain wallet that receives logistics payouts")
         parser.add_argument("--seller", default="seller.steepdata3968.testnet",
                             help="Wallet that owns the sample listings")
+        parser.add_argument("--issue-carrier-key", action="store_true",
+                            help="Issue a new Demo Carrier partner API key (printed once) for the simulator")
 
     def handle(self, *args, **options):
         owner = options["partner_owner"]
@@ -46,6 +49,17 @@ class Command(BaseCommand):
             partner.settlement_wallet = settlement
             partner.save(update_fields=["owner_wallet", "settlement_wallet"])
         self.stdout.write(f"partner: {partner.company_name} [{partner.status}] owner={owner}")
+
+        if options["issue_carrier_key"]:
+            raw, cred = PartnerApiCredential.generate(partner)
+            self.stdout.write(self.style.SUCCESS(f"new carrier API key (shown once): {raw}"))
+            self.stdout.write(f"credential prefix {cred.prefix}… — run the simulator with:")
+            self.stdout.write(
+                "  VERIPAY_BASE_URL=http://127.0.0.1:8000 "
+                f"DEMO_CARRIER_API_KEY={raw} python3 tools/demo-carrier/simulator.py"
+            )
+        else:
+            self.stdout.write("hint: pass --issue-carrier-key to mint a key for tools/demo-carrier/simulator.py")
 
         items = [
             dict(title="200 units of cotton fabric", kind="goods", category="textiles",

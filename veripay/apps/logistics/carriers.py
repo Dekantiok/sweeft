@@ -3,6 +3,12 @@
 Every piece of data produced by DemoCarrier is simulated and is labelled as
 such in the database (`simulated=True`), API responses and the UI. It is not a
 real carrier integration and never presented as one.
+
+The durable 60-second delivery run lives in the standalone simulator
+(`tools/demo-carrier/simulator.py`), which drives the Partner API exactly like
+a real carrier integration. This adapter owns the state machine: forward-only,
+idempotent (re-posting the current status never duplicates events) so the
+timeline OutLayer validates stays monotonic even if a client retries.
 """
 from __future__ import annotations
 
@@ -18,6 +24,11 @@ HAPPY_FLOW = [
     "OUT_FOR_DELIVERY",
     "DELIVERED",
 ]
+
+FAILURE_STATUSES = {"DELIVERY_FAILED", "RETURNED", "LOST", "CANCELLED"}
+TERMINAL_STATUSES = FAILURE_STATUSES | {"DELIVERED"}
+
+ALL_STATUSES = {choice[0] for choice in Shipment.STATUS_CHOICES}
 
 
 class CarrierAdapter:
@@ -77,7 +88,19 @@ class DemoCarrier(CarrierAdapter):
         }
 
     def advance(self, shipment: Shipment, to_status: str | None = None, note: str = "") -> ShipmentEvent:
-        """Advance the simulated shipment one step (or jump to `to_status`)."""
+        """Advance the simulated shipment one step (or jump to `to_status`).
+
+        Rules (protects the OutLayer-validated timeline):
+
+        - re-posting the current status is a no-op: the existing event is
+          returned and nothing is duplicated;
+        - happy-chain statuses may only move forward;
+        - a failure status may be posted from any non-terminal state and is
+          terminal (nothing may follow it).
+
+        Raises ``ValueError`` for unknown statuses and illegal transitions;
+        callers translate that into HTTP 400.
+        """
         current = shipment.status
         if to_status is None:
             try:
@@ -85,6 +108,28 @@ class DemoCarrier(CarrierAdapter):
             except ValueError:
                 idx = -1
             to_status = HAPPY_FLOW[idx + 1] if idx + 1 < len(HAPPY_FLOW) else current
+        to_status = to_status.strip().upper()
+
+        if to_status not in ALL_STATUSES:
+            raise ValueError(f"unknown status {to_status!r} — one of {sorted(ALL_STATUSES)}")
+
+        # Idempotent re-post: return the existing event, do not duplicate it.
+        if to_status == current:
+            existing = shipment.events.order_by("-created_at").first()
+            if existing and existing.status == current:
+                return existing
+            # Fall through: the status was set without an event ever existing.
+
+        if current in TERMINAL_STATUSES:
+            raise ValueError(f"shipment is already {current} — no further transitions")
+
+        if (
+            to_status not in FAILURE_STATUSES
+            and current in HAPPY_FLOW
+            and HAPPY_FLOW.index(to_status) < HAPPY_FLOW.index(current)
+        ):
+            raise ValueError(f"cannot move backwards: {current} → {to_status}")
+
         shipment.status = to_status
         shipment.save(update_fields=["status", "updated_at"])
         return ShipmentEvent.objects.create(
