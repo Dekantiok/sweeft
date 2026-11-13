@@ -19,6 +19,35 @@ def current_wallet(request) -> str | None:
     return request.session.get("wallet")
 
 
+def _public_key_bytes(public_key: str) -> bytes | None:
+    """Decode common public-key representations to raw bytes for comparison."""
+    from .base58 import b58decode
+
+    try:
+        value = (public_key or "").strip()
+        if value.startswith("ed25519:"):
+            value = value[len("ed25519:") :]
+        if value.startswith("0x"):
+            raw = bytes.fromhex(value[2:])
+        elif len(value) == 64 and all(c in "0123456789abcdefABCDEF" for c in value):
+            raw = bytes.fromhex(value)
+        else:
+            raw = b58decode(value)
+        return raw if len(raw) == 32 else None
+    except Exception:  # noqa: BLE001 - malformed wallet output fails closed
+        return None
+
+
+def canonical_public_key(public_key: str) -> str | None:
+    """Normalize an ed25519 public key to NEAR's `ed25519:<base58>` form."""
+    raw = _public_key_bytes(public_key)
+    if raw is None:
+        return None
+    from .base58 import b58encode
+
+    return "ed25519:" + b58encode(raw)
+
+
 def account_has_public_key(account_id: str, public_key: str) -> bool:
     """Bind a login signature to the claimed NEAR account, not just a keypair.
 
@@ -44,9 +73,12 @@ def account_has_public_key(account_id: str, public_key: str) -> bool:
         return False
     if "error" in result:
         return False
+    submitted = _public_key_bytes(public_key)
+    if submitted is None:
+        return False
     keys = (result.get("result") or {}).get("keys") or []
     return any(
-        k.get("public_key") == public_key
+        _public_key_bytes(k.get("public_key") or "") == submitted
         and (k.get("access_key") or {}).get("permission") == "FullAccess"
         for k in keys
     )
@@ -89,7 +121,7 @@ def verify(request):
 
     body = json.loads(request.body or "{}")
     account_id = (body.get("account_id") or "").strip()
-    public_key = body.get("public_key") or ""
+    public_key = canonical_public_key(body.get("public_key") or "") or (body.get("public_key") or "")
     signature = body.get("signature") or ""
 
     try:

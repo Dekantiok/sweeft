@@ -188,19 +188,42 @@ class VerifyEndpointTests(TestCase):
 
 
 class AccountKeyBindingTests(SimpleTestCase):
+    def test_canonical_public_key_normalizes_wallet_representations(self):
+        from apps.wallets.base58 import b58decode
+        from apps.wallets.views import canonical_public_key
+
+        full = "ed25519:CTGNf5iRs1Uovrq8E11zGT51DZZMVDqqWtEjt4MVPP2Q"
+        for candidate in [
+            full,
+            full.removeprefix("ed25519:"),
+            "0x" + b58decode(full.removeprefix("ed25519:")).hex(),
+        ]:
+            self.assertEqual(canonical_public_key(candidate), full)
+        self.assertIsNone(canonical_public_key("not-a-key"))
+
     def test_matches_live_onchain_key(self):
+        from apps.wallets.base58 import b58decode
         from apps.wallets.views import account_has_public_key
 
+        full = "ed25519:CTGNf5iRs1Uovrq8E11zGT51DZZMVDqqWtEjt4MVPP2Q"
+        raw_public_key = full.removeprefix("ed25519:")
+        from apps.wallets.base58 import b58encode
+
+        other_public_key = "ed25519:" + b58encode(b"\x01" * 32)
         response = {
             "result": {
                 "keys": [
-                    {"public_key": "ed25519:abc", "access_key": {"permission": "FullAccess"}},
-                    {"public_key": "ed25519:def", "access_key": {"permission": "FullAccess"}},
+                    {"public_key": full, "access_key": {"permission": "FullAccess"}},
+                    {"public_key": other_public_key, "access_key": {"permission": "FullAccess"}},
                 ]
             }
         }
         with mock.patch("apps.escrow.near._rpc", return_value=response):
-            self.assertTrue(account_has_public_key("alice.testnet", "ed25519:abc"))
+            self.assertTrue(account_has_public_key("alice.testnet", full))
+            self.assertTrue(account_has_public_key("alice.testnet", raw_public_key))
+            self.assertTrue(
+                account_has_public_key("alice.testnet", "0x" + b58decode(raw_public_key).hex())
+            )
             self.assertFalse(account_has_public_key("alice.testnet", "ed25519:zzz"))
 
     def test_function_call_keys_cannot_log_in(self):
