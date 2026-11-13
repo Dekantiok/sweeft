@@ -26,7 +26,7 @@ use near_sdk::borsh::{BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::json;
-use near_sdk::store::LookupMap;
+use near_sdk::store::{LookupMap, Vector};
 use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise};
 
 
@@ -202,6 +202,7 @@ enum StorageKey {
     BuyerIndex,
     SellerIndex,
     PendingIndex,
+    EscrowIds,
 }
 
 #[near(contract_state)]
@@ -215,7 +216,7 @@ pub struct Sweeft {
     buyer_index: LookupMap<AccountId, Vec<String>>,
     seller_index: LookupMap<AccountId, Vec<String>>,
     pending_index: LookupMap<AccountId, Vec<String>>,
-    next_id: u64,
+    escrow_ids: Vector<String>,
 }
 
 fn sha256_hex(input: &[u8]) -> String {
@@ -266,7 +267,30 @@ impl Sweeft {
             buyer_index: LookupMap::new(StorageKey::BuyerIndex),
             seller_index: LookupMap::new(StorageKey::SellerIndex),
             pending_index: LookupMap::new(StorageKey::PendingIndex),
-            next_id: 1,
+            escrow_ids: Vector::new(StorageKey::EscrowIds),
+        }
+    }
+
+    /// Collision-resistant six-digit escrow code: `SWFT-XXXXXX`. The digest
+    /// mixes block time, caller and the creation counter so codes look random
+    /// and don't repeat for concurrent creators; a collision just re-hashes.
+    fn generate_escrow_id(&self) -> String {
+        let mut attempt: u64 = 0;
+        loop {
+            let seed = format!(
+                "{}:{}:{}:{}",
+                env::block_timestamp(),
+                env::predecessor_account_id(),
+                self.escrow_ids.len(),
+                attempt
+            );
+            let hash = env::sha256(seed.as_bytes());
+            let n = u32::from_le_bytes([hash[0], hash[1], hash[2], hash[3]]) % 1_000_000;
+            let id = format!("SWFT-{:06}", n);
+            if !self.escrows.contains_key(&id) {
+                return id;
+            }
+            attempt += 1;
         }
     }
 
@@ -302,7 +326,7 @@ impl Sweeft {
             env::attached_deposit().as_yoctonear() >= MIN_CREATE_DEPOSIT_YOCTO,
             "attach at least 0.02 NEAR storage deposit"
         );
-        require!(self.next_id <= MAX_ESCROWS, "escrow capacity reached");
+        require!((self.escrow_ids.len() as u64) < MAX_ESCROWS, "escrow capacity reached");
         require!(product_name.len() <= MAX_NAME_LEN, "product_name too long");
         require!(product_desc_hash.len() <= MAX_HASH_LEN, "product_desc_hash too long");
         require!(terms_hash.len() <= MAX_TERMS_LEN, "terms_hash too long");
@@ -342,8 +366,7 @@ impl Sweeft {
         let platform_fee = seller_amount.0 * self.platform_fee_bps as u128 / 10_000;
         let total_amount = seller_amount.0 + logistics_amount.0 + platform_fee;
 
-        let id = format!("VP-{:06}", self.next_id);
-        self.next_id += 1;
+        let id = self.generate_escrow_id();
 
         let tracking_number = tracking_number.filter(|t| !t.trim().is_empty());
         let has_tracking = tracking_number.is_some();
@@ -378,6 +401,7 @@ impl Sweeft {
             last_verification: None,
         };
         self.escrows.insert(id.clone(), escrow);
+        self.escrow_ids.push(id.clone());
         push_index(&mut self.seller_index, &seller, &id);
         bump_reputation(&seller, |_| {});
         if let Some(b) = buyer {
@@ -1422,11 +1446,14 @@ impl Sweeft {
     pub fn escrows_range(&self, start: u64, limit: u64) -> Vec<Escrow> {
         let limit = limit.min(50);
         let mut out = Vec::new();
-        let mut i = start.max(1);
-        while (out.len() as u64) < limit && i < self.next_id {
-            let id = format!("VP-{:06}", i);
-            if let Some(e) = self.escrows.get(&id) {
-                out.push(e.clone());
+        // `start` is 1-based (first escrow = 1). Ids are random, so walk the
+        // creation-order index instead of reconstructing them from a counter.
+        let mut i = start.saturating_sub(1).min(self.escrow_ids.len() as u64) as u32;
+        while (out.len() as u64) < limit && i < self.escrow_ids.len() {
+            if let Some(id) = self.escrow_ids.get(i) {
+                if let Some(e) = self.escrows.get(id) {
+                    out.push(e.clone());
+                }
             }
             i += 1;
         }
@@ -1434,7 +1461,7 @@ impl Sweeft {
     }
 
     pub fn escrow_count(&self) -> u64 {
-        self.next_id - 1
+        self.escrow_ids.len() as u64
     }
 
     pub fn get_config(&self) -> ConfigView {
@@ -1674,7 +1701,7 @@ mod tests {
     fn pool_is_disabled_once_board_is_set() {
         let mut c = setup();
         testing_env!(as_account(accounts(5)).attached_deposit(NearToken::from_millinear(10)).build());
-        c.vote_dispute("VP-000001".to_string(), 100);
+        c.vote_dispute("SWFT-000001".to_string(), 100);
     }
 
     #[test]
@@ -1702,7 +1729,7 @@ mod tests {
     fn owner_cannot_resolve_after_board_is_set() {
         let mut c = setup();
         // Owner tries to decide a dispute — rejected BEFORE any state access.
-        c.resolve_review("VP-000001".to_string(), 50);
+        c.resolve_review("SWFT-000001".to_string(), 50);
     }
 
     #[test]
@@ -1712,7 +1739,7 @@ mod tests {
         testing_env!(as_account(accounts(1)).build());
         // Board passes the resolver gate and fails later on the missing
         // escrow — proving the auth check itself accepts the board.
-        c.resolve_review("VP-000001".to_string(), 50);
+        c.resolve_review("SWFT-000001".to_string(), 50);
     }
 
     #[test]
@@ -1722,6 +1749,24 @@ mod tests {
         let info = c.get_gov_info();
         assert_eq!(info.arbiter, Some(accounts(1)));
         assert_eq!(info.treasury, Some(accounts(2)));
+    }
+
+    #[test]
+    fn escrow_ids_are_random_swft_codes_and_page_in_order() {
+        let mut c = setup();
+        let first = create_native(&mut c);
+        let second = create_native(&mut c);
+        for id in [&first, &second] {
+            assert!(id.starts_with("SWFT-"), "unexpected id: {id}");
+            assert_eq!(id.len(), 11);
+            assert!(id[5..].chars().all(|ch| ch.is_ascii_digit()));
+        }
+        assert_ne!(first, second);
+        let page = c.escrows_range(1, 10);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].id, first);
+        assert_eq!(page[1].id, second);
+        assert_eq!(c.escrow_count(), 2);
     }
 
     fn create_native(c: &mut Sweeft) -> String {
