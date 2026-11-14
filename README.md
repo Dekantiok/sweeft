@@ -415,7 +415,29 @@ tracking number → either run the relayer (`RELAYER_*` in `.env`) or use the es
 TEE request, which needs the Demo Carrier key. The full lifecycle on the live deployment is
 evidenced with transaction hashes in **Verified end-to-end on testnet** above.
 
-## Test suite details
+### Verifying keyed flows without keys
+
+Carrier TEE verification, the settlement relayer and AI co-pilot payments run with project-held
+keys — a judge should not need (or get) them. Three ways to verify them anyway:
+
+1. **Automated suites** — no keys, no funds, no accounts:
+   - `cargo test --test sandbox` deploys the contract to a local chain with its own carrier key and
+     a stub OutLayer runner, then drives TEE verification → logistics payout → buyer confirmation
+     through the **real promise callback**, and asserts the terminal escrow leaves the active index.
+   - `manage.py test` mocks chain reads and signing for the relayer, AI payments, disputes and
+     logistics guards (126 tests).
+2. **Read-only live check** — `python3 manage.py verify_live` re-hashes the deployed contract
+   against the reproducible build, confirms the contract is keyless, checks governance/carrier
+   wiring, and re-reads the lifecycle evidence (TEE verification, payout flags, index pruning,
+   refund/reject/cancel paths, reputation) straight from testnet via public RPC. Exits non-zero if
+   the deployment stops matching the README — safe for judges and CI to run.
+3. **Bring your own keys** — for full manual flows on a deployment of your own: create your own
+   testnet accounts, set `DEMO_CARRIER_PRIVATE_KEY`/`DEMO_CARRIER_PUBKEY`, `RELAYER_*` and
+   `AI_AGENT_*` in `.env` (see `.env.example`), and deploy with `scripts/deploy_testnet.sh`, which
+   registers **your** carrier key on-chain at init. On the hosted demo (Render) the server already
+   holds the project keys, so the same flows are clickable in the UI without entering anything.
+
+### Test suite details
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
   asserting exact balances at each settlement step.
