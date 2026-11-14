@@ -32,6 +32,10 @@ REFUND_ESCROW = "SWFT-984999"      # funded, never dispatched → buyer refund
 REJECT_ESCROW = "SWFT-747532"      # buyer rejected
 CANCEL_ESCROW = "SWFT-054544"      # seller cancelled
 
+# AI co-pilot deployment quoted in the README (scoped function-call key).
+AGENT_ACCOUNT = "agent.steepdata3968.testnet"
+BUDGET_CONTRACT = "budget.steepdata3968.testnet"
+
 
 class Command(BaseCommand):
     help = "Verify the live deployment read-only: code hash, keyless state, governance and lifecycle evidence."
@@ -158,6 +162,49 @@ class Command(BaseCommand):
             completed >= 1,
             f"completed_as_seller={completed} volume={reputation.get('volume')}",
         )
+
+        # 8. AI co-pilot: budget wired to the agent, agent key scoped to `pay` only.
+        budget = getattr(settings, "AI_BUDGET_CONTRACT", "") or BUDGET_CONTRACT
+        agent = getattr(settings, "AI_AGENT_ACCOUNT", "") or AGENT_ACCOUNT
+        try:
+            budget_agent = self._view(budget, "get_agent", {})
+            check(
+                f"co-pilot budget {budget} routes payments to {agent}",
+                budget_agent == agent,
+                f"agent={budget_agent}",
+            )
+            max_payment = self._view(budget, "get_max_payment", {})
+            check(
+                "co-pilot per-payment cap enforced on-chain",
+                bool(max_payment) and int(max_payment) > 0,
+                f"max_payment={max_payment}",
+            )
+            agent_keys = self._call(
+                near._rpc,
+                "query",
+                {
+                    "request_type": "view_access_key_list",
+                    "finality": "final",
+                    "account_id": agent,
+                },
+            )
+            permissions = [
+                k["access_key"]["permission"] for k in (agent_keys.get("result") or {}).get("keys", [])
+            ]
+            scoped = (
+                len(permissions) == 1
+                and isinstance(permissions[0], dict)
+                and "FunctionCall" in permissions[0]
+                and permissions[0]["FunctionCall"].get("receiver_id") == budget
+                and permissions[0]["FunctionCall"].get("method_names") == ["pay"]
+            )
+            check(
+                f"{agent} holds only a pay-scoped function-call key",
+                scoped,
+                f"permissions={permissions}",
+            )
+        except Exception as exc:  # noqa: BLE001 — report, do not crash the run
+            check("AI co-pilot key/budget wiring reachable", False, str(exc)[:160])
 
         count = self._view(contract, "escrow_count", {}) or 0
         self.stdout.write(f"  book: {count} escrows created on this deployment\n")
