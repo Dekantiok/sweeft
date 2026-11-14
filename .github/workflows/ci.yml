@@ -26,6 +26,8 @@ jobs:
       - name: Build contract wasm (sandbox artifact)
         run: cargo build --release --target wasm32-unknown-unknown
         working-directory: contracts/sweeft
+      - name: Build sandbox stub OutLayer runner
+        run: cargo build --release --target wasm32-unknown-unknown --manifest-path contracts/stub-outlayer/Cargo.toml
       - name: Unit + invariant tests (proptest) and sandbox lifecycle (near-workspaces)
         run: cargo test
         working-directory: contracts/sweeft

@@ -1,8 +1,10 @@
 //! Sandbox lifecycle coverage for the SWEEFT escrow contract.
 //!
-//! Build the contract wasm first, then run the test:
-//! `cargo near build non-reproducible-wasm --no-abi && cargo test --test sandbox`
-//! (a plain `cargo build --release --target wasm32-unknown-unknown` also works).
+//! Build both wasm artifacts first, then run the test:
+//! `cargo near build non-reproducible-wasm --no-abi` (or a plain
+//! `cargo build --release --target wasm32-unknown-unknown`) in this crate, and
+//! `cargo build --release --target wasm32-unknown-unknown` in
+//! `../stub-outlayer`; then `cargo test --test sandbox`.
 //! The test deploys the sandbox-only stub OutLayer runner
 //! (`contracts/stub-outlayer`) so `request_delivery_verification` runs its
 //! real promise callback into `on_verification_result` — the same code path the
@@ -15,7 +17,10 @@ const WASM_PATHS: [&str; 2] = [
     "target/near/sweeft.wasm",
     "target/wasm32-unknown-unknown/release/sweeft.wasm",
 ];
-const STUB_PROJECT_PATH: &str = "../stub-outlayer";
+const STUB_WASM_PATHS: [&str; 2] = [
+    "../stub-outlayer/target/wasm32-unknown-unknown/release/stub_outlayer.wasm",
+    "../stub-outlayer/target/near/stub_outlayer.wasm",
+];
 
 fn read_contract_wasm() -> Vec<u8> {
     for path in WASM_PATHS {
@@ -24,6 +29,17 @@ fn read_contract_wasm() -> Vec<u8> {
         }
     }
     panic!("build the contract wasm before running sandbox tests (cargo near build non-reproducible-wasm --no-abi)");
+}
+
+fn read_stub_wasm() -> Vec<u8> {
+    for path in STUB_WASM_PATHS {
+        if let Ok(bytes) = std::fs::read(path) {
+            return bytes;
+        }
+    }
+    panic!(
+        "build the stub OutLayer runner first: cargo build --release --target wasm32-unknown-unknown --manifest-path ../stub-outlayer/Cargo.toml"
+    );
 }
 const SELLER_AMOUNT: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR
 const LOGISTICS_AMOUNT: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
@@ -43,7 +59,7 @@ async fn view(
 async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspaces::Result<()> {
     let worker = near_workspaces::sandbox().await?;
     let wasm = read_contract_wasm();
-    let stub_wasm = near_workspaces::compile_project(STUB_PROJECT_PATH).await?;
+    let stub_wasm = read_stub_wasm();
     let contract = worker.dev_deploy(&wasm).await?;
     let outlayer = worker.dev_deploy(&stub_wasm).await?;
     outlayer.call("new").transact().await?.into_result()?;
