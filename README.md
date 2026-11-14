@@ -67,21 +67,26 @@ review board `sweeft-board.testnet` (both keyless/immutable — deploy keys dele
 `steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
 six-digit codes: `SWFT-XXXXXX`.
 
-**`SWFT-014021`** completed the full lifecycle on this deployment — signed-carrier TEE verification
-(the verifier rejects stale payloads via the signed `issued_at`), logistics settled **0.001 NEAR**,
-seller **0.01 NEAR**, platform fee **0.0005 NEAR** to the board treasury, all payout flags true, and
-the terminal escrow left the active account indexes:
+**`SWFT-995659`** — *5kW Hybrid Solar Inverter Kit* — completed the full lifecycle on this
+deployment: signed-carrier TEE verification (the verifier rejects stale payloads via the signed
+`issued_at`), logistics settled **0.001 NEAR**, seller **0.01 NEAR**, platform fee **0.0005 NEAR**
+to the board treasury, all payout flags true, and the terminal escrow left the active account
+indexes:
 
-| `SWFT-014021` step | Tx (nearblocks.io/txns) |
+| `SWFT-995659` step | Tx (nearblocks.io/txns) |
 |---|---|
-| `create_escrow` (seller) | `5EVewLbvRWhbPBiTuJdNtSKtSFoghbh21fuJnsZEMmpV` |
-| `accept_escrow` (buyer) | `9xmM7CUsEH7pp7yvYCQDBs5r51Li7QVhEBJqUNrNrSDc` |
-| `fund_escrow` 0.0115 NEAR | `CbNL6UGpFW8UcBfEYCfZCRsJ7hFfB3Y1WVR3BkAtNy2K` |
-| `assign_logistics_provider` | `9CxXQPvg1Vw19QFAFGvdoxyqmDD5KteMyxU8nPxrn3Xx` |
-| `register_shipment` | `B9k3GiU2kgYxNsmma47yxgr1vaMvXBrTUWBRyuX4X4an` |
-| TEE verification (signed carrier payload) | `9EymTBwkDFNaYuLJB5uKSP2vuXKYmd3Hk5UWeZBL6eRK` |
-| `settle_logistics` | `5DBtyR9fWjkmbVdP63k9EaxxoBYYfWss1wXy26qyQAh6` |
-| `confirm_receipt` (buyer) | `A2bYL9x4RUcg67nkNHLtwQJsRbXxo8XDqmJ3z8gFQDvM` |
+| `create_escrow` (seller) | `GZ2gZtsq87HBvYEiA6Ae5hF3cshw8GhN1hE5XkdbQP9r` |
+| `accept_escrow` (buyer) | `7yq8yCmYiaEFhsSdgT1iiKex4mEbsvV2XoxKqZkL6E1F` |
+| `fund_escrow` 0.0115 NEAR | `9P6hefQ2givF4pss9LGZ8sYrGrdfqgrirBwcCzEGR7NS` |
+| `assign_logistics_provider` | `DZQ51HzwrUJPi9cGT83vFpcmqRVi48eXgzXQmL7ouWKK` |
+| `register_shipment` | `4GYwzNWScpbHnAQLNggp9JCe6rprpnZ7npUHJkyoHaM7` |
+| TEE verification (signed carrier payload) | `7x6oqLfqFNaCWhMjqj1DYSLTCze4cTo5wkVYA7D8iYAQ` |
+| `settle_logistics` | `GVkTMuYRSkQj9bbpNk34hi6kjYNGiN1jzjuauotrRmAV` |
+| `confirm_receipt` (buyer) | `5fzQWyYyTujqGVdaXf4R6jXkcCc6NWcroWrQF76aKWyu` |
+
+Earlier lifecycle `SWFT-014021` proves the same state machine, and the co-pilot payment executed
+during the demo run is `Dt8oBwN3qQ2DWhj2vn8E9SV29yJ63WTCLRo4Pp86XhS4` (`pay` on
+`budget.steepdata3968.testnet`, signed by the pay-scoped agent key).
 
 Terminal-state coverage on the same deployment: `reject_escrow` (`6D7wNr6zGqf3VWbYCua55vyPCw5PnpMm2PaeZ5pSooCz`,
 `SWFT-747532`), `cancel_escrow` (`5VzEoAzUdiDaohS16vCu1sZu1PCNZmyjrY1yHB5jX2kt`, `SWFT-054544`),

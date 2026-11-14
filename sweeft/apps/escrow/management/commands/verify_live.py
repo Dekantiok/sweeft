@@ -27,7 +27,7 @@ from apps.escrow import near
 DEFAULT_WASM_SHA256 = "c4d0b2c4733fc846d69faee2d7b7058a8b612ea14e7212ca2b6d1a39cab3e284"
 
 # Escrows quoted in the README's "Verified end-to-end on testnet" table.
-LIFECYCLE_ESCROW = "SWFT-014021"   # create → TEE → settle → confirm
+LIFECYCLE_ESCROW = "SWFT-995659"   # create → TEE → settle → confirm
 REFUND_ESCROW = "SWFT-984999"      # funded, never dispatched → buyer refund
 REJECT_ESCROW = "SWFT-747532"      # buyer rejected
 CANCEL_ESCROW = "SWFT-054544"      # seller cancelled
