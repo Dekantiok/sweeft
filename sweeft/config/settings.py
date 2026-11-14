@@ -241,6 +241,10 @@ AI_AGENT_PRIVATE_KEY = os.environ.get("AI_AGENT_PRIVATE_KEY", "")
 AI_BUDGET_CONTRACT = os.environ.get("AI_BUDGET_CONTRACT", "budget.steepdata3968.testnet")
 AI_AGENT_MAX_PAYMENT = int(os.environ.get("AI_AGENT_MAX_PAYMENT", "100000000000000000000000"))  # 0.1 NEAR
 AI_AGENT_GRANT = int(os.environ.get("AI_AGENT_GRANT", "250000000000000000000000"))  # 0.25 NEAR (UI)
+# Payment proposals expire (user must re-authorize) and stale `processing`
+# claims are reclaimable, so an old approval can never be replayed later.
+AI_PAYMENT_INTENT_TTL_SECONDS = int(os.environ.get("AI_PAYMENT_INTENT_TTL_SECONDS", "900"))
+AI_PAYMENT_PROCESSING_TIMEOUT_SECONDS = int(os.environ.get("AI_PAYMENT_PROCESSING_TIMEOUT_SECONDS", "120"))
 
 # ---------------------------------------------------------------------------
 # Verification relayer (platform-side automation; permissionless on-chain calls)

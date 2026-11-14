@@ -4,6 +4,7 @@ The state machine guards what OutLayer validates: forward-only monotonic
 timelines, failure statuses only at the end, no duplicate events.
 """
 import json
+from datetime import datetime, timezone
 from unittest import mock
 
 from django.test import TestCase, override_settings
@@ -217,6 +218,9 @@ class WalletShipmentApiTests(TestCase):
         self.assertEqual(statuses[-1], "DELIVERED")
         self.assertIn("PICKED_UP", statuses)
         self.assertEqual(payload["status"], "DELIVERED")
+        # Every event carries its signed epoch-ms ts (v2 canonical message).
+        for event in payload["events"]:
+            self.assertIsInstance(event["ts"], int)
 
     @override_settings(DEMO_CARRIER_PRIVATE_KEY="")
     def test_verification_payload_degrades_cleanly_without_carrier_key(self):
@@ -237,14 +241,88 @@ class CarrierPayloadSigningTests(TestCase):
             "tracking_number": "DEMO-1",
             "shipment_id": "SHIP-SWFT-100001",
             "status": "DELIVERED",
-            "events": [{"status": "PICKED_UP"}, {"status": "DELIVERED"}],
+            "events": [
+                {"status": "PICKED_UP", "ts": 1000},
+                {"status": "DELIVERED", "ts": 2000},
+            ],
         }
 
     def test_canonical_message_matches_verifier_format(self):
+        # v2 authenticates each event's timestamp: `<status>@<ts>` with ts in
+        # epoch milliseconds (see wasi/sweeft-verify/src/main.rs).
         self.assertEqual(
             carriers.canonical_carrier_message(self._payload()),
-            "v1|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|0|PICKED_UP,DELIVERED",
+            "v2|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|0|PICKED_UP@1000,DELIVERED@2000",
         )
+
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
+    def test_sign_carrier_payload_injects_ts_for_every_event(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        payload = carriers.sign_carrier_payload(
+            {
+                "provider_id": "LOG-DEMO-001",
+                "tracking_number": "DEMO-1",
+                "shipment_id": "SHIP-SWFT-100001",
+                "status": "DELIVERED",
+                "events": [
+                    {"status": "PICKED_UP", "timestamp": "2026-01-01T00:00:00+00:00"},
+                    {"status": "DELIVERED", "timestamp": "2026-01-01T00:10:00+00:00"},
+                ],
+            }
+        )
+        self.assertEqual(len(payload["events"]), 2)
+        for event in payload["events"]:
+            self.assertIsInstance(event["ts"], int)
+        first_ms = int(datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        self.assertEqual(payload["events"][0]["ts"], first_ms)
+        self.assertEqual(payload["events"][1]["ts"], first_ms + 10 * 60 * 1000)
+        # The injected ts values are covered by the signed canonical message.
+        self.assertEqual(
+            carriers.canonical_carrier_message(payload),
+            f"v2|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|{payload['issued_at']}"
+            f"|PICKED_UP@{first_ms},DELIVERED@{first_ms + 600_000}",
+        )
+        key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self.SEED_HEX))
+        key.public_key().verify(
+            bytes.fromhex(payload["signature"]),
+            carriers.canonical_carrier_message(payload).encode(),
+        )
+
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
+    def test_changing_event_ts_changes_canonical_message(self):
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        payload = carriers.sign_carrier_payload(self._payload())
+        before = carriers.canonical_carrier_message(payload)
+        payload["events"][0]["ts"] += 1
+        after = carriers.canonical_carrier_message(payload)
+        self.assertNotEqual(before, after)
+        self.assertIn("PICKED_UP@1001", after)
+        key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(self.SEED_HEX))
+        with self.assertRaises(InvalidSignature):
+            key.public_key().verify(bytes.fromhex(payload["signature"]), after.encode())
+
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
+    def test_carrier_tracking_iso_timestamps_are_converted_to_signed_ts(self):
+        shipment = make_shipment(escrow_id="SWFT-100001", tracking_number="DEMO-TS-1")
+        carrier = carriers.get_carrier()
+        for status in HAPPY_FLOW_AFTER_CREATED:
+            carrier.advance(shipment, to_status=status)
+
+        tracking = carrier.tracking("DEMO-TS-1")
+        for event in tracking["events"]:
+            self.assertNotIn("ts", event)  # display data carries ISO timestamps only
+        signed = carriers.sign_carrier_payload(tracking)
+        for event in signed["events"]:
+            self.assertIsInstance(event["ts"], int)
+            parsed = datetime.fromisoformat(event["timestamp"])
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            self.assertEqual(event["ts"], int(parsed.timestamp() * 1000))
+        ts_values = [event["ts"] for event in signed["events"]]
+        self.assertEqual(ts_values, sorted(ts_values))  # TEE requires non-decreasing ts
 
     @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
     def test_signed_payload_verifies_with_pubkey(self):
