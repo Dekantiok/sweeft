@@ -193,8 +193,11 @@ def _reconcile_chain(report: RelayerReport) -> None:
 
     Starts at the stored high-water mark (the lowest creation index that was
     still non-terminal at the last scan) instead of index 1, and advances it
-    after every pass. Escrow indexes only ever grow, so nothing active is
-    skipped; new escrows land past the end and are covered by the next scan.
+    after every pass. New escrows land past the end and are covered by the next
+    scan. Known edge: a completion whose payout promise fails rolls back to a
+    non-terminal state at the same index — the fast loop re-reads app-created
+    escrows every tick, and chain-only escrows are reachable through the escrow
+    page and the permissionless retry methods.
     """
     row = RelayerHeartbeat.objects.filter(pk=1).first()
     start = max(1, int(row.reconcile_start_index if row else 1))
