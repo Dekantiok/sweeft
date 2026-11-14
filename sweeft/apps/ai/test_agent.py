@@ -4,7 +4,7 @@ from unittest import mock
 
 from django.test import TestCase, override_settings
 
-from apps.market.models import Listing, PurchaseRequest
+from apps.market.models import Listing, Offer, PurchaseRequest
 
 from . import agent, tools
 
@@ -113,6 +113,111 @@ class ToolTests(TestCase):
                 tools.prepare_dispute(escrow_id="SWFT-1", wallet="me.testnet", reason="")
 
 
+class OfferToolTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.listing = Listing.objects.create(
+            seller_account="seller.testnet", title="Solar inverter batch", kind="goods", category="energy",
+            description="5kVA units", price_amount="1200000000000000000000000", location="Abuja",
+        )
+
+    def test_search_results_structure(self):
+        with mock.patch("apps.ai.tools._reputation_of", return_value=rep(completed_as_seller=2)):
+            result = tools.search_listings(query="solar")
+        self.assertEqual(result["count"], 1)
+        row = result["results"][0]
+        for key in ("slug", "title", "price_display", "location", "seller", "seller_score", "reasons"):
+            self.assertIn(key, row)
+        self.assertEqual(row["price_display"], "1.2")
+        self.assertEqual(row["location"], "Abuja")
+        self.assertTrue(row["reasons"])
+        self.assertTrue(any("solar" in reason for reason in row["reasons"]))
+        # existing keys are preserved
+        self.assertIn("price", row)
+        self.assertIn("rank", row)
+        self.assertLessEqual(result["count"], 5)
+
+    def test_compare_listings(self):
+        second = Listing.objects.create(
+            seller_account="cheap.testnet", title="Cotton fabric", price_amount="900000000000000000000000", location="Lagos",
+        )
+        with mock.patch(
+            "apps.ai.tools._reputation_of",
+            side_effect=lambda acct: rep(completed_as_seller=5 if acct == "seller.testnet" else 1),
+        ):
+            result = tools.compare_listings(slugs=[self.listing.slug, second.slug])
+        self.assertEqual(result["type"], "comparison")
+        self.assertEqual(len(result["rows"]), 2)
+        self.assertTrue(all("pros" in row for row in result["rows"]))
+        self.assertTrue(all(row["seller_score"] for row in result["rows"]))
+        with self.assertRaises(tools.ToolError):
+            tools.compare_listings(slugs=[self.listing.slug])
+        with self.assertRaises(tools.ToolError):
+            tools.compare_listings(slugs=["no-such-one", "no-such-two"])
+
+    def test_create_offer_ceiling_rejection_and_duplicate(self):
+        with self.assertRaises(tools.ToolError):
+            tools.create_offer(listing_slug=self.listing.slug, amount="2", max_amount="1", wallet="buyer.testnet")
+        card = tools.create_offer(listing_slug=self.listing.slug, amount="1", max_amount="1.5", wallet="buyer.testnet")
+        self.assertEqual(card["type"], "offer")
+        self.assertEqual(card["status"], "proposed")
+        self.assertEqual(card["amount_display"], "1")
+        self.assertEqual(card["max_display"], "1.5")
+        self.assertEqual(card["listing"], self.listing.title)
+        with self.assertRaises(tools.ToolError) as ctx:
+            tools.create_offer(listing_slug=self.listing.slug, amount="1", max_amount="1.5", wallet="buyer.testnet")
+        self.assertIn(str(card["offer_id"]), str(ctx.exception))
+
+    def test_counter_over_ceiling_rejected(self):
+        offer = Offer.objects.create(
+            listing=self.listing,
+            buyer_account="buyer.testnet",
+            seller_account="seller.testnet",
+            amount="900000000000000000000000",
+            max_amount="1000000000000000000000000",
+            status="countered",
+        )
+        with self.assertRaises(tools.ToolError) as ctx:
+            tools.counter_offer(offer_id=offer.id, amount="1.5", wallet="buyer.testnet")
+        self.assertIn("limit reached", str(ctx.exception))
+        card = tools.counter_offer(offer_id=offer.id, amount="1", wallet="buyer.testnet")
+        self.assertEqual(card["status"], "countered")
+        offer.refresh_from_db()
+        self.assertEqual(offer.amount, "1000000000000000000000000")
+        self.assertTrue(any(event["side"] == "buyer" for event in offer.history))
+
+    def test_accept_and_reject_tool_flow(self):
+        offer = Offer.objects.create(
+            listing=self.listing, buyer_account="buyer.testnet", seller_account="seller.testnet",
+            amount="1000000000000000000000000", max_amount="1200000000000000000000000",
+        )
+        card = tools.accept_offer(offer_id=offer.id, wallet="seller.testnet")
+        self.assertEqual(card["status"], "accepted")
+        self.assertTrue(PurchaseRequest.objects.filter(listing=self.listing, buyer_account="buyer.testnet", status="pending").exists())
+        with self.assertRaises(tools.ToolError):
+            tools.accept_offer(offer_id=offer.id, wallet="buyer.testnet")  # nothing left to accept
+
+    def test_trade_status_includes_offers(self):
+        Offer.objects.create(
+            listing=self.listing, buyer_account="buyer.testnet", seller_account="seller.testnet",
+            amount="1000000000000000000000000", max_amount="1200000000000000000000000",
+        )
+        with mock.patch(
+            "apps.ai.tools.near.escrows_for",
+            return_value=[{"id": "SWFT-000001", "state": "Funded", "seller": "seller.testnet", "buyer": "buyer.testnet"}],
+        ):
+            result = tools.get_my_trade_status(wallet="buyer.testnet")
+        self.assertEqual(result["type"], "trade_status")
+        self.assertEqual(len(result["escrows"]), 1)
+        self.assertEqual(result["escrows"][0]["id"], "SWFT-000001")
+        self.assertEqual(result["escrows"][0]["state"], "Funded")
+        self.assertIn("tracking_number", result["escrows"][0])
+        self.assertEqual(len(result["offers"]), 1)
+        self.assertEqual(result["offers"][0]["status"], "proposed")
+        self.assertEqual(result["offers"][0]["side"], "buyer")
+        self.assertEqual(result["open_escrows"], ["SWFT-000001"])
+
+
 class KeywordRouteTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -149,6 +254,49 @@ class KeywordRouteTests(TestCase):
         with mock.patch("apps.ai.tools._reputation_of", return_value=rep(completed_as_seller=2)):
             result = agent.keyword_route("what is the score for seller.steepdata3968.testnet", "buyer.testnet")
         self.assertIn("completed sales", result["reply"])
+
+    @override_settings(AI_PROVIDER="echo")
+    def test_search_route_returns_search_card(self):
+        with mock.patch("apps.ai.tools._reputation_of", return_value=rep()):
+            result = agent.keyword_route("find solar inverter", "buyer.testnet")
+        self.assertTrue(result["cards"], result["reply"])
+        self.assertEqual(result["cards"][0]["kind"], "search_results")
+        self.assertTrue(result["cards"][0]["results"])
+
+    @override_settings(AI_PROVIDER="echo")
+    def test_offer_route_creates_offer(self):
+        result = agent.keyword_route("offer 1 for solar-inverter-batch max 1.5", "buyer.testnet")
+        self.assertTrue(result["cards"], result["reply"])
+        card = result["cards"][0]
+        self.assertEqual(card["kind"], "offer")
+        self.assertEqual(card["amount_display"], "1")
+        self.assertEqual(card["max_display"], "1.5")
+        self.assertEqual(card["status"], "proposed")
+
+    @override_settings(AI_PROVIDER="echo")
+    def test_counter_route_uses_latest_countered_offer(self):
+        listing = Listing.objects.get(slug="solar-inverter-batch")
+        offer = Offer.objects.create(
+            listing=listing, buyer_account="buyer.testnet", seller_account="seller.testnet",
+            amount="1100000000000000000000000", max_amount="1200000000000000000000000", status="countered",
+        )
+        result = agent.keyword_route("counter 1", "buyer.testnet")
+        self.assertEqual(result["cards"][0]["kind"], "offer")
+        offer.refresh_from_db()
+        self.assertEqual(offer.amount, "1000000000000000000000000")
+        self.assertEqual(offer.status, "countered")
+
+    @override_settings(AI_PROVIDER="echo")
+    def test_status_route_includes_offers(self):
+        listing = Listing.objects.get(slug="solar-inverter-batch")
+        Offer.objects.create(
+            listing=listing, buyer_account="buyer.testnet", seller_account="seller.testnet",
+            amount="1000000000000000000000000", max_amount="1200000000000000000000000",
+        )
+        with mock.patch("apps.ai.tools.near.escrows_for", return_value=[]):
+            result = agent.keyword_route("where is my order", "buyer.testnet")
+        self.assertEqual(result["cards"][0]["kind"], "trade_status")
+        self.assertEqual(len(result["cards"][0]["offers"]), 1)
 
 
 class PaymentToolTests(TestCase):

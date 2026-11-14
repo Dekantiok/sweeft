@@ -66,16 +66,21 @@ def send_near_from(*, signer: str, private_key: str, receiver: str, amount_yocto
     return transfer_near_as(signer=signer, private_key=private_key, receiver=receiver, amount_yocto=amount_yocto)
 
 
-def transfer_from_allowance(*, owner: str, receiver: str, amount: int, memo: str | None = None) -> dict:
+def transfer_from_allowance(
+    *, owner: str, receiver: str, amount: int, memo: str | None = None, intent_id: str | None = None
+) -> dict:
     """Pay `receiver` `amount` yoctoNEAR from `owner`'s co-pilot budget.
 
-    Kept under the historical function name so API call sites stay stable;
-    this now calls the native NEAR budget contract's agent-only `pay` method.
+    Calls the native NEAR budget contract's agent-only `pay` method. The
+    on-chain `intent_id` makes execution idempotent: a retry with the same id
+    cannot pay twice, while a failed transfer releases the id for a retry.
     The memo remains in the off-chain PaymentIntent audit record.
     """
+    if not intent_id:
+        raise ValueError("intent_id is required for on-chain payment idempotency")
     return sign_and_send(
         method_name="pay",
-        args={"owner": owner, "receiver": receiver, "amount": str(amount)},
+        args={"owner": owner, "receiver": receiver, "amount": str(amount), "intent_id": str(intent_id)},
         receiver_id=settings.AI_BUDGET_CONTRACT,
         gas=GAS_FUNCTION_CALL,
         deposit=0,

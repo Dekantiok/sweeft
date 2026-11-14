@@ -152,24 +152,57 @@ def escrow_new(request):
         "provider": "",
     }
     listing_id = request.GET.get("listing")
+    buyer_param = (request.GET.get("buyer") or "").strip()
+    offer_id = (request.GET.get("offer") or "").strip()
+    listing = None
+    agreed_offer = None
     if listing_id:
         from apps.market.models import Listing  # local import avoids app-loading cycle
 
-        listing = Listing.objects.filter(pk=listing_id, seller_account=wallet).first()
-        if listing:
-            prefill = {
-                "counterparty": (request.GET.get("buyer") or "").strip(),
-                "amount": listing.price_display.replace(",", ""),
-                "logistics": "0.01",
-                "deadline_days": str(listing.dispatch_days),
-                "deadline_date": (datetime.now().date() + timedelta(days=listing.dispatch_days)).isoformat(),
-                "inspection_days": str(max(1, listing.inspection_days)),
-                "terms": f"{listing.title} — listed on the SWEEFT marketplace",
-                "product": listing.title,
-                "listing_slug": listing.slug,
-                "listing_title": listing.title,
-                "provider": listing.logistics_provider or "",
-            }
+        # `listing` is normally the numeric pk, but offer acceptance redirects
+        # with the slug — support both.
+        if str(listing_id).isdigit():
+            listing = Listing.objects.filter(pk=int(listing_id), seller_account=wallet).first()
+        if listing is None:
+            listing = Listing.objects.filter(slug=listing_id, seller_account=wallet).first()
+    if offer_id.isdigit():
+        from apps.market.models import Offer
+
+        offer = (
+            Offer.objects.filter(pk=offer_id, seller_account=wallet, status="accepted")
+            .select_related("listing")
+            .first()
+        )
+        # The offer must belong to this seller (checked above), listing and
+        # buyer (when provided); otherwise fall back to the listing price.
+        if offer is not None:
+            listing_matches = listing is None or offer.listing_id == listing.pk
+            buyer_matches = not buyer_param or buyer_param == offer.buyer_account
+            if listing_matches and buyer_matches:
+                listing = offer.listing
+                agreed_offer = offer
+    if listing:
+        if agreed_offer is not None:
+            amount_text = near.format_near_amount(agreed_offer.amount).replace(",", "")
+            terms = f"{listing.title} — accepted offer"
+            counterparty = buyer_param or agreed_offer.buyer_account
+        else:
+            amount_text = listing.price_display.replace(",", "")
+            terms = f"{listing.title} — listed on the SWEEFT marketplace"
+            counterparty = buyer_param
+        prefill = {
+            "counterparty": counterparty,
+            "amount": amount_text,
+            "logistics": "0.01",
+            "deadline_days": str(listing.dispatch_days),
+            "deadline_date": (datetime.now().date() + timedelta(days=listing.dispatch_days)).isoformat(),
+            "inspection_days": str(max(1, listing.inspection_days)),
+            "terms": terms,
+            "product": listing.title,
+            "listing_slug": listing.slug,
+            "listing_title": listing.title,
+            "provider": listing.logistics_provider or "",
+        }
     providers = []
     try:
         from apps.logistics.models import LogisticsPartner

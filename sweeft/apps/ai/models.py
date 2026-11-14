@@ -25,10 +25,20 @@ class PaymentIntent(models.Model):
     tx_hash = models.CharField(max_length=90, blank=True)
     error = models.CharField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Proposals expire so an old approval cannot be replayed later; a stale
+    # `processing` claim can be reclaimed after the timeout.
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
     executed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone
+
+        return bool(self.expires_at and timezone.now() > self.expires_at)
 
     def __str__(self) -> str:  # pragma: no cover - admin convenience
         return f"#{self.pk} {self.wallet} -> {self.to_account} ({self.status})"

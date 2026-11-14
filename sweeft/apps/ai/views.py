@@ -29,6 +29,19 @@ def ai_agent_info(request):
     """Co-pilot payment wallet status for the connected wallet (budget + caps)."""
     wallet = current_wallet(request)
     allowance = tools.allowance_of(wallet) if wallet else 0
+    owner_agent = None
+    revoked = False
+    if wallet:
+        try:
+            owner_agent = near_mod.view_call(
+                settings.AI_BUDGET_CONTRACT, "get_owner_agent", {"owner": wallet}
+            )
+            revoked = bool(
+                near_mod.view_call(settings.AI_BUDGET_CONTRACT, "is_revoked", {"owner": wallet})
+            )
+        except Exception:  # noqa: BLE001 — older budget deployments lack these views
+            owner_agent = None
+            revoked = False
     return JsonResponse(
         {
             "ok": True,
@@ -36,6 +49,8 @@ def ai_agent_info(request):
             "configured": agent_configured() and tools._onchain_agent() == settings.AI_AGENT_ACCOUNT,
             "enabled": bool(settings.AI_AGENT_ENABLED),
             "wallet": wallet,
+            "owner_agent": owner_agent,
+            "revoked": revoked,
             "allowance": str(allowance),
             "allowance_display": near_mod.format_near_amount(allowance),
             "max_payment_display": near_mod.format_near_amount(tools._onchain_max_payment()),
@@ -68,6 +83,24 @@ def ai_payment_execute(request, intent_id: int):
                 "explorer": f"{settings.EXPLORER_URL}/txns/{intent.tx_hash}",
             }
         )
+    if intent.status == PaymentIntent.Status.PROPOSED and intent.is_expired:
+        return JsonResponse(
+            {"ok": False, "error": "this payment proposal expired — ask the co-pilot for a new one"},
+            status=410,
+        )
+    if intent.status == PaymentIntent.Status.PROCESSING:
+        # A crashed/timed-out execution must not strand the intent forever.
+        started = intent.processing_started_at
+        timeout = int(getattr(settings, "AI_PAYMENT_PROCESSING_TIMEOUT_SECONDS", 120))
+        if started and (timezone.now() - started).total_seconds() > timeout:
+            intent.status = PaymentIntent.Status.PROPOSED
+            intent.processing_started_at = None
+            intent.save(update_fields=["status", "processing_started_at"])
+            return JsonResponse(
+                {"ok": False, "error": "previous attempt timed out — review and retry"},
+                status=409,
+            )
+        return JsonResponse({"ok": False, "error": "payment is already being executed"}, status=409)
     units = int(intent.amount)
     from .tools import _onchain_agent, _onchain_max_payment
 
@@ -82,11 +115,13 @@ def ai_payment_execute(request, intent_id: int):
 
     # Claim the intent before signing so double-clicks cannot execute it twice.
     with transaction.atomic():
-        claimed = PaymentIntent.objects.select_for_update().filter(id=intent.id, status=PaymentIntent.Status.PROPOSED).update(status=PaymentIntent.Status.PROCESSING)
+        claimed = PaymentIntent.objects.filter(id=intent.id, status=PaymentIntent.Status.PROPOSED).update(
+            status=PaymentIntent.Status.PROCESSING,
+            processing_started_at=timezone.now(),
+        )
         if claimed != 1:
             return JsonResponse({"ok": False, "error": "payment is already being executed"}, status=409)
         intent.status = PaymentIntent.Status.PROCESSING
-        intent.save(update_fields=["status"])
 
     try:
         result = transfer_from_allowance(
@@ -94,6 +129,7 @@ def ai_payment_execute(request, intent_id: int):
             receiver=intent.to_account,
             amount=units,
             memo=intent.memo or None,
+            intent_id=str(intent.id),
         )
     except Exception as e:  # noqa: BLE001 — surface RPC/signing errors plainly
         intent.status = PaymentIntent.Status.FAILED
