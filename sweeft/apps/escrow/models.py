@@ -177,6 +177,10 @@ class RelayerHeartbeat(models.Model):
     singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     last_tick_at = models.DateTimeField(null=True, blank=True)
     last_reconcile_at = models.DateTimeField(null=True, blank=True)
+    # High-water mark: the lowest creation index (1-based) that was not in a
+    # terminal state at the last reconciliation scan. The 5-minute scan starts
+    # here instead of at index 1.
+    reconcile_start_index = models.PositiveIntegerField(default=1)
     last_error = models.CharField(max_length=500, blank=True, default="")
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -188,7 +192,14 @@ class RelayerHeartbeat(models.Model):
         if reconcile:
             row.last_reconcile_at = now
         row.last_error = (error or "")[:500]
-        row.save(update_fields=["last_tick_at", "last_reconcile_at", "last_error", "updated_at"])
+        row.save(
+            update_fields=[
+                "last_tick_at",
+                "last_reconcile_at",
+                "last_error",
+                "updated_at",
+            ]
+        )
         return row
 
     def __str__(self):

@@ -549,7 +549,10 @@ def reconcile_listing(chain: dict, escrow_id: str) -> None:
       PendingAcceptance            -> listing stays active (offer outstanding)
       Approved                     -> reserved (buyer accepted; funds not in)
       Funded and later             -> sold (the escrow holds the buyer's money)
-      Rejected/Cancelled/Refunded  -> active again (the deal fell through)
+      Rejected/Cancelled           -> active again (the deal fell through)
+      Refunded                     -> active again only when the seller was
+                                      never paid; a partial dispute split that
+                                      paid the seller keeps the listing sold
     """
     from apps.market.models import Listing, PurchaseRequest
 
@@ -575,8 +578,13 @@ def reconcile_listing(chain: dict, escrow_id: str) -> None:
     if listing is None:
         return
 
-    if state in ("Rejected", "Cancelled", "Refunded"):
-        # The deal fell through: reopen the listing for other buyers.
+    # A fully failed deal reopens the listing. `Refunded` alone is not enough:
+    # a dispute split can refund the buyer while still paying the seller — that
+    # deal was substantially fulfilled and must not consume a second buyer.
+    failed_deal = state in ("Rejected", "Cancelled") or (
+        state == "Refunded" and not chain.get("seller_paid")
+    )
+    if failed_deal:
         if listing.status != "active" or listing.sold_escrow_id == escrow_id:
             listing.status = "active"
             listing.sold_escrow_id = ""

@@ -223,6 +223,73 @@ class RelayerPagingTests(TestCase):
         )
 
 
+class RelayerHighWaterTests(TestCase):
+    ROWS = {
+        1: {"id": "SWFT-000001", "state": "Completed"},
+        2: {"id": "SWFT-000002", "state": "Shipped"},
+        3: {"id": "SWFT-000003", "state": "Refunded"},
+    }
+
+    def _dispatch(self, calls):
+        def dispatch(contract, method, args=None, **kwargs):
+            calls.append((method, args))
+            if method == "escrow_count":
+                return 3
+            if method == "escrows_range":
+                start, limit = args["start"], args["limit"]
+                return [self.ROWS[i] for i in range(start, min(start + limit, 4)) if i in self.ROWS]
+            return None
+
+        return dispatch
+
+    @override_settings(SWEEFT_CONTRACT="sweeft-eco.testnet")
+    def test_scan_records_lowest_non_terminal_index(self):
+        from apps.escrow.models import RelayerHeartbeat
+
+        calls = []
+        report = relayer.RelayerReport()
+        with mock.patch("apps.escrow.relayer.near.view_call", side_effect=self._dispatch(calls)):
+            relayer._reconcile_chain(report)
+        self.assertEqual(report.reconciled, 3)
+        row = RelayerHeartbeat.objects.get(pk=1)
+        self.assertEqual(row.reconcile_start_index, 2)  # SWFT-000002 is still active
+
+    @override_settings(SWEEFT_CONTRACT="sweeft-eco.testnet")
+    def test_next_scan_starts_at_the_mark(self):
+        from apps.escrow.models import RelayerHeartbeat
+
+        RelayerHeartbeat.objects.update_or_create(pk=1, defaults={"reconcile_start_index": 2})
+        calls = []
+        with mock.patch("apps.escrow.relayer.near.view_call", side_effect=self._dispatch(calls)):
+            relayer._reconcile_chain(relayer.RelayerReport())
+        self.assertEqual(
+            [args for method, args in calls if method == "escrows_range"][0],
+            {"start": 2, "limit": 50},
+        )
+
+    @override_settings(SWEEFT_CONTRACT="sweeft-eco.testnet")
+    def test_terminal_book_advances_mark_past_the_end(self):
+        from apps.escrow.models import RelayerHeartbeat
+
+        rows = {
+            1: {"id": "SWFT-000001", "state": "Completed"},
+            2: {"id": "SWFT-000002", "state": "Refunded"},
+        }
+
+        def dispatch(contract, method, args=None, **kwargs):
+            if method == "escrow_count":
+                return 2
+            if method == "escrows_range":
+                start, limit = args["start"], args["limit"]
+                return [rows[i] for i in range(start, min(start + limit, 3)) if i in rows]
+            return None
+
+        with mock.patch("apps.escrow.relayer.near.view_call", side_effect=dispatch):
+            relayer._reconcile_chain(relayer.RelayerReport())
+        row = RelayerHeartbeat.objects.get(pk=1)
+        self.assertEqual(row.reconcile_start_index, 3)  # one past the end
+
+
 class RelayerHeartbeatTests(TestCase):
     @override_settings(
         RELAYER_ENABLED=True,

@@ -12,6 +12,7 @@ jobs:
         working-directory: sweeft
       - run: |
           python manage.py check
+          python manage.py makemigrations --check --dry-run
           python manage.py test
         working-directory: sweeft
         env:
@@ -23,6 +24,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - name: Format check
+        run: |
+          cargo fmt --check --manifest-path contracts/sweeft/Cargo.toml
+          cargo fmt --check --manifest-path contracts/stub-outlayer/Cargo.toml
+      - name: Clippy (warnings are visible but allowed for now)
+        run: |
+          cargo clippy --all-targets --manifest-path contracts/sweeft/Cargo.toml
+          cargo clippy --target wasm32-unknown-unknown --manifest-path contracts/stub-outlayer/Cargo.toml
       - name: Build contract wasm (sandbox artifact)
         run: cargo build --release --target wasm32-unknown-unknown
         working-directory: contracts/sweeft
@@ -36,5 +46,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
+        with:
+          components: rustfmt, clippy
+      - run: |
+          cargo fmt --check
+          cargo clippy
+          cargo test
         working-directory: wasi/sweeft-verify

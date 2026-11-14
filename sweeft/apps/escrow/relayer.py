@@ -74,22 +74,22 @@ def _send(method: str, args: dict, deposit: int = 0) -> dict:
     )
 
 
-def _iter_chain_escrows(page: int = 50):
-    """Yield every escrow ever created (oldest first), paging the chain view.
+def _iter_chain_escrows(page: int = 50, start: int = 1):
+    """Yield escrows from creation index `start` (1-based), paging the chain view.
 
     The escrow count bounds the walk, so this scales with the book instead of
     silently stopping at the first page.
     """
     total = int(near.view_call(settings.SWEEFT_CONTRACT, "escrow_count", {}) or 0)
-    start = 1
-    while start <= total:
+    index = max(1, int(start))
+    while index <= total:
         chunk = near.view_call(
-            settings.SWEEFT_CONTRACT, "escrows_range", {"start": start, "limit": page}
+            settings.SWEEFT_CONTRACT, "escrows_range", {"start": index, "limit": page}
         ) or []
         if not chunk:
             break
         yield from chunk
-        start += page
+        index += page
 
 
 def _reconcile_due() -> bool:
@@ -189,15 +189,36 @@ def _fast_tick(report: RelayerReport) -> None:
 
 
 def _reconcile_chain(report: RelayerReport) -> None:
-    """Full paged chain scan: catches escrows the projection doesn't know."""
+    """Full paged chain scan: catches escrows the projection doesn't know.
+
+    Starts at the stored high-water mark (the lowest creation index that was
+    still non-terminal at the last scan) instead of index 1, and advances it
+    after every pass. Escrow indexes only ever grow, so nothing active is
+    skipped; new escrows land past the end and are covered by the next scan.
+    """
+    row = RelayerHeartbeat.objects.filter(pk=1).first()
+    start = max(1, int(row.reconcile_start_index if row else 1))
+
     seen: set[str] = set()
-    for chain in _iter_chain_escrows(50):
+    lowest_active: int | None = None
+    total = start - 1
+    for index, chain in enumerate(_iter_chain_escrows(50, start), start=start):
+        total = index
         escrow_id = chain.get("id")
         if not escrow_id or escrow_id in seen:
             continue
         seen.add(escrow_id)
+        if lowest_active is None and chain.get("state") not in TERMINAL_STATES:
+            lowest_active = index
         _advance_chain_escrow(chain, report)
     report.reconciled = len(seen)
+
+    # Persist the new mark: the lowest non-terminal index, or one past the end
+    # when the whole scanned book is terminal.
+    new_start = lowest_active if lowest_active is not None else total + 1
+    RelayerHeartbeat.objects.update_or_create(
+        pk=1, defaults={"reconcile_start_index": new_start}
+    )
 
 
 def _advance_chain_escrow(chain: dict, report: RelayerReport) -> None:

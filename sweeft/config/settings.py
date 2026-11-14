@@ -156,10 +156,27 @@ CACHES = {
         "LOCATION": "django_cache",
     }
 }
+# Platform logs reach stdout (Render captures it): proxy diagnostics, relayer
+# actions and projection warnings are namespaced under "sweeft".
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"simple": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
+    "loggers": {
+        "sweeft": {
+            "handlers": ["console"],
+            "level": os.environ.get("SWEEFT_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}
 # Number of trusted proxy hops in front of the app (Render = 1). The client IP
 # is read from that position in X-Forwarded-For, never from the client-settable
-# first entry.
+# first entry. Confirm on a live deployment with DJANGO_PROXY_DEBUG=1 (logs the
+# raw headers + resolved IP on each /health/ hit), then unset.
 TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
+DJANGO_PROXY_DEBUG = os.environ.get("DJANGO_PROXY_DEBUG", "0") == "1"
 RATE_LIMIT_CHALLENGE_PER_MIN = int(os.environ.get("RATE_LIMIT_CHALLENGE_PER_MIN", "60"))
 RATE_LIMIT_SYNC_PER_MIN = int(os.environ.get("RATE_LIMIT_SYNC_PER_MIN", "30"))
 RATE_LIMIT_LOGIN_PER_MIN = int(os.environ.get("RATE_LIMIT_LOGIN_PER_MIN", "30"))

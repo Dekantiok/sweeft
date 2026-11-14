@@ -18,7 +18,9 @@ services:
     rootDir: sweeft
     buildCommand: bash build.sh
     startCommand: bash start.sh
-    healthCheckPath: /health/
+    # Platform liveness only — never 503s on relayer staleness. Point external
+    # uptime monitors at /health/ instead (503 = relayer stale, settlements paused).
+    healthCheckPath: /health/live/
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
@@ -72,3 +74,48 @@ services:
         fromDatabase:
           name: sweeft-db
           property: connectionString
+
+  # ---------------------------------------------------------------------------
+  # Optional: dedicated relayer worker (production shape).
+  #
+  # On the free plan, leave this commented — `start.sh` runs the relayer inside
+  # the web service, and an uptime monitor on /health/ keeps it awake and
+  # alerts on staleness. To run settlement independently of web traffic:
+  #   1. uncomment the worker below (background workers have no free compute
+  #      plan; ~$7/month at 0.5 CPU / 512 MB),
+  #   2. set RELAYER_ENABLED=false on the web service,
+  #   3. copy the DEMO_CARRIER_* / OUTLAYER_* / SWEEFT_CONTRACT vars from the
+  #      web service into the worker as needed.
+  # ---------------------------------------------------------------------------
+  # - type: worker
+  #   name: sweeft-relayer
+  #   runtime: python
+  #   plan: starter
+  #   rootDir: sweeft
+  #   buildCommand: bash build.sh
+  #   startCommand: python manage.py run_relayer
+  #   envVars:
+  #     - key: DJANGO_SECRET_KEY
+  #       generateValue: true
+  #     - key: DJANGO_DEBUG
+  #       value: "0"
+  #     - key: NEAR_RPC_URL
+  #       value: "https://test.rpc.fastnear.com"
+  #     - key: SWEEFT_CONTRACT
+  #       value: "sweeft-eco.testnet"
+  #     - key: OUTLAYER_CONTRACT
+  #       value: "outlayer.testnet"
+  #     - key: OUTLAYER_PROJECT
+  #       value: "steepdata3968.testnet/sweeft-verify"
+  #     - key: DEMO_CARRIER_PRIVATE_KEY
+  #       sync: false
+  #     - key: RELAYER_ENABLED
+  #       value: "1"
+  #     - key: RELAYER_ACCOUNT
+  #       value: "relayer.steepdata3968.testnet"
+  #     - key: RELAYER_PRIVATE_KEY
+  #       sync: false
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: sweeft-db
+  #         property: connectionString

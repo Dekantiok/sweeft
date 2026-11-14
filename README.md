@@ -171,6 +171,13 @@ python3 manage.py run_relayer       # loop; or --once for a single pass / cron
 Without it, the escrow page keeps manual fallback buttons (wallet-signed) — the flow degrades
 gracefully. Testnet MVP only: on mainnet the key would live inside a TEE/KMS.
 
+Scheduling: each pass drives a fast loop over non-terminal escrows in the local projection, plus a
+full paged chain reconciliation every `RELAYER_RECONCILE_SECONDS` (default 300). The reconciliation
+stores a **high-water mark** (the lowest creation index still non-terminal) and resumes from there —
+new escrows only ever land past the end, so the scan does not walk the whole book every 5 minutes.
+Every pass writes a heartbeat; `/health/` returns **503** when the relayer is stale or has never
+run, so uptime monitors can alert on paused settlement.
+
 ### Contracts
 
 ```bash
@@ -219,7 +226,17 @@ configured, so the free-plan demo does not require separate paid workers.
 4. Open the service URL — the footer shows the live contract account.
 
 Free-plan notes: the web service spins down when idle (the first request warms it up), including its
-companion automation loops. The free Postgres is fine for the demo. Nothing secret lives in the repo.
+companion automation loops. **Keep settlement running** by pointing an external uptime monitor at
+**`/health/`** every 5 minutes — the ping both prevents spin-down and alerts, because the endpoint
+returns **503** whenever the relayer heartbeat is stale or missing (`/health/live/` is the always-200
+platform liveness probe Render itself checks). On paid plans, uncomment the `sweeft-relayer` worker
+in `render.yaml` (background workers start at $7/month compute) and set `RELAYER_ENABLED=false` on
+the web service, so settlement runs independently of web traffic.
+
+**Confirm the proxy hop count** before trusting client IPs: set `DJANGO_PROXY_DEBUG=1`, hit
+`/health/` once, and read the `proxy-debug …` line in the Render logs (raw `X-Forwarded-For`,
+`REMOTE_ADDR`, resolved client IP). Set `TRUSTED_PROXY_COUNT` to the number of trusted hops you see
+(Render = 1), then unset the flag.
 
 ## Demo workflow
 
@@ -314,7 +331,7 @@ on-chain:
 | Owner could retake dispute power via `set_arbiter(owner)` | `set_arbiter`/`set_treasury` are **bootstrap-only for the owner**; afterwards only the current board/treasury can rotate them. Verified live: owner call reverts. |
 | Double payouts from failed buyer legs / folded logistics | Independent per-leg settlement: the buyer remainder is stored and retried via permissionless `retry_review_buyer_payout`; resolution paths mark folded logistics paid; `settle_logistics` is state-gated; reputation counters are exactly-once and value-filtered. |
 | Storage-drain spam / unbounded input | Creation requires a **0.02 NEAR storage deposit**; string lengths, per-account indexes and pending lists are capped; escrow count is capped; token field is an **allowlist** (native NEAR). |
-| TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline and pickup-before-delivery. |
+| TEE input controlled by caller | **Carrier signatures are mandatory**: the carrier payload must be ed25519-signed by the key registered on-chain (`set_carrier_pubkey`, required at init); the TEE verifier rejects unsigned/invalid payloads (it fails closed when no key is configured). The contract further enforces tracking + carrier-provider identity, and the verifier enforces shipment identity, timeline, pickup-before-delivery and the signed `issued_at` freshness window. |
 | Logistics allocation could strand | Completion (`confirm_receipt` **and** the timeout release) now pays the logistics allocation if still due — requires a recorded provider — then seller, then platform fee, with per-leg rollback. Regression tests cover both completion paths. |
 | Seller could replace the logistics beneficiary after funding | A provider committed at creation can only be confirmed; otherwise the first assignment is final. Replacement and confirmation paths have contract regression coverage. |
 | Failed refunds / premature reputation | Refund callbacks restore the exact prior state; completion and refund reputation move only after their transfers succeed. |
@@ -339,8 +356,9 @@ Residual (disclosed) risks:
 - The arbitration pool has no slashing — which is why it is disabled in favour of the board.
 - OutLayer compute refunds accumulate in the contract unspent: there is deliberately no owner sweep,
   so they are dust on testnet rather than a drain vector.
-- **Signed carrier payloads carry no timestamp/nonce** (no replay window in this demo): production
-  would add a signed `issued_at` + nonce with a replay cache in the verifier.
+- **Carrier-payload replay window**: payloads carry a signed `issued_at` and the verifier rejects
+  stale (and future-dated) reports; the check relies on the **OutLayer runtime's clock**, so it holds
+  only if that host is honest. Payloads are additionally bound to the on-chain shipment id.
 - The pending-invitation index is capped at 10 entries per account; filling a victim's list costs
   ~0.2 NEAR. A production deployment would charge a reclaimable bond instead.
 
