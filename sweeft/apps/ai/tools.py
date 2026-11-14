@@ -184,9 +184,14 @@ def send_purchase_request(*, listing_slug: str, wallet: str, message: str = "") 
     }
 
 
-def _totals_for_listing(listing: Listing, fee_bps: int = 500) -> dict:
+def _totals_for_listing(listing: Listing, fee_bps: int | None = None) -> dict:
     price = int(listing.price_amount)
     logistics = price * 100 // 10_000  # 1% default logistics hint; seller sets the final value
+    if fee_bps is None:
+        try:
+            fee_bps = int((near.get_config_cached() or {}).get("platform_fee_bps", 500))
+        except Exception:  # noqa: BLE001 - the fee shown is derived from config
+            fee_bps = 500
     fee = price * fee_bps // 10_000
     return {
         "seller_amount": str(price),
@@ -263,6 +268,23 @@ def prepare_dispute(*, escrow_id: str, wallet: str, reason: str = "") -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _onchain_max_payment() -> int:
+    """Use the budget contract's cap, falling back to the configured value."""
+    settings_cap = int(getattr(settings, "AI_AGENT_MAX_PAYMENT", 100_000_000_000_000_000_000_000))
+    try:
+        chain_cap = int(near.view_call(settings.AI_BUDGET_CONTRACT, "get_max_payment", {}) or settings_cap)
+        return min(settings_cap, chain_cap) if chain_cap > 0 else settings_cap
+    except Exception:  # noqa: BLE001 - settings remains the fallback
+        return settings_cap
+
+
+def _onchain_agent() -> str:
+    try:
+        return near.view_call(settings.AI_BUDGET_CONTRACT, "get_agent", {}) or getattr(settings, "AI_AGENT_ACCOUNT", "")
+    except Exception:  # noqa: BLE001 - settings remains the fallback
+        return getattr(settings, "AI_AGENT_ACCOUNT", "")
+
+
 def allowance_of(owner: str) -> int:
     """Unspent native NEAR available in the owner's co-pilot budget."""
     if not owner:
@@ -288,7 +310,7 @@ def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
     if units <= 0:
         raise ToolError("amount must be greater than zero")
 
-    cap = int(getattr(settings, "AI_AGENT_MAX_PAYMENT", 100_000_000_000_000_000_000_000))
+    cap = _onchain_max_payment()
     if units > cap:
         raise ToolError(
             f"that is above the co-pilot per-payment limit ({near.format_near_amount(cap)} NEAR). "
@@ -302,7 +324,7 @@ def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
         memo=(memo or "").strip()[:200],
     )
 
-    agent_account = getattr(settings, "AI_AGENT_ACCOUNT", "")
+    agent_account = _onchain_agent()
     allowance = allowance_of(wallet)
     grant = int(getattr(settings, "AI_AGENT_GRANT", 250_000_000_000_000_000_000_000))
     return {
@@ -316,7 +338,9 @@ def prepare_payment(*, to: str, amount, memo: str = "", wallet: str) -> dict:
         "budget_contract": settings.AI_BUDGET_CONTRACT,
         "allowance": str(allowance),
         "allowance_display": near.format_near_amount(allowance),
-        "can_execute": agent_configured() and allowance >= units,
+        "can_execute": agent_configured()
+        and agent_account == getattr(settings, "AI_AGENT_ACCOUNT", "")
+        and allowance >= units,
         "grant_amount": str(grant),
         "grant_display": near.format_near_amount(grant),
         "max_payment_display": near.format_near_amount(cap),

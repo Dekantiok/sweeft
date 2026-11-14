@@ -13,6 +13,7 @@ class PaymentIntent(models.Model):
 
     class Status(models.TextChoices):
         PROPOSED = "proposed", "proposed"
+        PROCESSING = "processing", "processing"
         EXECUTED = "executed", "executed"
         FAILED = "failed", "failed"
 

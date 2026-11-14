@@ -157,6 +157,8 @@ def purchase_request(request, slug: str):
     if not wallet:
         return JsonResponse({"ok": False, "error": "connect your wallet first"}, status=401)
     listing = get_object_or_404(Listing, slug=slug)
+    if listing.status != "active":
+        return JsonResponse({"ok": False, "error": "this listing is no longer active"}, status=400)
     if wallet == listing.seller_account:
         return JsonResponse({"ok": False, "error": "this is your own listing"}, status=400)
     body = json.loads(request.body or "{}")

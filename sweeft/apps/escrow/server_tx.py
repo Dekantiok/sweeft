@@ -100,6 +100,20 @@ def add_full_access_key_action(public: bytes) -> bytes:
     return b"\x05" + b"\x00" + public + struct.pack("<Q", 0) + b"\x01"
 
 
+def _receipt_outcome_error(payload: dict) -> str | None:
+    """Return a failure if any final receipt failed inside the transaction.
+
+    Synchronous contract calls return ``SuccessReceiptId`` while the actual
+    transfer runs in a later receipt, so the top-level status alone can say
+    success even when the payment leg failed and was rolled back.
+    """
+    for receipt in payload.get("receipts_outcome") or []:
+        status = ((receipt.get("outcome") or {}).get("status") or {})
+        if "Failure" in status:
+            return "transaction receipt failed: " + json.dumps(status["Failure"])[:400]
+    return None
+
+
 def _failure_reason(status: dict) -> str:
     try:
         failure = status.get("Failure") or {}
@@ -184,11 +198,12 @@ def send_transaction(
     payload = result["result"]
     status = payload.get("status") or {}
     tx_hash = (payload.get("transaction") or {}).get("hash", "")
-    success = "SuccessValue" in status or "SuccessReceiptId" in status
+    receipt_error = _receipt_outcome_error(payload)
+    success = ("SuccessValue" in status or "SuccessReceiptId" in status) and receipt_error is None
     return {
         "success": success,
         "tx_hash": tx_hash,
-        "error": None if success else _failure_reason(status),
+        "error": None if success else (receipt_error or _failure_reason(status)),
     }
 
 

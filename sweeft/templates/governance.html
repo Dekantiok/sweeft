@@ -136,7 +136,7 @@
       await SweftApp.callContractOn(GOV_DAO, 'add_proposal', {
         proposal: {
           description: `Treasury transfer: ${document.getElementById('tr-amount').value.trim()} NEAR to ${receiver}`,
-          kind: { Transfer: { token_id: '', receiver_id: receiver, amount, msg: null } },
+          kind: { Transfer: { token_id: null, receiver_id: receiver, amount, msg: null } },
         },
       }, GOV_BOND, '150000000000000');
       govStatus('Proposal filed — refreshing…');

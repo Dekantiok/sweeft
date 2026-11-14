@@ -4,6 +4,7 @@ import json
 
 from django.contrib import messages
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
@@ -61,6 +62,19 @@ def partner_register(request):
         messages.success(request, f"Application for {partner.company_name} submitted — an admin will review it.")
         return redirect("partner-portal")
     return render(request, "partner_register.html", {"wallet_account": wallet})
+
+
+@require_POST
+@wallet_required_json
+def api_issue_partner_credential(request, partner_id: int):
+    """Register a Partner API credential for this wallet's active provider."""
+    partner = get_object_or_404(LogisticsPartner, pk=partner_id)
+    if partner.owner_wallet != request.wallet:
+        return JsonResponse({"ok": False, "error": "not your partner profile"}, status=403)
+    if partner.status != "ACTIVE":
+        return JsonResponse({"ok": False, "error": "partner must be ACTIVE before credentials are issued"}, status=400)
+    raw_key, credential = PartnerApiCredential.generate(partner)
+    return JsonResponse({"ok": True, "raw_key": raw_key, "prefix": credential.prefix})
 
 
 def partner_portal(request):
@@ -124,6 +138,11 @@ def api_create_shipment(request):
     created = carrier.create_shipment(escrow_id, body.get("origin", "Lagos"), body.get("destination", "Abuja"))
     tracking = provided or created["tracking_number"]
     provider = LogisticsPartner.objects.filter(settlement_wallet=chain.get("logistics_provider") or "").first()
+    if chain.get("logistics_provider") and not provider:
+        return JsonResponse(
+            {"ok": False, "error": "logistics provider is not an approved ACTIVE partner — shipment would be invisible to the carrier"},
+            status=400,
+        )
     shipment, was_created = Shipment.objects.get_or_create(
         tracking_number=tracking,
         defaults={
@@ -261,6 +280,7 @@ def _api_partner(request):
     return cred.partner if cred else None
 
 
+@csrf_exempt
 @require_GET
 def api_partner_shipments(request):
     """Shipments assigned to this partner.
@@ -299,6 +319,7 @@ def api_partner_shipments(request):
     return JsonResponse({"ok": True, "simulated": True, "shipments": rows})
 
 
+@csrf_exempt
 @require_POST
 def api_partner_event(request, shipment_id: int):
     partner = _api_partner(request)

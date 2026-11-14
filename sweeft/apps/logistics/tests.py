@@ -252,6 +252,6 @@ class CarrierPayloadSigningTests(TestCase):
         )
 
     @override_settings(DEMO_CARRIER_PRIVATE_KEY="")
-    def test_unsigned_without_key_configuration(self):
-        payload = carriers.sign_carrier_payload(self._payload())
-        self.assertNotIn("signature", payload)
+    def test_signing_fails_closed_without_key_configuration(self):
+        with self.assertRaisesMessage(ValueError, "Demo Carrier signing key is not configured"):
+            carriers.sign_carrier_payload(self._payload())

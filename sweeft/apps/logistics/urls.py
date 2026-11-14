@@ -6,6 +6,7 @@ urlpatterns = [
     path("logistics/", views.directory, name="logistics-directory"),
     path("partners/register/", views.partner_register, name="partner-register"),
     path("partners/portal/", views.partner_portal, name="partner-portal"),
+    path("api/v1/partners/<int:partner_id>/credentials/", views.api_issue_partner_credential, name="api-partner-credential-issue"),
     # JSON API (wallet session)
     path("api/v1/shipments/", views.api_create_shipment, name="api-shipment-create"),
     path("api/v1/shipments/by-escrow/<str:escrow_id>/", views.api_shipment_for_escrow, name="api-shipment-for-escrow"),

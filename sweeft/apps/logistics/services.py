@@ -25,15 +25,18 @@ def sync_verification_from_chain(escrow_id: str, tx_hash: str = "", chain: dict 
         chain = near.get_escrow(escrow_id)
     last = (chain or {}).get("last_verification")
     if last:
+        next_status = "VERIFIED" if last.get("verified") else "FAILED"
+        status_changed = vr.status != next_status
         vr.result = last
         vr.tx_hash = tx_hash
-        vr.status = "VERIFIED" if last.get("verified") else "FAILED"
+        vr.status = next_status
         vr.completed_at = vr.completed_at or timezone.now()
         vr.save(update_fields=["result", "tx_hash", "status", "completed_at"])
-        ContractEvent.objects.create(
-            escrow_id=escrow_id,
-            event_type="verification_recorded",
-            tx_hash=vr.tx_hash,
-            payload=last,
-        )
+        if status_changed:
+            ContractEvent.objects.create(
+                escrow_id=escrow_id,
+                event_type="verification_recorded",
+                tx_hash=vr.tx_hash,
+                payload=last,
+            )
     return vr

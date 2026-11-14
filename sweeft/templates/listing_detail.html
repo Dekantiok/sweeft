@@ -53,6 +53,8 @@
       {% elif is_owner %}
         <a href="/market/{{ listing.slug }}/escrow/" class="block text-center w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Create escrow from this listing</a>
         <p class="text-xs text-slate-500 mt-2">You are the seller — this prefills your agreement. You can add the buyer's wallet on the next screen.</p>
+      {% elif listing.status != 'active' %}
+        <div class="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">This listing is {{ listing.get_status_display|lower }} — new purchase requests are closed.</div>
       {% elif my_request %}
         <div class="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3">
           Request sent — the seller will create the escrow and you'll accept + fund it.

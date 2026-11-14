@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import secrets
 
 from django.conf import settings
@@ -15,6 +16,22 @@ from apps.wallets.views import current_wallet
 
 from . import near
 from .models import ContractEvent, EscrowAgreement, EscrowInvitation, SettlementRecord
+
+
+def _wait_for_chain_escrow(escrow_id: str, expected_state: str | None = None, attempts: int = 8, delay: float = 1.5):
+    """Poll the chain after a wallet tx so finality lag doesn't orphan the UI."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            chain = near.get_escrow(escrow_id)
+        except Exception:  # noqa: BLE001 - keep retrying until the deadline
+            chain = None
+        last = chain
+        if chain and (expected_state is None or chain.get("state") == expected_state):
+            return chain
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return last
 
 
 def config_context(request):
@@ -116,7 +133,21 @@ def escrow_new(request):
         return redirect("/?connect=1")
     # 72h default inspection window: silent buyers keep a real review period
     # before the permissionless timeout release can pay the seller.
-    prefill = {"counterparty": "", "amount": "", "deadline_days": "7", "inspection_days": "3", "terms": "", "product": "", "listing_slug": "", "listing_title": "", "provider": ""}
+    from datetime import datetime, timedelta
+
+    prefill = {
+        "counterparty": "",
+        "amount": "",
+        "logistics": "0.01",
+        "deadline_days": "7",
+        "deadline_date": (datetime.now().date() + timedelta(days=7)).isoformat(),
+        "inspection_days": "3",
+        "terms": "",
+        "product": "",
+        "listing_slug": "",
+        "listing_title": "",
+        "provider": "",
+    }
     listing_id = request.GET.get("listing")
     if listing_id:
         from apps.market.models import Listing  # local import avoids app-loading cycle
@@ -126,8 +157,10 @@ def escrow_new(request):
             prefill = {
                 "counterparty": (request.GET.get("buyer") or "").strip(),
                 "amount": listing.price_display.replace(",", ""),
+                "logistics": "0.01",
                 "deadline_days": str(listing.dispatch_days),
-                "inspection_days": str(listing.inspection_days),
+                "deadline_date": (datetime.now().date() + timedelta(days=listing.dispatch_days)).isoformat(),
+                "inspection_days": str(max(1, listing.inspection_days)),
                 "terms": f"{listing.title} — listed on the SWEEFT marketplace",
                 "product": listing.title,
                 "listing_slug": listing.slug,
@@ -174,7 +207,13 @@ def escrow_detail(request, escrow_id: str):
     invitation_link = None
     if agreement and agreement.pk:
         inv = agreement.invitations.filter(status="pending").first()
-        if inv:
+        if (
+            inv
+            and chain
+            and current_wallet(request) == chain.get("seller")
+            and not chain.get("buyer")
+            and chain.get("state") == "PendingAcceptance"
+        ):
             invitation_link = request.build_absolute_uri(f"/invitations/{inv.token}/")
     owner = None
     try:
@@ -234,6 +273,7 @@ def escrow_detail(request, escrow_id: str):
                 "proposals": gov_mod.proposals_for_escrow(escrow_id),
                 "proposal_bond_display": near.format_near_amount(gov_mod.proposal_bond_yocto(policy)),
                 "proposal_bond_yocto": str(gov_mod.proposal_bond_yocto(policy)),
+                "has_active_proposal": any(p.get("status") == "InProgress" for p in gov_mod.proposals_for_escrow(escrow_id)),
                 "is_council": bool(wallet and wallet in (council["members"] or [])),
                 "is_party": bool(wallet and wallet in (chain.get("seller"), chain.get("buyer"))),
             }
@@ -318,7 +358,7 @@ def api_register_agreement(request):
     if not escrow_id:
         return JsonResponse({"ok": False, "error": "escrow_id required"}, status=400)
 
-    chain = near.get_escrow(escrow_id)
+    chain = _wait_for_chain_escrow(escrow_id)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow not found on-chain"}, status=404)
     if chain["seller"] != request.wallet:
@@ -369,10 +409,15 @@ def api_register_agreement(request):
         from apps.market.models import Listing, PurchaseRequest
 
         listing = Listing.objects.filter(slug=listing_slug, seller_account=chain["seller"]).first()
-        if listing:
+        if listing and chain.get("state") in ("Approved", "Funded"):
             listing.status = "sold"
             listing.sold_escrow_id = escrow_id
             listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+        elif listing:
+            # A request still in escrow creation should not close the listing
+            # until the buyer has accepted and the funds can be committed.
+            listing.status = "active"
+            listing.save(update_fields=["status", "updated_at"])
             if chain.get("buyer"):
                 PurchaseRequest.objects.filter(
                     listing=listing, buyer_account=chain["buyer"], status="pending"
@@ -409,6 +454,7 @@ def api_agreement(request, escrow_id: str):
 
 
 @require_POST
+@wallet_required_json
 def api_sync_agreement(request, escrow_id: str):
     """Re-read chain state into the projection; record settlement rows."""
     from apps.wallets import ratelimit
@@ -416,8 +462,6 @@ def api_sync_agreement(request, escrow_id: str):
     if not ratelimit.allow(f"sync:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_SYNC_PER_MIN):
         return JsonResponse({"ok": False, "error": "too many sync requests — slow down"}, status=429)
     agreement = EscrowAgreement.objects.filter(escrow_id=escrow_id).first()
-    if not agreement:
-        return JsonResponse({"ok": False, "error": "unknown escrow"}, status=404)
     try:
         chain = near.get_escrow(escrow_id)
     except Exception as e:  # noqa: BLE001
@@ -425,6 +469,21 @@ def api_sync_agreement(request, escrow_id: str):
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow missing on-chain"}, status=404)
 
+    if agreement is None:
+        agreement = EscrowAgreement(
+            escrow_id=escrow_id,
+            seller_account=chain["seller"],
+            buyer_account=chain.get("buyer") or "",
+            product_name=chain.get("product_name") or "(created outside the web app)",
+            seller_amount=chain["seller_amount"],
+            logistics_amount=chain["logistics_amount"],
+            platform_fee=chain["platform_fee"],
+            total_amount=chain["total_amount"],
+            token_contract=chain["token"],
+            dispatch_deadline_ms=chain["dispatch_deadline_ms"],
+            inspection_period_ms=chain.get("inspection_period_ms", 0),
+            terms_hash=chain.get("terms_hash", ""),
+        )
     agreement.state = chain["state"]
     agreement.buyer_account = chain.get("buyer") or ""
     agreement.last_synced = timezone.now()
@@ -433,6 +492,12 @@ def api_sync_agreement(request, escrow_id: str):
 
     _record_settlement(escrow_id, "logistics", chain.get("logistics_provider"), chain.get("logistics_amount"), chain.get("logistics_paid"))
     _record_settlement(escrow_id, "seller", chain.get("seller"), chain.get("seller_amount"), chain.get("seller_paid"))
+    if chain.get("platform_paid"):
+        try:
+            treasury = (near.view_call(settings.SWEEFT_CONTRACT, "get_gov_info", {}) or {}).get("treasury")
+        except Exception:  # noqa: BLE001 - projection must not break on config read
+            treasury = None
+        _record_settlement(escrow_id, "platform", treasury, chain.get("platform_fee"), True)
     return JsonResponse({"ok": True, "state": chain["state"], "chain": chain})
 
 
@@ -471,7 +536,7 @@ def api_invitation(request, token: str):
 def api_invitation_accept(request, token: str):
     """Mark the invitation accepted after the buyer's on-chain accept_escrow tx."""
     invitation = get_object_or_404(EscrowInvitation, token=token)
-    chain = near.get_escrow(invitation.agreement.escrow_id)
+    chain = _wait_for_chain_escrow(invitation.agreement.escrow_id)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow missing on-chain"}, status=404)
     if chain.get("buyer") != request.wallet:

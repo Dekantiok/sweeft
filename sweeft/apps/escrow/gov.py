@@ -18,6 +18,12 @@ from . import near
 
 
 def dao_account() -> str:
+    try:
+        info = near.view_call(settings.SWEEFT_CONTRACT, "get_gov_info", {}) or {}
+        if info.get("arbiter"):
+            return info["arbiter"]
+    except Exception:  # noqa: BLE001 - settings remain the fallback
+        pass
     return settings.GOVERNANCE_DAO
 
 
@@ -54,7 +60,15 @@ def council_info(policy: dict | None) -> dict:
 
 def fetch_proposals(limit: int = 40) -> list[dict]:
     try:
-        return near.view_call(dao_account(), "get_proposals", {"from_index": 0, "limit": limit}) or []
+        dao = dao_account()
+        start = 0
+        try:
+            last = near.view_call(dao, "get_last_proposal_id", {}) or 0
+            if last > limit:
+                start = last - limit
+        except Exception:  # noqa: BLE001 - the DAO may not expose the counter
+            start = 0
+        return near.view_call(dao, "get_proposals", {"from_index": start, "limit": limit}) or []
     except Exception:  # noqa: BLE001
         return []
 
@@ -111,7 +125,7 @@ def review_proposal_args(escrow_id: str, seller_pct: int) -> dict:
                             "method_name": "resolve_review",
                             "args": base64.b64encode(payload).decode(),
                             "deposit": "0",
-                            "gas": "100000000000000",
+                            "gas": 100_000_000_000_000,
                         }
                     ],
                 }

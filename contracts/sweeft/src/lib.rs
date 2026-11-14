@@ -32,7 +32,7 @@ use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearTok
 
 const MIN_VERIFICATION_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const OUTLAYER_GAS_TGAS: u64 = 100;
-const CALLBACK_GAS_TGAS: u64 = 20;
+const CALLBACK_GAS_TGAS: u64 = 40;
 /// Native NEAR currency marker in `Escrow.token`. It is a valid AccountId so
 /// existing serialized escrows need no migration; legacy NEP-141 escrows keep
 /// using their token contract. New escrows default to this marker in the UI.
@@ -65,6 +65,9 @@ const MIN_INSPECTION_PERIOD_MS: u64 = 3_600_000; // 1 hour
 /// buyer may reclaim the unspent balance after this grace period. Prevents
 /// frozen funds when dispute resolution stalls.
 const LONG_STOP_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MAX_DISPATCH_DELAY_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
+const MAX_INSPECTION_PERIOD_MS: u64 = 14 * 24 * 60 * 60 * 1000; // 14 days
+const VERIFICATION_STALE_MS: u64 = 60 * 60 * 1000; // 1 hour
 /// A dispute cannot lock the buyer's remaining funds indefinitely. If the
 /// board has not resolved it within seven days, the buyer can claim the
 /// remaining balance (less any logistics allocation already paid).
@@ -354,11 +357,22 @@ impl Sweeft {
         }
         if let Some(p) = &logistics_provider {
             require!(p != &seller, "provider must differ from seller");
+            require!(Some(p) != buyer.as_ref(), "provider must differ from buyer");
+            require!(p.as_str() != env::current_account_id(), "provider cannot be this contract");
         }
-        require!(dispatch_deadline_ms > env::block_timestamp() / 1_000_000, "dispatch deadline in the past");
+        let now_ms = env::block_timestamp() / 1_000_000;
+        require!(dispatch_deadline_ms > now_ms, "dispatch deadline in the past");
+        require!(
+            dispatch_deadline_ms <= now_ms.saturating_add(MAX_DISPATCH_DELAY_MS),
+            "dispatch deadline below the 30 day cap"
+        );
         require!(
             inspection_period_ms >= MIN_INSPECTION_PERIOD_MS,
             "inspection period below the 1 hour floor"
+        );
+        require!(
+            inspection_period_ms <= MAX_INSPECTION_PERIOD_MS,
+            "inspection period above the 14 day cap"
         );
         let seller_ids = self.seller_index.get(&seller).cloned().unwrap_or_default();
         require!(seller_ids.len() < MAX_IDS_PER_ACCOUNT, "seller escrow index full");
@@ -405,6 +419,13 @@ impl Sweeft {
             platform_paid: false,
             last_verification: None,
         };
+        if let Some(tracking) = escrow.tracking_number.as_ref() {
+            require!(
+                tracking_to_escrow_map().get(tracking).is_none(),
+                "tracking number already in use"
+            );
+            tracking_to_escrow_map().insert(tracking.clone(), id.clone());
+        }
         self.escrows.insert(id.clone(), escrow);
         self.escrow_ids.push(id.clone());
         push_index(&mut self.seller_index, &seller, &id);
@@ -456,16 +477,28 @@ impl Sweeft {
         bump_reputation(&caller, |r| r.requests_rejected += 1);
     }
 
-    /// Seller cancels while still pending acceptance.
+    /// Seller cancels before funding. Approved escrows cannot remain forever:
+    /// after the dispatch deadline the seller may cancel the unpriced deal.
     pub fn cancel_escrow(&mut self, escrow_id: String) {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::PendingAcceptance, "wrong state");
+        require!(
+            escrow.state == EscrowState::PendingAcceptance
+                || escrow.state == EscrowState::Approved,
+            "wrong state"
+        );
         require!(env::predecessor_account_id() == escrow.seller, "only the seller can cancel");
+        if escrow.state == EscrowState::Approved {
+            require!(
+                env::block_timestamp() / 1_000_000 >= escrow.dispatch_deadline_ms,
+                "approved escrow can only cancel after dispatch deadline"
+            );
+        }
         escrow.state = EscrowState::Cancelled;
         let buyer = escrow.buyer.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
         if let Some(b) = buyer {
             pop_index(&mut self.pending_index, &b, &escrow_id);
+            pop_index(&mut self.buyer_index, &b, &escrow_id);
         }
     }
 
@@ -535,6 +568,8 @@ impl Sweeft {
         require!(env::predecessor_account_id() == escrow.seller, "only the seller assigns the provider");
         require!(escrow.state == EscrowState::Funded, "escrow not funded");
         require!(provider != escrow.seller, "provider must differ from seller");
+        require!(escrow.buyer.as_ref() != Some(&provider), "provider must differ from buyer");
+        require!(provider.as_str() != env::current_account_id(), "provider cannot be this contract");
         match &escrow.logistics_provider {
             Some(current) => require!(current == &provider, "logistics provider is fixed before funding"),
             None => escrow.logistics_provider = Some(provider),
@@ -553,8 +588,18 @@ impl Sweeft {
             caller == escrow.seller || Some(&caller) == escrow.logistics_provider.as_ref(),
             "only seller or provider can register the shipment"
         );
-        require!(escrow.state == EscrowState::ShipmentPending, "wrong state");
+        require!(
+            escrow.state == EscrowState::ShipmentPending
+                || (escrow.state == EscrowState::Shipped && !escrow.pickup_verified),
+            "wrong state"
+        );
         require!(tracking_number.len() <= MAX_TRACKING_LEN, "tracking_number too long");
+        if !escrow.shipment_registered {
+            require!(
+                env::block_timestamp() / 1_000_000 <= escrow.dispatch_deadline_ms,
+                "dispatch deadline passed"
+            );
+        }
         // An empty tracking number reuses the one committed at creation (the
         // marketplace flow pre-registers it so OutLayer can track from day one).
         let tracking = if tracking_number.trim().is_empty() {
@@ -565,6 +610,21 @@ impl Sweeft {
         } else {
             tracking_number
         };
+        require!(
+            tracking_to_escrow_map()
+                .get(&tracking)
+                .is_none_or(|owner| owner.as_str() == escrow_id.as_str()),
+            "tracking number already in use"
+        );
+        if let Some(old) = escrow.tracking_number.as_ref() {
+            if old != &tracking {
+                let mut map = tracking_to_escrow_map();
+                if map.get(old).is_some_and(|owner| owner.as_str() == escrow_id.as_str()) {
+                    map.remove(old);
+                }
+            }
+        }
+        tracking_to_escrow_map().insert(tracking.clone(), escrow_id.clone());
         escrow.tracking_number = Some(tracking);
         escrow.shipment_registered = true;
         escrow.state = EscrowState::Shipped;
@@ -584,6 +644,18 @@ impl Sweeft {
     pub fn request_delivery_verification(&mut self, escrow_id: String, carrier_payload: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::Shipped, "escrow not shipped");
+        let now_ms = env::block_timestamp() / 1_000_000;
+        if escrow.verification_pending {
+            let stale = verification_times_map()
+                .get(&escrow_id)
+                .is_some_and(|requested_ms| now_ms >= requested_ms.saturating_add(VERIFICATION_STALE_MS));
+            if stale {
+                // A lost OutLayer callback must not permanently brick the
+                // escrow; allow a fresh signed request after one hour.
+                escrow.verification_pending = false;
+                verification_times_map().remove(&escrow_id);
+            }
+        }
         require!(!escrow.verification_pending, "verification already pending");
         // Carrier authenticity is mandatory end-to-end: the contract refuses
         // to request verification until a carrier signing key is configured,
@@ -625,6 +697,7 @@ impl Sweeft {
 
         escrow.verification_pending = true;
         self.escrows.insert(escrow_id.clone(), escrow);
+        verification_times_map().insert(escrow_id.clone(), env::block_timestamp() / 1_000_000);
 
         Promise::new(self.outlayer_contract.clone())
             .function_call(
@@ -650,6 +723,7 @@ impl Sweeft {
     ) -> Option<VerificationOutcome> {
         let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return None };
         escrow.verification_pending = false;
+        verification_times_map().remove(&escrow_id);
         match result {
             Ok(Some(mut outcome)) => {
                 if outcome.escrow_id != escrow.id {
@@ -921,7 +995,8 @@ impl Sweeft {
         if succeeded {
             match party.as_str() {
                 "due_buyer" => {
-                    review_due_map().insert(escrow_id, U128(0));
+                    review_due_map().insert(escrow_id.clone(), U128(0));
+                    review_due_inflight_map().remove(&escrow_id);
                 }
                 "refund" => {
                     refund_return_state_map().remove(&escrow_id);
@@ -954,6 +1029,11 @@ impl Sweeft {
             "due_buyer" => {
                 // Seller/platform stay marked paid; only the buyer remainder
                 // is outstanding and retryable via `retry_review_buyer_payout`.
+                let inflight = review_due_inflight(&escrow_id);
+                if inflight > 0 {
+                    review_due_map().insert(escrow_id.clone(), U128(inflight));
+                    review_due_inflight_map().remove(&escrow_id);
+                }
                 escrow.state = EscrowState::ReviewRequired;
             }
             _ => {}
@@ -1160,6 +1240,10 @@ impl Sweeft {
             return;
         }
         resolution_logistics_map().remove(&escrow_id);
+        let escrow = self.internal_get(&escrow_id);
+        if escrow.state == EscrowState::Completed {
+            self.record_completion(&escrow);
+        }
         self.pay_review_due(&escrow_id);
     }
 
@@ -1380,6 +1464,7 @@ impl Sweeft {
     pub fn retry_review_buyer_payout(&mut self, escrow_id: String) {
         let escrow = self.internal_get(&escrow_id);
         require!(escrow.seller_paid, "seller leg not settled");
+        require!(review_due_inflight(&escrow_id) == 0, "buyer payout already in flight");
         require!(review_due(&escrow_id) > 0, "no buyer payout due");
         self.pay_review_due(&escrow_id);
     }
@@ -1392,6 +1477,9 @@ impl Sweeft {
             review_due_map().insert(escrow_id.to_string(), U128(0));
             return;
         }
+        require!(review_due_inflight(escrow_id) == 0, "buyer payout already in flight");
+        review_due_map().insert(escrow_id.to_string(), U128(0));
+        review_due_inflight_map().insert(escrow_id.to_string(), U128(due));
         let escrow = self.internal_get(escrow_id);
         let buyer = escrow.buyer.clone().expect("no buyer");
         let promise = payout(escrow.token.clone(), buyer, U128(due));
@@ -1416,6 +1504,7 @@ impl Sweeft {
         require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer can claim this refund");
         require!(!escrow.seller_paid, "seller payout already settled");
         require!(review_due(&escrow_id) == 0, "resolved buyer payout pending retry");
+        require!(review_due_inflight(&escrow_id) == 0, "buyer payout already in flight");
         let now = env::block_timestamp() / 1_000_000;
         let in_review = escrow.state == EscrowState::ReviewRequired;
         let no_dispatch = (escrow.state == EscrowState::Funded
@@ -1583,6 +1672,11 @@ fn pop_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &
 /// Both return a Promise whose result is checked by the same rollback
 /// callbacks, so state transitions and failure handling are identical.
 fn payout(token: AccountId, receiver_id: AccountId, amount: U128) -> Promise {
+    if amount.0 == 0 {
+        // A zero native promise is harmless and avoids FT tokens that reject
+        // empty `ft_transfer` calls while still producing a settled callback.
+        return Promise::new(env::current_account_id()).transfer(NearToken::from_yoctonear(0));
+    }
     if token.as_str() == NATIVE_NEAR_TOKEN {
         return Promise::new(receiver_id).transfer(NearToken::from_yoctonear(amount.0));
     }
@@ -1623,6 +1717,10 @@ fn reputation_map() -> LookupMap<AccountId, Reputation> {
 /// Kept OUT of the contract state struct for the same upgrade-safety reason as
 /// reputation (Borsh is positional): a local collection under its own storage
 /// prefix needs no state migration on upgrade.
+fn verification_times_map() -> LookupMap<String, u64> {
+    LookupMap::new(b"vt1".to_vec())
+}
+
 fn delivery_times_map() -> LookupMap<String, u64> {
     LookupMap::new(b"dt1".to_vec())
 }
@@ -1664,6 +1762,25 @@ fn review_due_map() -> LookupMap<String, U128> {
 
 /// Whether logistics had actually been paid before a resolution attempted to
 /// fold it into the split. Restored when the seller leg fails.
+/// Carrier tracking numbers are globally unique: one parcel cannot settle
+/// two escrows. Corrections before pickup move the reservation of the
+/// corrected escrow rather than allowing a second owner.
+fn tracking_to_escrow_map() -> LookupMap<String, String> {
+    LookupMap::new(b"trk1".to_vec())
+}
+
+fn review_due_inflight(escrow_id: &str) -> u128 {
+    review_due_inflight_map()
+        .get(&escrow_id.to_string())
+        .copied()
+        .unwrap_or(U128(0))
+        .0
+}
+
+fn review_due_inflight_map() -> LookupMap<String, U128> {
+    LookupMap::new(b"rdi1".to_vec())
+}
+
 fn resolution_logistics_map() -> LookupMap<String, bool> {
     LookupMap::new(b"rl1".to_vec())
 }
@@ -1966,6 +2083,122 @@ mod tests {
         testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
         c.refund_buyer(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
+    }
+
+    #[test]
+    #[should_panic(expected = "dispatch deadline below the 30 day cap")]
+    fn creation_rejects_overlong_dispatch_deadline() {
+        let mut c = setup();
+        testing_env!(as_account(accounts(1))
+            .block_timestamp(1)
+            .attached_deposit(NearToken::from_near(1))
+            .build());
+        c.create_escrow(
+            "Deadline cap".to_string(), "hash".to_string(), U128(100), U128(10),
+            Some(accounts(2)), None, "near".parse().unwrap(),
+            1 + MAX_DISPATCH_DELAY_MS + 1, MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(), None, None,
+        );
+    }
+
+    #[test]
+    fn approved_escrow_can_cancel_after_deadline() {
+        let mut c = setup();
+        let id = create_native(&mut c);
+        testing_env!(as_account(accounts(2)).build());
+        c.accept_escrow(id.clone(), None);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.dispatch_deadline_ms = 0;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(1)).build());
+        c.cancel_escrow(id.clone());
+        assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Cancelled);
+    }
+
+    #[test]
+    #[should_panic(expected = "dispatch deadline passed")]
+    fn cannot_register_shipment_after_dispatch_deadline() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        let mut escrow = c.get_escrow(id.clone()).unwrap();
+        escrow.state = EscrowState::ShipmentPending;
+        escrow.shipment_registered = false;
+        escrow.dispatch_deadline_ms = 0;
+        c.escrows.insert(id.clone(), escrow);
+        testing_env!(as_account(accounts(1)).block_timestamp(1_000_000).build());
+        c.register_shipment(id, "LATE-1".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "tracking number already in use")]
+    fn tracking_cannot_be_reused_across_escrows() {
+        let mut c = setup();
+        let _first = create_native_with_provider_and_tracking(
+            &mut c, Some(accounts(4)), Some("DEMO-REUSED-1".to_string())
+        );
+        create_native_with_provider_and_tracking(
+            &mut c, Some(accounts(4)), Some("DEMO-REUSED-1".to_string())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "verification already pending")]
+    fn verification_retry_waits_one_hour() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id.clone(), "{}".to_string());
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000 + VERIFICATION_STALE_MS - 1_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id, "{}".to_string());
+    }
+
+    #[test]
+    fn stale_verification_can_be_retried() {
+        let mut c = setup();
+        let id = shipped_native(&mut c);
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id.clone(), "{}".to_string());
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(40_000_000 + VERIFICATION_STALE_MS * 1_000_000)
+            .attached_deposit(verification_deposit())
+            .build());
+        c.request_delivery_verification(id.clone(), "{}".to_string());
+        assert!(c.get_escrow(id).unwrap().verification_pending);
+    }
+
+    #[test]
+    #[should_panic(expected = "buyer payout already in flight")]
+    fn buyer_due_cannot_be_retried_while_in_flight() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        c.pay_review_due(&id);
+        c.retry_review_buyer_payout(id);
+    }
+
+    #[test]
+    fn failed_buyer_due_returns_to_retryable_due() {
+        let mut c = setup();
+        let id = disputed_native(&mut c);
+        testing_env!(as_account(accounts(1)).block_timestamp(50_000_000).build());
+        c.resolve_review(id.clone(), 60);
+        let due = review_due(&id);
+        c.pay_review_due(&id);
+        assert_eq!(review_due(&id), 0);
+        assert_eq!(review_due_inflight(&id), due);
+        c.handle_payout_result(id.clone(), "due_buyer".to_string(), false);
+        assert_eq!(review_due(&id), due);
+        assert_eq!(review_due_inflight(&id), 0);
     }
 
     #[test]

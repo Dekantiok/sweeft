@@ -43,7 +43,7 @@ def sign_carrier_payload(payload: dict) -> dict:
     """
     seed_hex = getattr(settings, "DEMO_CARRIER_PRIVATE_KEY", "") or ""
     if not seed_hex:
-        return payload
+        raise ValueError("Demo Carrier signing key is not configured — refusing to create an unsigned payload")
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))

@@ -118,7 +118,7 @@
       a.style.color = '#6ee7b7';
       s.appendChild(a);
     }
-    if (window.SweftApp && SweftApp.refreshTokenBalance) SweftApp.refreshBalance().catch(() => {});
+    if (window.SweftApp && SweftApp.refreshBalance) SweftApp.refreshBalance().catch(() => {});
   }
 
   function toUnits(display) {

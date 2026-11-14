@@ -52,6 +52,15 @@ def _side_of(chain: dict, wallet: str) -> str | None:
     return None
 
 
+def _close_dispute_if_terminal(dispute: Dispute, chain: dict | None) -> Dispute:
+    """Close solved case files when the contract leaves review."""
+    if dispute.status == "open" and chain and chain.get("state") != "ReviewRequired":
+        dispute.status = "resolved"
+        dispute.resolved_at = dispute.resolved_at or timezone.now()
+        dispute.save(update_fields=["status", "resolved_at"])
+    return dispute
+
+
 def _dispute_json(d: Dispute) -> dict:
     return {
         "id": d.id,
@@ -116,9 +125,10 @@ def api_add_evidence(request, dispute_id: int):
     dispute = Dispute.objects.filter(pk=dispute_id).first()
     if not dispute:
         return JsonResponse({"ok": False, "error": "unknown dispute"}, status=404)
+    chain = near.get_escrow(dispute.escrow_id)
+    _close_dispute_if_terminal(dispute, chain)
     if dispute.status != "open":
         return JsonResponse({"ok": False, "error": "dispute is already resolved"}, status=400)
-    chain = near.get_escrow(dispute.escrow_id)
     side = _side_of(chain or {}, request.wallet)
     if not side:
         return JsonResponse({"ok": False, "error": "only the buyer or seller can file evidence"}, status=403)
@@ -162,15 +172,13 @@ def api_ai_review(request, dispute_id: int):
 @require_POST
 @_wallet_required
 def api_resolve_dispute(request, dispute_id: int):
-    """Record the platform resolution after the owner's on-chain resolve_review."""
-    owner = _owner_account()
-    if not owner or request.wallet != owner:
-        return JsonResponse({"ok": False, "error": "only the platform owner resolves disputes"}, status=403)
+    """Record the review-board resolution after on-chain resolve_review."""
     dispute = Dispute.objects.filter(pk=dispute_id).first()
     if not dispute:
         return JsonResponse({"ok": False, "error": "unknown dispute"}, status=404)
-
     chain = near.get_escrow(dispute.escrow_id)
+    if not _side_of(chain or {}, request.wallet):
+        return JsonResponse({"ok": False, "error": "only the buyer or seller can record a resolution"}, status=403)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow not found on-chain"}, status=404)
     if chain["state"] in ("ReviewRequired",):
@@ -198,6 +206,7 @@ def api_list_disputes(request):
     rows = []
     for d in qs[:50]:
         chain = near.get_escrow(d.escrow_id) or {}
+        _close_dispute_if_terminal(d, chain)
         if wallet and (wallet in (chain.get("buyer"), chain.get("seller")) or wallet == owner):
             rows.append(_dispute_json(d))
         elif wallet == owner:

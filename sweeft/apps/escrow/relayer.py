@@ -91,6 +91,20 @@ def relayer_tick(limit: int = 20) -> RelayerReport:
         report.errors.append("relayer is not configured")
         return report
 
+    seen_chain: set[str] = set()
+    try:
+        # Scan chain escrows too: manual/direct deliveries may not have a
+        # delivered Shipment projection row, but must still settle/release.
+        chain_escrows = near.view_call(settings.SWEEFT_CONTRACT, "escrows_range", {"start": 1, "limit": 50}) or []
+        for chain in chain_escrows:
+            escrow_id = chain.get("id")
+            if not escrow_id or escrow_id in seen_chain:
+                continue
+            seen_chain.add(escrow_id)
+            _advance_chain_escrow(chain, report)
+    except Exception as e:  # noqa: BLE001 - the shipment loop below still runs
+        report.errors.append(f"chain escrow scan: {e}")
+
     shipments = (
         Shipment.objects.filter(status="DELIVERED")
         .select_related("provider")
@@ -106,6 +120,55 @@ def relayer_tick(limit: int = 20) -> RelayerReport:
         except Exception as e:  # noqa: BLE001 — one bad escrow must not stop the loop
             report.errors.append(f"{shipment.escrow_id}: {e}")
     return report
+
+
+def _advance_chain_escrow(chain: dict, report: RelayerReport) -> None:
+    escrow_id = chain.get("id")
+    if not escrow_id:
+        return
+    state = chain.get("state")
+    shipment = Shipment.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
+
+    if shipment and state == "Shipped" and not chain.get("verification_pending") and not chain.get("delivered_verified"):
+        _advance_one(shipment, report)
+        return
+
+    if chain.get("last_verification"):
+        pending = VerificationRequest.objects.filter(escrow_id=escrow_id, status="PENDING").first()
+        if pending:
+            sync_verification_from_chain(escrow_id, chain=chain)
+            report.synced.append(escrow_id)
+
+    if (
+        chain.get("pickup_verified")
+        and not chain.get("logistics_paid")
+        and state in ("Shipped", "AwaitingBuyerConfirmation")
+    ):
+        result = _send("settle_logistics", {"escrow_id": escrow_id})
+        if result["success"]:
+            report.logistics_paid.append(escrow_id)
+        else:
+            report.errors.append(f"{escrow_id}: logistics settle failed: {result['error']}")
+
+    if (
+        state == "AwaitingBuyerConfirmation"
+        and chain.get("delivered_verified")
+        and not chain.get("seller_paid")
+        and not chain.get("problem_reported")
+    ):
+        delivered_ms = None
+        try:
+            delivered_ms = near.view_call(
+                settings.SWEEFT_CONTRACT, "delivery_time_ms", {"escrow_id": escrow_id}
+            )
+        except Exception:  # noqa: BLE001 - ignore legacy escrows without a clock
+            delivered_ms = None
+        if delivered_ms and _now_ms() >= delivered_ms + int(chain.get("inspection_period_ms") or 0):
+            result = _send("release_after_inspection", {"escrow_id": escrow_id})
+            if result["success"]:
+                report.released.append(escrow_id)
+            else:
+                report.errors.append(f"{escrow_id}: release failed: {result['error']}")
 
 
 def _advance_one(shipment: Shipment, report: RelayerReport) -> None:

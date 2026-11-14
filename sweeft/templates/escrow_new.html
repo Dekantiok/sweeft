@@ -27,11 +27,11 @@
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Logistics fee (NEAR)</label>
-        <input id="f-logistics" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="0.01">
+        <input id="f-logistics" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.logistics }}" placeholder="0.01">
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Dispatch deadline</label>
-        <input id="f-deadline" type="date" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        <input id="f-deadline" type="date" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" value="{{ prefill.deadline_date }}">
       </div>
       <div>
         <label class="block text-sm font-medium mb-1">Buyer inspection period after delivery (days)</label>
@@ -158,6 +158,9 @@
       const deadline = document.getElementById('f-deadline').value;
       if (!deadline) throw new Error('pick a dispatch deadline');
       const inspectionDays = parseInt(document.getElementById('f-inspection').value || '0', 10);
+      if (!Number.isInteger(inspectionDays) || inspectionDays < 1) {
+        throw new Error('inspection period must be at least 1 day for the on-chain minimum');
+      }
       const terms = document.getElementById('f-terms').value.trim();
       const desc = document.getElementById('f-desc').value.trim();
 
@@ -192,7 +195,7 @@
         terms_hash: await sha256Hex(terms),
         logistics_provider: provider || null,
         tracking_number: tracking,
-      });
+      }, '20000000000000000000000');
       let escrowId = res.successValue;
       if (typeof escrowId !== 'string' || !escrowId.startsWith('SWFT-')) {
         throw new Error('could not read escrow id from the transaction result');

@@ -93,6 +93,21 @@
       Approvals execute through the DAO automatically once the threshold is met.
     </p>
 
+    {% if not gov.has_active_proposal %}
+      {% if gov.is_party %}
+        <div class="mt-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label class="block text-xs text-slate-500 mb-1">Seller share of remaining balance (%)</label>
+            <input id="rb-pct" type="number" min="0" max="100" value="{{ dispute.ai_recommendation.pct|default:50 }}" class="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <button onclick="proposeReview()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm font-medium">Escalate to review board</button>
+          <span class="text-xs text-slate-500">One wallet signature · bond returned when the proposal finalises</span>
+        </div>
+      {% else %}
+        <p class="text-sm text-slate-500 mt-2">No active proposal. Only the buyer or seller of this escrow can escalate it to the board.</p>
+      {% endif %}
+    {% endif %}
+
     {% for p in gov.proposals %}
       <div class="mt-3 border border-slate-200 rounded-lg p-3 text-sm">
         <div class="flex items-center gap-2 flex-wrap">
@@ -116,18 +131,6 @@
         {% endif %}
       </div>
     {% empty %}
-      {% if gov.is_party %}
-        <div class="mt-3 flex flex-wrap items-end gap-3">
-          <div>
-            <label class="block text-xs text-slate-500 mb-1">Seller share of remaining balance (%)</label>
-            <input id="rb-pct" type="number" min="0" max="100" value="{{ dispute.ai_recommendation.pct|default:50 }}" class="w-28 border border-slate-300 rounded-lg px-3 py-2 text-sm">
-          </div>
-          <button onclick="proposeReview()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-2 text-sm font-medium">Escalate to review board</button>
-          <span class="text-xs text-slate-500">One wallet signature · bond returned when the proposal finalises</span>
-        </div>
-      {% else %}
-        <p class="text-sm text-slate-500 mt-2">No proposal yet. Only the buyer or seller of this escrow can escalate it to the board.</p>
-      {% endif %}
     {% endfor %}
     <p id="rb-status" class="text-xs text-slate-500 mt-2"></p>
   </section>
@@ -267,7 +270,13 @@
     const isProvider = CHAIN && CHAIN.logistics_provider === WALLET;
 
     if (state === 'PendingAcceptance' && isBuyer) {
-      addButton('Accept agreement', () => doAccept(null));
+      const acceptFn = CHAIN && !CHAIN.buyer
+        ? () => {
+            const secret = prompt('Enter the invitation secret:');
+            if (secret) doAccept(secret);
+          }
+        : () => doAccept(null);
+      addButton('Accept agreement', acceptFn);
     }
     if (state === 'Approved' && isBuyer) {
       addButton('Fund ' + fmtAmount(CHAIN.total_amount), doFund);
@@ -371,7 +380,7 @@
   async function doFund() {
     try {
       status('Funding escrow with native NEAR…');
-      await SweftApp.callContract('fund_escrow', { escrow_id: AGREEMENT.escrow_id }, '100000000000000', CHAIN.total_amount);
+      await SweftApp.callContract('fund_escrow', { escrow_id: AGREEMENT.escrow_id }, CHAIN.total_amount, '100000000000000');
       status('Funded — refreshing…'); setTimeout(() => window.location.reload(), 3000);
     } catch (e) { status(''); alert('Funding failed: ' + e.message); }
   }
@@ -408,9 +417,14 @@
         escrow_id: AGREEMENT.escrow_id,
         carrier_payload: payload.carrier_payload,
       }, '50000000000000000000000');
-      status('Recording result…');
-      await new Promise((r) => setTimeout(r, 4000));
-      await SweftApp.jsonPost('/api/v1/verification/sync/', { escrow_id: AGREEMENT.escrow_id, tx_hash: res.txHash });
+      status('Waiting for the TEE result…');
+      let verified = false;
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const check = await SweftApp.jsonPost('/api/v1/verification/sync/', { escrow_id: AGREEMENT.escrow_id, tx_hash: res.txHash });
+        if (check && check.status === 'VERIFIED') { verified = true; break; }
+      }
+      if (!verified) throw new Error('verification did not complete — try Sync again from the escrow page');
       status('Verified — refreshing…'); setTimeout(() => window.location.reload(), 2000);
     } catch (e) { status(''); alert('Verification failed: ' + e.message); }
   }
@@ -441,7 +455,7 @@
               method_name: 'resolve_review',
               args: btoa(JSON.stringify({ escrow_id: AGREEMENT.escrow_id, seller_pct: pct })),
               deposit: '0',
-              gas: '100000000000000',
+              gas: 100000000000000,
             }],
           },
         },

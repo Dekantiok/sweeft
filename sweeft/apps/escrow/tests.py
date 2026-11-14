@@ -77,19 +77,12 @@ class DisputeApiTests(TestCase):
         d.refresh_from_db()
         self.assertEqual(d.ai_recommendation["pct"], 50)
 
-    def test_owner_only_resolution_recorded(self):
+    def test_party_resolution_recorded_after_onchain_resolution(self):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
             self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
 
-        # a party cannot resolve
-        with mock.patch("apps.escrow.disputes._owner_account", return_value="owner.testnet"):
-            res = self._post(f"/api/v1/disputes/{d.id}/resolve/", {"release_pct": 70})
-        self.assertEqual(res.status_code, 403)
-
-        # the owner records the resolution after the on-chain tx
-        self.session["wallet"] = "owner.testnet"
-        self.session.save()
+        # the buyer records the manual resolution after the on-chain tx
         with mock.patch("apps.escrow.disputes._owner_account", return_value="owner.testnet"), mock.patch(
             "apps.escrow.disputes.near.get_escrow", return_value=chain_state(state="Completed")
         ):
@@ -104,10 +97,8 @@ class DisputeApiTests(TestCase):
         with mock.patch("apps.escrow.disputes.near.get_escrow", return_value=chain_state()):
             self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
-        # …then the owner attempts to record a resolution while the chain
+        # …then the buyer attempts to record a resolution while the chain
         # still shows ReviewRequired: rejected until resolve_review is sent.
-        self.session["wallet"] = "owner.testnet"
-        self.session.save()
         with mock.patch("apps.escrow.disputes._owner_account", return_value="owner.testnet"), mock.patch(
             "apps.escrow.disputes.near.get_escrow", return_value=chain_state()
         ):

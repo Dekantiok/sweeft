@@ -39,7 +39,7 @@
         <div class="text-sm text-slate-500">Connect the wallet this escrow is restricted to (<code>{{ chain.buyer }}</code>) to accept it.</div>
       {% else %}
         <button id="btn-accept" onclick="acceptInvitation()" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 py-2 text-sm font-medium">Accept agreement</button>
-        <button onclick="rejectInvitation()" class="ml-2 border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Decline</button>
+        {% if chain.buyer %}<button onclick="rejectInvitation()" class="ml-2 border border-slate-300 hover:bg-slate-100 rounded-lg px-4 py-2 text-sm">Decline</button>{% endif %}
         <span id="accept-status" class="ml-3 text-sm text-slate-500"></span>
       {% endif %}
     </div>

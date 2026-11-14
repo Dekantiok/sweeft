@@ -20,6 +20,8 @@
             <span class="text-xs rounded-full px-2 py-0.5 {% if p.status == 'ACTIVE' %}bg-emerald-100 text-emerald-800{% else %}bg-slate-100{% endif %}">{{ p.status }}</span>
           </div>
           <div class="text-xs text-slate-500 mt-1">Settlement wallet: <code>{{ p.settlement_wallet }}</code></div>
+          {% if p.status == 'ACTIVE' %}<button class="mt-2 text-xs border border-slate-300 hover:bg-slate-100 rounded px-2 py-1" onclick="issueCredential({{ p.id }})">Issue new API credential</button>{% endif %}
+          <div id="cred-status-{{ p.id }}" class="text-xs mt-2"></div>
           {% if p.review_notes %}<div class="text-xs text-amber-700 mt-1">Reviewer: {{ p.review_notes }}</div>{% endif %}
         </div>
       {% empty %}
@@ -91,6 +93,15 @@
       const entry = PORTAL_SHIPMENTS.find((s) => s.id === id);
       if (entry && res && res.shipment) paint(entry, res.shipment);
     } catch (e) { /* transient */ }
+  }
+
+  async function issueCredential(id) {
+    const el = document.getElementById('cred-status-' + id);
+    try {
+      const res = await SweftApp.jsonPost(`/api/v1/partners/${id}/credentials/`, {});
+      if (!res.ok) throw new Error(res.error);
+      el.innerHTML = `Copy this key once: <code>${res.raw_key}</code>`;
+    } catch (e) { el.textContent = e.message || 'credential issue failed'; }
   }
 
   async function advance(id, status) {

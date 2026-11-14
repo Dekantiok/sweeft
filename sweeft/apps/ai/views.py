@@ -31,13 +31,13 @@ def ai_agent_info(request):
     return JsonResponse(
         {
             "ok": True,
-            "agent_account": settings.AI_AGENT_ACCOUNT,
-            "configured": agent_configured(),
+            "agent_account": tools._onchain_agent(),
+            "configured": agent_configured() and tools._onchain_agent() == settings.AI_AGENT_ACCOUNT,
             "enabled": bool(settings.AI_AGENT_ENABLED),
             "wallet": wallet,
             "allowance": str(allowance),
             "allowance_display": near_mod.format_near_amount(allowance),
-            "max_payment_display": near_mod.format_near_amount(int(settings.AI_AGENT_MAX_PAYMENT)),
+            "max_payment_display": near_mod.format_near_amount(tools._onchain_max_payment()),
             "grant_amount": str(int(settings.AI_AGENT_GRANT)),
             "grant_display": near_mod.format_near_amount(int(settings.AI_AGENT_GRANT)),
             "budget_contract": settings.AI_BUDGET_CONTRACT,
@@ -68,10 +68,24 @@ def ai_payment_execute(request, intent_id: int):
             }
         )
     units = int(intent.amount)
-    if units > int(settings.AI_AGENT_MAX_PAYMENT):
+    from .tools import _onchain_agent, _onchain_max_payment
+
+    if units > int(settings.AI_AGENT_MAX_PAYMENT) or units > _onchain_max_payment():
         return JsonResponse({"ok": False, "error": "above the co-pilot per-payment limit"}, status=400)
+    if _onchain_agent() != settings.AI_AGENT_ACCOUNT:
+        return JsonResponse({"ok": False, "error": "co-pilot agent differs from the on-chain budget agent"}, status=503)
     if not agent_configured():
         return JsonResponse({"ok": False, "error": "co-pilot wallet is not configured on this deployment"}, status=503)
+
+    from django.db import transaction
+
+    # Claim the intent before signing so double-clicks cannot execute it twice.
+    with transaction.atomic():
+        claimed = PaymentIntent.objects.select_for_update().filter(id=intent.id, status=PaymentIntent.Status.PROPOSED).update(status=PaymentIntent.Status.PROCESSING)
+        if claimed != 1:
+            return JsonResponse({"ok": False, "error": "payment is already being executed"}, status=409)
+        intent.status = PaymentIntent.Status.PROCESSING
+        intent.save(update_fields=["status"])
 
     try:
         result = transfer_from_allowance(
@@ -107,7 +121,17 @@ def ai_payment_execute(request, intent_id: int):
     )
 
 
+def _wallet_required(view):
+    def wrapped(request, *args, **kwargs):
+        if not current_wallet(request):
+            return JsonResponse({"ok": False, "error": "connect your wallet to use the trade co-pilot"}, status=401)
+        return view(request, *args, **kwargs)
+
+    return wrapped
+
+
 @require_POST
+@_wallet_required
 def ai_parse(request):
     try:
         body = json.loads(request.body or "{}")
@@ -124,6 +148,7 @@ def ai_parse(request):
 
 
 @require_POST
+@_wallet_required
 def ai_recommend(request):
     try:
         body = json.loads(request.body or "{}")
@@ -140,6 +165,7 @@ def ai_recommend(request):
 
 
 @require_POST
+@_wallet_required
 def ai_listing(request):
     try:
         body = json.loads(request.body or "{}")

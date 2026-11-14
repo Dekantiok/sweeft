@@ -101,15 +101,23 @@
     window.location.reload();
   }
 
-  async function callContract(method, args, deposit = '0', gas = '150000000000000') {
+  function requireSigner() {
     if (!requireWallet()) throw new Error('wallet not connected');
+    const signer = SweftWallet.account();
+    if (signer && state.walletAccount && signer !== state.walletAccount) {
+      throw new Error(`Signing wallet (${signer}) differs from your logged-in account (${state.walletAccount}) — disconnect and reconnect the same wallet`);
+    }
+  }
+
+  async function callContract(method, args, deposit = '0', gas = '150000000000000') {
+    requireSigner();
     const c = await cfg();
     return SweftWallet.callMethod(c.sweeft_contract, method, args, gas, deposit);
   }
 
   // Call any contract (e.g. the governance DAO: add_proposal / act_proposal).
   async function callContractOn(contractId, method, args, deposit = '0', gas = '150000000000000') {
-    if (!requireWallet()) throw new Error('wallet not connected');
+    requireSigner();
     return SweftWallet.callMethod(contractId, method, args, gas, deposit);
   }
 
@@ -161,7 +169,7 @@
   }
 
   async function sendNear(receiverId, amountYocto) {
-    if (!requireWallet()) throw new Error('wallet not connected');
+    requireSigner();
     return SweftWallet.sendNear(receiverId, amountYocto);
   }
 

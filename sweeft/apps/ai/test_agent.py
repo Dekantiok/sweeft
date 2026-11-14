@@ -175,7 +175,9 @@ class PaymentToolTests(TestCase):
     def test_prepare_payment_card_and_intent(self):
         from .models import PaymentIntent
 
-        with mock.patch("apps.ai.tools.allowance_of", return_value=300_000_000_000_000_000_000_000):
+        with mock.patch("apps.ai.tools.allowance_of", return_value=300_000_000_000_000_000_000_000), mock.patch(
+            "apps.ai.tools._onchain_agent", return_value="agent.testnet"
+        ), mock.patch("apps.ai.tools._onchain_max_payment", return_value=100_000_000_000_000_000_000_000):
             card = tools.prepare_payment(to="seller.testnet", amount="0.025", memo="invoice 12", wallet="buyer.testnet")
         self.assertEqual(card["type"], "payment_proposal")
         self.assertEqual(card["amount"], "25000000000000000000000")
@@ -246,7 +248,10 @@ class PaymentEndpointTests(TestCase):
     @override_settings(AI_AGENT_ACCOUNT="agent.testnet", AI_AGENT_PRIVATE_KEY="ed25519:dummy", AI_AGENT_ENABLED=True)
     def test_execute_success_records_tx(self):
         intent = self._intent()
-        with mock.patch(
+        with mock.patch("apps.ai.views.tools._onchain_agent", return_value="agent.testnet"), mock.patch(
+            "apps.ai.views.tools._onchain_max_payment",
+            return_value=100_000_000_000_000_000_000_000,
+        ), mock.patch(
             "apps.ai.views.transfer_from_allowance",
             return_value={"success": True, "tx_hash": "HASH123", "error": None},
         ) as signer:
@@ -267,7 +272,10 @@ class PaymentEndpointTests(TestCase):
     @override_settings(AI_AGENT_ACCOUNT="agent.testnet", AI_AGENT_PRIVATE_KEY="ed25519:dummy", AI_AGENT_ENABLED=True)
     def test_execute_chain_failure_marks_failed(self):
         intent = self._intent()
-        with mock.patch(
+        with mock.patch("apps.ai.views.tools._onchain_agent", return_value="agent.testnet"), mock.patch(
+            "apps.ai.views.tools._onchain_max_payment",
+            return_value=100_000_000_000_000_000_000_000,
+        ), mock.patch(
             "apps.ai.views.transfer_from_allowance",
             return_value={"success": False, "tx_hash": "HASHFAIL", "error": "allowance exceeded"},
         ):

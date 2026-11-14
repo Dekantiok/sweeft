@@ -75,7 +75,7 @@ class PartnerApiCredential(models.Model):
             return None
         hashed = hashlib.sha256(raw_key.encode()).hexdigest()
         return (
-            PartnerApiCredential.objects.filter(hashed_key=hashed, active=True)
+            PartnerApiCredential.objects.filter(hashed_key=hashed, active=True, partner__status="ACTIVE")
             .select_related("partner")
             .first()
         )

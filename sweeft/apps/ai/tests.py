@@ -2,7 +2,7 @@
 import json
 from unittest import mock
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from apps.ai import services
 from apps.ai.providers.base import AIProviderError
@@ -74,7 +74,12 @@ class FallbackTests(SimpleTestCase):
         )
 
 
-class EndpointTests(SimpleTestCase):
+class EndpointTests(TestCase):
+    def setUp(self):
+        self.session = self.client.session
+        self.session["wallet"] = "buyer.testnet"
+        self.session.save()
+
     def test_status_endpoint(self):
         res = self.client.get("/api/v1/ai/status/")
         self.assertEqual(res.status_code, 200)
