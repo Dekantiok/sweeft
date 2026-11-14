@@ -462,7 +462,7 @@ disputes, review-board pages and all read-only views. The carrier TEE request re
 `503 carrier signing is not configured` instead of failing, the relayer reports "not configured",
 and AI co-pilot payments need only your own `AI_AGENT_*` keys if you want them.
 
-On-chain testnet walkthrough (uses your wallet + free testnet NEAR from https://near-faucet.io/):
+On-chain testnet flow (uses your wallet + free testnet NEAR from https://near-faucet.io/):
 `/market/` → request a listing → seller creates the escrow → buyer accepts + funds → register a
 tracking number → either run the relayer (`RELAYER_*` in `.env`) or use the escrow page's manual
 TEE request, which needs the Demo Carrier key. The full lifecycle on the live deployment is
