@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from django.conf import settings
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
@@ -133,10 +134,9 @@ def _wallet_required(view):
 @require_POST
 @_wallet_required
 def ai_parse(request):
-    try:
-        body = json.loads(request.body or "{}")
-    except ValueError:
-        return JsonResponse({"ok": False, "error": "invalid JSON"}, status=400)
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     text = (body.get("text") or "").strip()
     if not text:
         return JsonResponse({"ok": False, "error": "text is required"}, status=400)
@@ -150,10 +150,9 @@ def ai_parse(request):
 @require_POST
 @_wallet_required
 def ai_recommend(request):
-    try:
-        body = json.loads(request.body or "{}")
-    except ValueError:
-        return JsonResponse({"ok": False, "error": "invalid JSON"}, status=400)
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     evidence = (body.get("evidence") or "").strip()
     if not evidence:
         return JsonResponse({"ok": False, "error": "evidence is required"}, status=400)
@@ -167,10 +166,9 @@ def ai_recommend(request):
 @require_POST
 @_wallet_required
 def ai_listing(request):
-    try:
-        body = json.loads(request.body or "{}")
-    except ValueError:
-        return JsonResponse({"ok": False, "error": "invalid JSON"}, status=400)
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     description = (body.get("description") or "").strip()
     if not description:
         return JsonResponse({"ok": False, "error": "description is required"}, status=400)
@@ -190,10 +188,9 @@ def ai_chat(request):
     wallet = current_wallet(request)
     if not wallet:
         return JsonResponse({"ok": False, "error": "connect your wallet to use the trade co-pilot"}, status=401)
-    try:
-        body = json.loads(request.body or "{}")
-    except ValueError:
-        return JsonResponse({"ok": False, "error": "invalid JSON"}, status=400)
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     message = (body.get("message") or "").strip()
     if not message:
         return JsonResponse({"ok": False, "error": "message is required"}, status=400)

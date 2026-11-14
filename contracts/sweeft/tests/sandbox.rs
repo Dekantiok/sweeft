@@ -1,19 +1,35 @@
 //! Sandbox lifecycle coverage for the SWEEFT escrow contract.
 //!
-//! The contract source is built to `target/near/sweeft.wasm` before running:
-//! `cargo near build reproducible-wasm --no-abi && cargo test --test sandbox`.
-//! The sandbox does not run the OutLayer TEE; `on_verification_result` is
-//! invoked as the contract itself, which is exactly the predecessor allowed by
-//! the `#[private]` callback guard.
+//! Build the contract wasm first, then run the test:
+//! `cargo near build non-reproducible-wasm --no-abi && cargo test --test sandbox`
+//! (a plain `cargo build --release --target wasm32-unknown-unknown` also works).
+//! The test deploys the sandbox-only stub OutLayer runner
+//! (`contracts/stub-outlayer`) so `request_delivery_verification` runs its
+//! real promise callback into `on_verification_result` — the same code path the
+//! live OutLayer TEE uses, with no TEE in the loop.
 
-use near_workspaces::types::NearToken;
+use near_workspaces::types::{Gas, NearToken};
 use serde_json::{json, Value};
 
-const WASM_PATH: &str = "target/near/sweeft.wasm";
+const WASM_PATHS: [&str; 2] = [
+    "target/near/sweeft.wasm",
+    "target/wasm32-unknown-unknown/release/sweeft.wasm",
+];
+const STUB_PROJECT_PATH: &str = "../stub-outlayer";
+
+fn read_contract_wasm() -> Vec<u8> {
+    for path in WASM_PATHS {
+        if let Ok(bytes) = std::fs::read(path) {
+            return bytes;
+        }
+    }
+    panic!("build the contract wasm before running sandbox tests (cargo near build non-reproducible-wasm --no-abi)");
+}
 const SELLER_AMOUNT: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR
 const LOGISTICS_AMOUNT: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const PLATFORM_FEE: u128 = 500_000_000_000_000_000_000; // 0.0005 NEAR
 const STORAGE_DEPOSIT: u128 = 20_000_000_000_000_000_000_000; // 0.02 NEAR
+const VERIFICATION_DEPOSIT: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 
 async fn view(
     contract: &near_workspaces::Contract,
@@ -26,9 +42,11 @@ async fn view(
 #[tokio::test]
 async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspaces::Result<()> {
     let worker = near_workspaces::sandbox().await?;
-    let wasm =
-        std::fs::read(WASM_PATH).expect("build the reproducible WASM before running sandbox tests");
+    let wasm = read_contract_wasm();
+    let stub_wasm = near_workspaces::compile_project(STUB_PROJECT_PATH).await?;
     let contract = worker.dev_deploy(&wasm).await?;
+    let outlayer = worker.dev_deploy(&stub_wasm).await?;
+    outlayer.call("new").transact().await?.into_result()?;
     let seller = worker.dev_create_account().await?;
     let buyer = worker.dev_create_account().await?;
     let provider = worker.dev_create_account().await?;
@@ -41,14 +59,14 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
         .call("new")
         .args_json(json!({
             "owner": contract.id().to_string(),
-            "outlayer_contract": "outlayer.testnet",
-            "outlayer_project": "seller.testnet/sweeft-verify",
+            "outlayer_contract": outlayer.id().to_string(),
+            "outlayer_project": "sandbox.testnet/sweeft-verify",
             "platform_fee_bps": 500,
             "arbiter": board.id().to_string(),
             "provider_id": "LOG-DEMO-001",
             "carrier_pubkey": "ab".repeat(32),
         }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -71,7 +89,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
             "tracking_number": "SANDBOX-1",
         }))
         .deposit(NearToken::from_yoctonear(STORAGE_DEPOSIT))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .json()?;
@@ -79,7 +97,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
     buyer
         .call(contract.id(), "accept_escrow")
         .args_json(json!({ "escrow_id": escrow_id, "invite_secret": null }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -88,7 +106,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
         .call(contract.id(), "fund_escrow")
         .args_json(json!({ "escrow_id": escrow_id }))
         .deposit(NearToken::from_yoctonear(total_amount))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -99,7 +117,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
             "escrow_id": escrow_id,
             "provider": provider.id().to_string(),
         }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -107,7 +125,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
     seller
         .call(contract.id(), "register_shipment")
         .args_json(json!({ "escrow_id": escrow_id, "tracking_number": "SANDBOX-1" }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -115,25 +133,24 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
     let shipped = view(&contract, "get_escrow", json!({ "escrow_id": escrow_id })).await?;
     assert_eq!(shipped["state"], Value::String("Shipped".to_string()));
 
-    // Emulate the OutLayer promise callback into the private method.
-    contract
-        .call("on_verification_result")
+    // Drive verification through the real promise chain: the stub OutLayer
+    // runner answers `request_execution`, and the escrow contract's private
+    // `on_verification_result` callback reads the promise result.
+    seller
+        .call(contract.id(), "request_delivery_verification")
         .args_json(json!({
             "escrow_id": escrow_id,
-            "result": {
-                "Ok": {
-                    "Some": {
-                        "escrow_id": escrow_id,
-                        "tracking_number": "SANDBOX-1",
-                        "provider_id": "LOG-DEMO-001",
-                        "reported_status": "DELIVERED",
-                        "verified": true,
-                        "reason": "sandbox verification callback",
-                    }
-                }
-            }
+            "carrier_payload": json!({
+                "provider_id": "LOG-DEMO-001",
+                "tracking_number": "SANDBOX-1",
+                "shipment_id": format!("SHIP-{escrow_id}"),
+                "status": "DELIVERED",
+                "events": [{"status": "PICKED_UP"}, {"status": "DELIVERED"}],
+            })
+            .to_string(),
         }))
-        .max_gas()
+        .deposit(NearToken::from_yoctonear(VERIFICATION_DEPOSIT))
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -145,11 +162,12 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
     );
     assert_eq!(verified["pickup_verified"], Value::Bool(true));
     assert_eq!(verified["delivered_verified"], Value::Bool(true));
+    assert_eq!(verified["verification_pending"], Value::Bool(false));
 
     provider
         .call(contract.id(), "settle_logistics")
         .args_json(json!({ "escrow_id": escrow_id }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;
@@ -157,7 +175,7 @@ async fn full_lifecycle_completed_escrow_leaves_active_index() -> near_workspace
     buyer
         .call(contract.id(), "confirm_receipt")
         .args_json(json!({ "escrow_id": escrow_id }))
-        .max_gas()
+        .gas(Gas::from_tgas(300))
         .transact()
         .await?
         .into_result()?;

@@ -11,7 +11,7 @@ class Listing(models.Model):
     """
 
     KIND_CHOICES = [("goods", "Goods"), ("service", "Service")]
-    STATUS_CHOICES = [("active", "Active"), ("paused", "Paused"), ("sold", "Sold")]
+    STATUS_CHOICES = [("active", "Active"), ("paused", "Paused"), ("reserved", "Reserved"), ("sold", "Sold")]
 
     seller_account = models.CharField(max_length=64, db_index=True)
     title = models.CharField(max_length=200)

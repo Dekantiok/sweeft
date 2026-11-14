@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 
 class EscrowAgreement(models.Model):
@@ -23,6 +24,13 @@ class EscrowAgreement(models.Model):
     ]
 
     escrow_id = models.CharField(max_length=32, unique=True, db_index=True)
+    contract_account = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        default="",
+        help_text="Escrow contract this row belongs to (redeploys don't mix histories)",
+    )
     seller_account = models.CharField(max_length=64, db_index=True)
     buyer_account = models.CharField(max_length=64, blank=True, db_index=True)
     product_name = models.CharField(max_length=200)
@@ -157,3 +165,31 @@ class DisputeEvidence(models.Model):
 
     def __str__(self):
         return f"evidence by {self.author} on {self.dispute.escrow_id}"
+
+
+class RelayerHeartbeat(models.Model):
+    """Liveness marker for the platform relayer (singleton row, pk=1).
+
+    Written after every relayer pass; `/health/` reports the relayer as stale
+    when the last tick is older than `RELAYER_STALE_AFTER_SECONDS`.
+    """
+
+    singleton_id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    last_tick_at = models.DateTimeField(null=True, blank=True)
+    last_reconcile_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def record(cls, *, reconcile: bool = False, error: str = "") -> "RelayerHeartbeat":
+        row, _ = cls.objects.get_or_create(pk=1)
+        now = timezone.now()
+        row.last_tick_at = now
+        if reconcile:
+            row.last_reconcile_at = now
+        row.last_error = (error or "")[:500]
+        row.save(update_fields=["last_tick_at", "last_reconcile_at", "last_error", "updated_at"])
+        return row
+
+    def __str__(self):
+        return f"relayer heartbeat @ {self.last_tick_at}"

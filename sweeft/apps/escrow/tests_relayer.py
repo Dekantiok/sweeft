@@ -49,15 +49,16 @@ def chain(**overrides):
     RELAYER_ENABLED=True,
     RELAYER_ACCOUNT="relayer.testnet",
     RELAYER_PRIVATE_KEY="ed25519:dummy",
-    SWEEFT_CONTRACT="sweeft-final2.testnet",
+    SWEEFT_CONTRACT="sweeft-eco.testnet",
     RELAYER_VERIFICATION_DEPOSIT_YOCTO=10_000_000_000_000_000_000_000,
+    DEMO_CARRIER_PRIVATE_KEY="11" * 32,
 )
 class RelayerTickTests(TestCase):
     def test_requests_verification_for_delivered_shipment(self):
         make_shipment()
         with mock.patch("apps.escrow.relayer.near.get_escrow", return_value=chain()), mock.patch(
-            "apps.escrow.relayer.call_function_as", return_value=OK
-        ) as send:
+            "apps.escrow.relayer.near.view_call", return_value=[]
+        ), mock.patch("apps.escrow.relayer.call_function_as", return_value=OK) as send:
             report = relayer.relayer_tick()
         self.assertEqual(report.requested, ["SWFT-000009"])
         self.assertEqual(send.call_args.kwargs["method_name"], "request_delivery_verification")
@@ -190,6 +191,71 @@ class RelayerTickTests(TestCase):
             report = relayer.relayer_tick()
         self.assertTrue(any("rpc down" in e for e in report.errors))
         send.assert_not_called()
+
+
+class RelayerPagingTests(TestCase):
+    @override_settings(SWEEFT_CONTRACT="sweeft-eco.testnet")
+    def test_iter_chain_escrows_pages_through_the_whole_book(self):
+        calls = []
+
+        def dispatch(contract, method, args=None, **kwargs):
+            calls.append((method, args))
+            if method == "escrow_count":
+                return 120
+            if method == "escrows_range":
+                start, limit = args["start"], args["limit"]
+                return [
+                    {"id": f"SWFT-{i:06d}"}
+                    for i in range(start, min(start + limit, 121))
+                ]
+            return None
+
+        with mock.patch("apps.escrow.relayer.near.view_call", side_effect=dispatch):
+            rows = list(relayer._iter_chain_escrows(50))
+        self.assertEqual(len(rows), 120)
+        self.assertEqual(
+            [args for method, args in calls if method == "escrows_range"],
+            [
+                {"start": 1, "limit": 50},
+                {"start": 51, "limit": 50},
+                {"start": 101, "limit": 50},
+            ],
+        )
+
+
+class RelayerHeartbeatTests(TestCase):
+    @override_settings(
+        RELAYER_ENABLED=True,
+        RELAYER_ACCOUNT="relayer.testnet",
+        RELAYER_PRIVATE_KEY="ed25519:dummy",
+        SWEEFT_CONTRACT="sweeft-eco.testnet",
+        DEMO_CARRIER_PRIVATE_KEY="11" * 32,
+    )
+    def test_tick_records_heartbeat_and_reconciliation(self):
+        from apps.escrow.models import RelayerHeartbeat
+
+        with mock.patch("apps.escrow.relayer.near.get_escrow", return_value=None), mock.patch(
+            "apps.escrow.relayer.near.view_call", return_value=[]
+        ), mock.patch("apps.escrow.relayer.call_function_as", return_value=OK):
+            relayer.relayer_tick()
+        row = RelayerHeartbeat.objects.get(pk=1)
+        self.assertIsNotNone(row.last_tick_at)
+        self.assertIsNotNone(row.last_reconcile_at)  # first pass reconciles
+        self.assertFalse(relayer._reconcile_due())  # just reconciled
+
+    @override_settings(
+        RELAYER_ENABLED=True,
+        RELAYER_ACCOUNT="relayer.testnet",
+        RELAYER_PRIVATE_KEY="ed25519:dummy",
+        SWEEFT_CONTRACT="sweeft-eco.testnet",
+        DEMO_CARRIER_PRIVATE_KEY="11" * 32,
+        RELAYER_RECONCILE_SECONDS=300,
+    )
+    def test_reconcile_gate_waits_between_scans(self):
+        from apps.escrow.models import RelayerHeartbeat
+
+        RelayerHeartbeat.record(reconcile=True)
+        self.assertFalse(relayer._reconcile_due())
 
 
 class RelayerConfigTests(TestCase):

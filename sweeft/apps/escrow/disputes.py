@@ -11,6 +11,7 @@ import hashlib
 import json
 
 from django.conf import settings
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -87,7 +88,9 @@ def _dispute_json(d: Dispute) -> dict:
 @_wallet_required
 def api_open_dispute(request):
     """Record the case file after the on-chain dispute transaction."""
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     escrow_id = (body.get("escrow_id") or "").strip()
     reason = (body.get("reason") or "").strip()
     if not escrow_id or not reason:
@@ -133,7 +136,9 @@ def api_add_evidence(request, dispute_id: int):
     if not side:
         return JsonResponse({"ok": False, "error": "only the buyer or seller can file evidence"}, status=403)
 
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     text = (body.get("text") or "").strip()
     if not text:
         return JsonResponse({"ok": False, "error": "text is required"}, status=400)
@@ -172,44 +177,63 @@ def api_ai_review(request, dispute_id: int):
 @require_POST
 @_wallet_required
 def api_resolve_dispute(request, dispute_id: int):
-    """Record the review-board resolution after on-chain resolve_review."""
+    """Record the review-board resolution after on-chain resolve_review.
+
+    Nothing is trusted from the request body: the outcome is derived from the
+    on-chain escrow. `release_pct` is only stored when the chain unambiguously
+    says so (Completed => the seller took the whole pot).
+    """
     dispute = Dispute.objects.filter(pk=dispute_id).first()
     if not dispute:
         return JsonResponse({"ok": False, "error": "unknown dispute"}, status=404)
     chain = near.get_escrow(dispute.escrow_id)
-    if not _side_of(chain or {}, request.wallet):
-        return JsonResponse({"ok": False, "error": "only the buyer or seller can record a resolution"}, status=403)
     if not chain:
         return JsonResponse({"ok": False, "error": "escrow not found on-chain"}, status=404)
-    if chain["state"] in ("ReviewRequired",):
+    if not _side_of(chain, request.wallet):
+        return JsonResponse({"ok": False, "error": "only the buyer or seller can record a resolution"}, status=403)
+    if chain["state"] == "ReviewRequired":
         return JsonResponse({"ok": False, "error": "resolve on-chain first (resolve_review)"}, status=400)
 
-    body = json.loads(request.body or "{}")
-    pct = body.get("release_pct")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     dispute.status = "resolved"
-    dispute.resolution_pct = int(pct) if pct is not None else None
+    dispute.resolution_pct = 100 if chain["state"] == "Completed" else None
     dispute.resolution_note = (body.get("note") or "")[:2000]
-    dispute.resolution_tx = body.get("tx_hash", "")
+    dispute.resolution_tx = ""
     dispute.resolved_at = timezone.now()
     dispute.save()
     return JsonResponse({"ok": True, "dispute": _dispute_json(dispute)})
 
 
 @require_GET
+@_wallet_required
 def api_list_disputes(request):
-    escrow_id = (request.GET.get("escrow_id") or "").strip()
-    wallet = current_wallet(request)
+    """Case files visible to the signed-in wallet (parties, or owner).
+
+    Rate-limited and RPC-budgeted: chain reads are cached and capped per
+    request, so the endpoint cannot be used to hammer the RPC.
+    """
+    from apps.wallets import ratelimit
+
+    if not ratelimit.allow(f"disputes:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_SYNC_PER_MIN):
+        return JsonResponse({"ok": False, "error": "too many requests — slow down"}, status=429)
+
+    wallet = request.wallet
     owner = _owner_account()
+    escrow_id = (request.GET.get("escrow_id") or "").strip()
     qs = Dispute.objects.all()
     if escrow_id:
         qs = qs.filter(escrow_id=escrow_id)
     rows = []
+    rpc_budget = 20
     for d in qs[:50]:
-        chain = near.get_escrow(d.escrow_id) or {}
+        if rpc_budget <= 0:
+            break
+        rpc_budget -= 1
+        chain = near.get_escrow_cached(d.escrow_id) or {}
         _close_dispute_if_terminal(d, chain)
-        if wallet and (wallet in (chain.get("buyer"), chain.get("seller")) or wallet == owner):
-            rows.append(_dispute_json(d))
-        elif wallet == owner:
+        if wallet == owner or wallet in (chain.get("buyer"), chain.get("seller")):
             rows.append(_dispute_json(d))
     return JsonResponse({"ok": True, "disputes": rows})
 

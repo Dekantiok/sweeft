@@ -4,6 +4,7 @@ import json
 
 from django.conf import settings
 from django.contrib import messages
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -142,7 +143,9 @@ def listing_status(request, slug: str):
     listing = get_object_or_404(Listing, slug=slug)
     if not wallet or wallet != listing.seller_account:
         return JsonResponse({"ok": False, "error": "not your listing"}, status=403)
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     new_status = body.get("status", "")
     if new_status not in dict(Listing.STATUS_CHOICES):
         return JsonResponse({"ok": False, "error": "invalid status"}, status=400)
@@ -161,7 +164,9 @@ def purchase_request(request, slug: str):
         return JsonResponse({"ok": False, "error": "this listing is no longer active"}, status=400)
     if wallet == listing.seller_account:
         return JsonResponse({"ok": False, "error": "this is your own listing"}, status=400)
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     req, created = PurchaseRequest.objects.get_or_create(
         listing=listing,
         buyer_account=wallet,

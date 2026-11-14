@@ -7,6 +7,7 @@ import secrets
 
 from django.conf import settings
 from django.contrib import messages
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -72,8 +73,10 @@ def dashboard(request):
     # Merge the Django projection with live chain data: an escrow exists for
     # this wallet if the contract says so, metadata row or not.
     items: dict[str, dict] = {}
-    agreements = EscrowAgreement.objects.filter(seller_account=wallet) | EscrowAgreement.objects.filter(
-        buyer_account=wallet
+    agreements = (
+        EscrowAgreement.objects.filter(contract_account=settings.SWEEFT_CONTRACT)
+        .filter(seller_account=wallet)
+        | EscrowAgreement.objects.filter(contract_account=settings.SWEEFT_CONTRACT).filter(buyer_account=wallet)
     )
     for a in agreements:
         items[a.escrow_id] = {
@@ -178,7 +181,9 @@ def escrow_new(request):
 
 
 def escrow_detail(request, escrow_id: str):
-    agreement = EscrowAgreement.objects.filter(escrow_id=escrow_id).first()
+    agreement = EscrowAgreement.objects.filter(
+        escrow_id=escrow_id, contract_account=settings.SWEEFT_CONTRACT
+    ).first()
     chain = None
     chain_error = None
     try:
@@ -190,6 +195,7 @@ def escrow_detail(request, escrow_id: str):
         # synthesize a read-only record so the page renders.
         agreement = EscrowAgreement(
             escrow_id=escrow_id,
+            contract_account=settings.SWEEFT_CONTRACT,
             seller_account=chain["seller"],
             buyer_account=chain.get("buyer") or "",
             product_name=chain.get("product_name") or "(unknown — created outside the web app)",
@@ -353,7 +359,9 @@ def api_register_agreement(request):
     wallet; amounts must match; the invitation token (Case B) must hash to the
     on-chain invite_hash.
     """
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     escrow_id = (body.get("escrow_id") or "").strip()
     if not escrow_id:
         return JsonResponse({"ok": False, "error": "escrow_id required"}, status=400)
@@ -374,6 +382,7 @@ def api_register_agreement(request):
     agreement, _ = EscrowAgreement.objects.update_or_create(
         escrow_id=escrow_id,
         defaults={
+            "contract_account": settings.SWEEFT_CONTRACT,
             "seller_account": chain["seller"],
             "buyer_account": chain.get("buyer") or "",
             "product_name": body.get("product_name") or chain.get("product_name", ""),
@@ -402,26 +411,12 @@ def api_register_agreement(request):
         payload={"seller": chain["seller"], "total": chain["total_amount"]},
     )
 
-    # Marketplace loop: if this escrow came from a listing, mark the listing
-    # sold and close any pending purchase request from the named buyer.
+    # Marketplace loop: link the purchase request to the escrow and project
+    # the chain state onto the listing (see `reconcile_listing`).
     listing_slug = (body.get("listing_slug") or "").strip()
     if listing_slug:
-        from apps.market.models import Listing, PurchaseRequest
-
-        listing = Listing.objects.filter(slug=listing_slug, seller_account=chain["seller"]).first()
-        if listing and chain.get("state") in ("Approved", "Funded"):
-            listing.status = "sold"
-            listing.sold_escrow_id = escrow_id
-            listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
-        elif listing:
-            # A request still in escrow creation should not close the listing
-            # until the buyer has accepted and the funds can be committed.
-            listing.status = "active"
-            listing.save(update_fields=["status", "updated_at"])
-            if chain.get("buyer"):
-                PurchaseRequest.objects.filter(
-                    listing=listing, buyer_account=chain["buyer"], status="pending"
-                ).update(status="escrowed", escrow_id=escrow_id)
+        _attach_listing_request(chain, escrow_id, listing_slug)
+    reconcile_listing(chain, escrow_id)
     return JsonResponse({"ok": True, "escrow_id": escrow_id})
 
 
@@ -429,15 +424,19 @@ def api_register_agreement(request):
 @wallet_required_json
 def api_my_agreements(request):
     wallet = request.wallet
-    agreements = EscrowAgreement.objects.filter(seller_account=wallet) | EscrowAgreement.objects.filter(
-        buyer_account=wallet
+    agreements = (
+        EscrowAgreement.objects.filter(contract_account=settings.SWEEFT_CONTRACT)
+        .filter(seller_account=wallet)
+        | EscrowAgreement.objects.filter(contract_account=settings.SWEEFT_CONTRACT).filter(buyer_account=wallet)
     )
     return JsonResponse({"ok": True, "agreements": [serialize_agreement(a) for a in agreements]})
 
 
 @require_GET
 def api_agreement(request, escrow_id: str):
-    agreement = EscrowAgreement.objects.filter(escrow_id=escrow_id).first()
+    agreement = EscrowAgreement.objects.filter(
+        escrow_id=escrow_id, contract_account=settings.SWEEFT_CONTRACT
+    ).first()
     try:
         chain = near.get_escrow(escrow_id)
     except Exception as e:  # noqa: BLE001
@@ -472,6 +471,7 @@ def api_sync_agreement(request, escrow_id: str):
     if agreement is None:
         agreement = EscrowAgreement(
             escrow_id=escrow_id,
+            contract_account=settings.SWEEFT_CONTRACT,
             seller_account=chain["seller"],
             buyer_account=chain.get("buyer") or "",
             product_name=chain.get("product_name") or "(created outside the web app)",
@@ -490,17 +490,7 @@ def api_sync_agreement(request, escrow_id: str):
     agreement.chain_snapshot = chain
     agreement.save()
 
-    if chain.get("state") in ("Approved", "Funded", "Completed"):
-        from apps.market.models import Listing
-
-        from apps.market.models import PurchaseRequest
-
-        request = PurchaseRequest.objects.filter(escrow_id=escrow_id, status__in=("pending", "escrowed")).first()
-        listing = request.listing if request else Listing.objects.filter(sold_escrow_id=escrow_id, seller_account=chain["seller"]).first()
-        if listing:
-            listing.status = "sold"
-            listing.sold_escrow_id = escrow_id
-            listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+    reconcile_listing(chain, escrow_id)
 
     _record_settlement(escrow_id, "logistics", chain.get("logistics_provider"), chain.get("logistics_amount"), chain.get("logistics_paid"))
     _record_settlement(escrow_id, "seller", chain.get("seller"), chain.get("seller_amount"), chain.get("seller_paid"))
@@ -521,6 +511,102 @@ def _record_settlement(escrow_id: str, party: str, account_id, amount, paid: boo
         party=party,
         defaults={"account_id": account_id, "amount": str(amount), "status": "paid"},
     )
+
+
+def _attach_listing_request(chain: dict, escrow_id: str, listing_slug: str) -> None:
+    """Creation-time link between a marketplace listing and the escrow.
+
+    The seller creates the escrow from the purchase-request page; this records
+    which request the escrow answers. Reconciliation (`reconcile_listing`) then
+    projects the chain state onto the listing.
+    """
+    from apps.market.models import Listing, PurchaseRequest
+
+    listing = Listing.objects.filter(slug=listing_slug, seller_account=chain["seller"]).first()
+    buyer = (chain.get("buyer") or "").strip()
+    if not listing or not buyer:
+        return
+    request_row = (
+        PurchaseRequest.objects.filter(listing=listing, buyer_account=buyer)
+        .order_by("-created_at")
+        .first()
+    )
+    if request_row is None:
+        PurchaseRequest.objects.create(
+            listing=listing, buyer_account=buyer, status="escrowed", escrow_id=escrow_id
+        )
+        return
+    if request_row.escrow_id != escrow_id or request_row.status != "escrowed":
+        request_row.escrow_id = escrow_id
+        request_row.status = "escrowed"
+        request_row.save(update_fields=["escrow_id", "status"])
+
+
+def reconcile_listing(chain: dict, escrow_id: str) -> None:
+    """Project one on-chain escrow onto its marketplace listing (if any).
+
+    Only money-committed states may consume a listing:
+      PendingAcceptance            -> listing stays active (offer outstanding)
+      Approved                     -> reserved (buyer accepted; funds not in)
+      Funded and later             -> sold (the escrow holds the buyer's money)
+      Rejected/Cancelled/Refunded  -> active again (the deal fell through)
+    """
+    from apps.market.models import Listing, PurchaseRequest
+
+    state = chain.get("state")
+    seller = chain.get("seller")
+    buyer = (chain.get("buyer") or "").strip()
+
+    request_row = (
+        PurchaseRequest.objects.filter(escrow_id=escrow_id)
+        .exclude(status="declined")
+        .first()
+    )
+    if request_row is None and buyer:
+        request_row = (
+            PurchaseRequest.objects.filter(listing__seller_account=seller, buyer_account=buyer)
+            .exclude(status="declined")
+            .order_by("-created_at")
+            .first()
+        )
+    listing = request_row.listing if request_row else None
+    if listing is None:
+        listing = Listing.objects.filter(sold_escrow_id=escrow_id, seller_account=seller).first()
+    if listing is None:
+        return
+
+    if state in ("Rejected", "Cancelled", "Refunded"):
+        # The deal fell through: reopen the listing for other buyers.
+        if listing.status != "active" or listing.sold_escrow_id == escrow_id:
+            listing.status = "active"
+            listing.sold_escrow_id = ""
+            listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+        if request_row and request_row.status == "escrowed" and request_row.escrow_id == escrow_id:
+            request_row.status = "pending"
+            request_row.escrow_id = ""
+            request_row.save(update_fields=["status", "escrow_id"])
+        return
+
+    if request_row and request_row.escrow_id != escrow_id:
+        request_row.escrow_id = escrow_id
+        request_row.status = "escrowed"
+        request_row.save(update_fields=["escrow_id", "status"])
+
+    if state == "PendingAcceptance":
+        return
+    if state == "Approved":
+        if listing.sold_escrow_id not in ("", escrow_id):
+            return  # another escrow already consumed this listing
+        listing.status = "reserved"
+        listing.sold_escrow_id = escrow_id
+        listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+        return
+    # Funded / ShipmentPending / Shipped / AwaitingBuyerConfirmation /
+    # ReviewRequired / Completed — the buyer's money is (or was) committed.
+    if listing.status != "sold" or listing.sold_escrow_id != escrow_id:
+        listing.status = "sold"
+        listing.sold_escrow_id = escrow_id
+        listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
 
 
 @require_GET
@@ -575,6 +661,7 @@ def api_invitation_accept(request, token: str):
 def serialize_agreement(a: EscrowAgreement) -> dict:
     return {
         "escrow_id": a.escrow_id,
+        "contract_account": a.contract_account,
         "seller_account": a.seller_account,
         "buyer_account": a.buyer_account,
         "product_name": a.product_name,

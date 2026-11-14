@@ -145,7 +145,21 @@ if RENDER_EXTERNAL_HOSTNAME:
 
 # ---------------------------------------------------------------------------
 # Rate limiting (cache-backed, per client IP) for RPC/DB-writing endpoints.
+#
+# The database cache is shared by every gunicorn worker (a per-process cache
+# would let the counters diverge). The table is created by migration
+# `wallets.0002_cache_table`.
 # ---------------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+    }
+}
+# Number of trusted proxy hops in front of the app (Render = 1). The client IP
+# is read from that position in X-Forwarded-For, never from the client-settable
+# first entry.
+TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
 RATE_LIMIT_CHALLENGE_PER_MIN = int(os.environ.get("RATE_LIMIT_CHALLENGE_PER_MIN", "60"))
 RATE_LIMIT_SYNC_PER_MIN = int(os.environ.get("RATE_LIMIT_SYNC_PER_MIN", "30"))
 RATE_LIMIT_LOGIN_PER_MIN = int(os.environ.get("RATE_LIMIT_LOGIN_PER_MIN", "30"))
@@ -229,6 +243,10 @@ RELAYER_POLL_SECONDS = float(os.environ.get("RELAYER_POLL_SECONDS", "5"))
 RELAYER_VERIFICATION_DEPOSIT_YOCTO = int(
     os.environ.get("RELAYER_VERIFICATION_DEPOSIT_YOCTO", "10000000000000000000000")  # 0.01 NEAR
 )
+# Full paged chain scan cadence (the fast loop is projection-driven).
+RELAYER_RECONCILE_SECONDS = float(os.environ.get("RELAYER_RECONCILE_SECONDS", "300"))
+# /health/ flags the relayer stale when the last tick is older than this.
+RELAYER_STALE_AFTER_SECONDS = int(os.environ.get("RELAYER_STALE_AFTER_SECONDS", "300"))
 
 # Platform owner hint for UI affordances (nav links). Authorization is always
 # checked against the on-chain config — this is display only.

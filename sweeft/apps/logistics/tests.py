@@ -140,6 +140,7 @@ class PartnerApiTests(TestCase):
         self.assertEqual(res.status_code, 404)
 
 
+@override_settings(DEMO_CARRIER_PRIVATE_KEY="11" * 32)
 class WalletShipmentApiTests(TestCase):
     def setUp(self):
         self.session = self.client.session

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from django.contrib import messages
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404, redirect, render
@@ -118,7 +119,9 @@ def api_create_shipment(request):
     generates one. `scenario` chooses the simulated run outcome
     (`delivered` | `failed` | `lost`) for the standalone simulator.
     """
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     escrow_id = (body.get("escrow_id") or "").strip()
     chain = near.get_escrow(escrow_id)
     if not chain:
@@ -214,7 +217,9 @@ def api_shipment_event(request, shipment_id: int):
     partner = shipment.provider
     if partner and partner.owner_wallet and partner.owner_wallet != request.wallet:
         return JsonResponse({"ok": False, "error": "not your shipment"}, status=403)
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     carrier = carriers.get_carrier()
     try:
         event = carrier.advance(shipment, to_status=body.get("status"), note=body.get("note", ""))
@@ -228,7 +233,9 @@ def api_shipment_event(request, shipment_id: int):
 def api_verification_payload(request):
     """Build the carrier payload the frontend passes to the contract's
     request_delivery_verification call and record the request."""
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     escrow_id = (body.get("escrow_id") or "").strip()
     shipment = Shipment.objects.filter(escrow_id=escrow_id).order_by("-created_at").first()
     if not shipment:
@@ -260,7 +267,9 @@ def api_verification_payload(request):
 @wallet_required_json
 def api_verification_sync(request):
     """Re-read the escrow and update the verification record from chain."""
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     escrow_id = (body.get("escrow_id") or "").strip()
     if not VerificationRequest.objects.filter(escrow_id=escrow_id).exists():
         return JsonResponse({"ok": False, "error": "no verification request recorded"}, status=404)
@@ -326,7 +335,9 @@ def api_partner_event(request, shipment_id: int):
     if not partner:
         return JsonResponse({"ok": False, "error": "invalid API key"}, status=401)
     shipment = get_object_or_404(Shipment, pk=shipment_id, provider=partner)
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     status_value = (body.get("status") or "").upper()
     valid = {choice[0] for choice in Shipment.STATUS_CHOICES}
     if status_value not in valid:

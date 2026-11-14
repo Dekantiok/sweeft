@@ -82,7 +82,8 @@ class DisputeApiTests(TestCase):
             self._post("/api/v1/disputes/", {"escrow_id": "SWFT-000009", "reason": "damaged"})
             d = Dispute.objects.get()
 
-        # the buyer records the manual resolution after the on-chain tx
+        # The buyer records the resolution after the on-chain tx. Client-supplied
+        # release_pct / tx_hash are ignored — the outcome comes from the chain.
         with mock.patch("apps.escrow.disputes._owner_account", return_value="owner.testnet"), mock.patch(
             "apps.escrow.disputes.near.get_escrow", return_value=chain_state(state="Completed")
         ):
@@ -90,7 +91,35 @@ class DisputeApiTests(TestCase):
         self.assertEqual(res.status_code, 200, res.json())
         d.refresh_from_db()
         self.assertEqual(d.status, "resolved")
-        self.assertEqual(d.resolution_pct, 70)
+        # Completed means the seller took the whole pot; the client's 70 is ignored.
+        self.assertEqual(d.resolution_pct, 100)
+        self.assertEqual(d.resolution_tx, "")
+
+    def test_list_disputes_requires_login(self):
+        from django.test import Client
+
+        res = Client().get("/api/v1/disputes/list/")
+        self.assertEqual(res.status_code, 401)
+
+    def test_list_disputes_scoped_to_parties_with_cached_reads(self):
+        Dispute.objects.create(
+            escrow_id="SWFT-000009", opened_by="buyer.testnet", side="buyer", reason="damaged"
+        )
+        Dispute.objects.create(
+            escrow_id="SWFT-000010", opened_by="stranger.testnet", side="seller", reason="unrelated"
+        )
+
+        def chain_for(contract, method, args=None, **kwargs):
+            assert method == "get_escrow"
+            if args["escrow_id"] == "SWFT-000009":
+                return chain_state(state="Completed")
+            return {"id": "SWFT-000010", "seller": "stranger.testnet", "buyer": "other.testnet", "state": "Completed"}
+
+        with mock.patch("apps.escrow.near.view_call", side_effect=chain_for):
+            res = self.client.get("/api/v1/disputes/list/")
+        body = res.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual([row["escrow_id"] for row in body["disputes"]], ["SWFT-000009"])
 
     def test_resolution_requires_onchain_first(self):
         # The dispute is opened by a party first…

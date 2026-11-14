@@ -3,6 +3,7 @@ import secrets
 from datetime import timedelta
 
 from django.conf import settings
+from apps.escrow.http import read_json
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -119,7 +120,9 @@ def verify(request):
     if not ratelimit.allow(f"verify:{ratelimit.client_ip(request)}", settings.RATE_LIMIT_LOGIN_PER_MIN):
         return JsonResponse({"ok": False, "error": "too many login attempts — slow down"}, status=429)
 
-    body = json.loads(request.body or "{}")
+    body = read_json(request)
+    if body is None:
+        return JsonResponse({"ok": False, "error": "invalid JSON body"}, status=400)
     account_id = (body.get("account_id") or "").strip()
     public_key = canonical_public_key(body.get("public_key") or "") or (body.get("public_key") or "")
     signature = body.get("signature") or ""

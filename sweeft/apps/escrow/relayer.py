@@ -10,8 +10,16 @@ movements — it can never redirect funds:
   4. inspection window elapsed    → release seller + platform allocations
      (permissionless), unless a problem was reported.
 
+Scheduling: each pass drives the *fast loop* from non-terminal escrows in the
+local projection plus delivered shipments; a full paged chain scan
+(`_iter_chain_escrows`) runs as a reconciliation pass every
+`RELAYER_RECONCILE_SECONDS` so escrows created directly on-chain are picked up
+too — and so nothing is ever silently dropped beyond the first 50 rows.
+
 Every action re-reads the chain first, so the loop is idempotent and safe to
-run continuously (``manage.py run_relayer``) or once (``--once``).
+run continuously (``manage.py run_relayer``) or once (``--once``). Each pass
+writes a heartbeat row that ``/health/`` reports (stale after
+`RELAYER_STALE_AFTER_SECONDS`).
 
 Trust disclosure (testnet MVP): ``RELAYER_PRIVATE_KEY`` lives on the demo
 server because this is a testnet build; on mainnet it would run inside a
@@ -25,15 +33,19 @@ import time
 from dataclasses import dataclass, field
 
 from django.conf import settings
+from django.utils import timezone
 
 from apps.logistics import carriers
 from apps.logistics.models import Shipment, VerificationRequest
 from apps.logistics.services import sync_verification_from_chain
 
 from . import near
+from .models import EscrowAgreement, RelayerHeartbeat
 from .server_tx import call_function_as
 
 RELAYER_GAS = 150_000_000_000_000  # 150 Tgas: pays for the OutLayer call + callback
+TERMINAL_STATES = ("Completed", "Refunded", "Cancelled", "Rejected")
+FAST_LOOP_AGREEMENTS = 100  # per pass; reconciliation covers the rest
 
 
 def relayer_configured() -> bool:
@@ -62,12 +74,40 @@ def _send(method: str, args: dict, deposit: int = 0) -> dict:
     )
 
 
+def _iter_chain_escrows(page: int = 50):
+    """Yield every escrow ever created (oldest first), paging the chain view.
+
+    The escrow count bounds the walk, so this scales with the book instead of
+    silently stopping at the first page.
+    """
+    total = int(near.view_call(settings.SWEEFT_CONTRACT, "escrow_count", {}) or 0)
+    start = 1
+    while start <= total:
+        chunk = near.view_call(
+            settings.SWEEFT_CONTRACT, "escrows_range", {"start": start, "limit": page}
+        ) or []
+        if not chunk:
+            break
+        yield from chunk
+        start += page
+
+
+def _reconcile_due() -> bool:
+    """True when the full chain scan is due (or has never run)."""
+    row = RelayerHeartbeat.objects.filter(pk=1).first()
+    if row is None or row.last_reconcile_at is None:
+        return True
+    age = (timezone.now() - row.last_reconcile_at).total_seconds()
+    return age >= float(getattr(settings, "RELAYER_RECONCILE_SECONDS", 300))
+
+
 @dataclass
 class RelayerReport:
     requested: list[str] = field(default_factory=list)
     synced: list[str] = field(default_factory=list)
     logistics_paid: list[str] = field(default_factory=list)
     released: list[str] = field(default_factory=list)
+    reconciled: int = 0
     errors: list[str] = field(default_factory=list)
 
     def lines(self) -> list[str]:
@@ -80,38 +120,65 @@ class RelayerReport:
         ):
             if ids:
                 out.append(f"{label}: {', '.join(ids)}")
+        if self.reconciled:
+            out.append(f"chain reconciliation: {self.reconciled} escrows scanned")
         out.extend(f"error — {message}" for message in self.errors)
         return out or ["nothing to do"]
 
 
-def relayer_tick(limit: int = 20) -> RelayerReport:
-    """One pass over shipments whose carrier reports DELIVERED."""
+def relayer_tick() -> RelayerReport:
+    """One pass: fast loop over local non-terminal escrows, then (every few
+    minutes) a full paged chain reconciliation."""
     report = RelayerReport()
     if not relayer_configured():
         report.errors.append("relayer is not configured")
         return report
 
-    seen_chain: set[str] = set()
     try:
-        # Scan chain escrows too: manual/direct deliveries may not have a
-        # delivered Shipment projection row, but must still settle/release.
-        chain_escrows = near.view_call(settings.SWEEFT_CONTRACT, "escrows_range", {"start": 1, "limit": 50}) or []
-        for chain in chain_escrows:
-            escrow_id = chain.get("id")
-            if not escrow_id or escrow_id in seen_chain:
-                continue
-            seen_chain.add(escrow_id)
-            _advance_chain_escrow(chain, report)
-    except Exception as e:  # noqa: BLE001 - the shipment loop below still runs
-        report.errors.append(f"chain escrow scan: {e}")
+        _fast_tick(report)
+    except Exception as e:  # noqa: BLE001 - reconciliation still runs
+        report.errors.append(f"fast pass: {e}")
 
+    reconciled = False
+    try:
+        if _reconcile_due():
+            _reconcile_chain(report)
+            reconciled = True
+    except Exception as e:  # noqa: BLE001 - heartbeat still written
+        report.errors.append(f"chain reconciliation: {e}")
+
+    try:
+        RelayerHeartbeat.record(reconcile=reconciled, error="; ".join(report.errors))
+    except Exception as e:  # noqa: BLE001 - never fail the tick on telemetry
+        report.errors.append(f"heartbeat write failed: {e}")
+    return report
+
+
+def _fast_tick(report: RelayerReport) -> None:
+    """Cheap pass driven by the local projection + delivered shipments."""
+    seen: set[str] = set()
+    agreements = EscrowAgreement.objects.exclude(state__in=TERMINAL_STATES).order_by(
+        "-last_synced", "-created_at"
+    )[:FAST_LOOP_AGREEMENTS]
+    for agreement in agreements:
+        escrow_id = agreement.escrow_id
+        seen.add(escrow_id)
+        try:
+            chain = near.get_escrow_cached(escrow_id)
+        except Exception as e:  # noqa: BLE001 — one bad escrow must not stop the loop
+            report.errors.append(f"{escrow_id}: {e}")
+            continue
+        if chain:
+            _advance_chain_escrow(chain, report)
+
+    # Carrier reports may reference escrows that predate the projection (or
+    # arrive through the standalone carrier service); never cap this queue.
     shipments = (
         Shipment.objects.filter(status="DELIVERED")
         .select_related("provider")
-        .order_by("-updated_at")[:limit]
+        .order_by("-updated_at")
     )
-    seen: set[str] = set()
-    for shipment in shipments:
+    for shipment in shipments.iterator():
         if shipment.escrow_id in seen:
             continue  # several shipments can reference one escrow — act once
         seen.add(shipment.escrow_id)
@@ -119,7 +186,18 @@ def relayer_tick(limit: int = 20) -> RelayerReport:
             _advance_one(shipment, report)
         except Exception as e:  # noqa: BLE001 — one bad escrow must not stop the loop
             report.errors.append(f"{shipment.escrow_id}: {e}")
-    return report
+
+
+def _reconcile_chain(report: RelayerReport) -> None:
+    """Full paged chain scan: catches escrows the projection doesn't know."""
+    seen: set[str] = set()
+    for chain in _iter_chain_escrows(50):
+        escrow_id = chain.get("id")
+        if not escrow_id or escrow_id in seen:
+            continue
+        seen.add(escrow_id)
+        _advance_chain_escrow(chain, report)
+    report.reconciled = len(seen)
 
 
 def _advance_chain_escrow(chain: dict, report: RelayerReport) -> None:
@@ -156,13 +234,7 @@ def _advance_chain_escrow(chain: dict, report: RelayerReport) -> None:
         and not chain.get("seller_paid")
         and not chain.get("problem_reported")
     ):
-        delivered_ms = None
-        try:
-            delivered_ms = near.view_call(
-                settings.SWEEFT_CONTRACT, "delivery_time_ms", {"escrow_id": escrow_id}
-            )
-        except Exception:  # noqa: BLE001 - ignore legacy escrows without a clock
-            delivered_ms = None
+        delivered_ms = _delivery_time_ms(escrow_id)
         if delivered_ms and _now_ms() >= delivered_ms + int(chain.get("inspection_period_ms") or 0):
             result = _send("release_after_inspection", {"escrow_id": escrow_id})
             if result["success"]:
@@ -240,13 +312,7 @@ def _advance_one(shipment: Shipment, report: RelayerReport) -> None:
         and not chain.get("seller_paid")
         and not chain.get("problem_reported")
     ):
-        delivered_ms = None
-        try:
-            delivered_ms = near.view_call(
-                settings.SWEEFT_CONTRACT, "delivery_time_ms", {"escrow_id": escrow_id}
-            )
-        except Exception:  # noqa: BLE001 — pre-upgrade escrows have no clock
-            delivered_ms = None
+        delivered_ms = _delivery_time_ms(escrow_id)
         window_ms = int(chain.get("inspection_period_ms") or 0)
         if delivered_ms and _now_ms() >= delivered_ms + window_ms:
             result = _send("release_after_inspection", {"escrow_id": escrow_id})
@@ -254,3 +320,12 @@ def _advance_one(shipment: Shipment, report: RelayerReport) -> None:
                 report.released.append(escrow_id)
             else:
                 report.errors.append(f"{escrow_id}: release failed: {result['error']}")
+
+
+def _delivery_time_ms(escrow_id: str):
+    try:
+        return near.view_call(
+            settings.SWEEFT_CONTRACT, "delivery_time_ms", {"escrow_id": escrow_id}
+        )
+    except Exception:  # noqa: BLE001 — pre-upgrade escrows have no clock
+        return None
