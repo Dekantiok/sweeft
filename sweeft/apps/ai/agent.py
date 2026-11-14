@@ -87,7 +87,9 @@ def _unique(items: list[str]) -> list[str]:
 
 
 def _card(kind: str, result: dict) -> dict:
-    return {"kind": kind, **result}
+    # The card kind is authoritative: tool results may carry a `kind` field of
+    # their own (e.g. search_listings echoes the requested listing kind).
+    return {**result, "kind": kind}
 
 
 def _run(name: str, args: dict, wallet: str, trace: list, cards: list) -> str | None:
@@ -100,8 +102,10 @@ def _run(name: str, args: dict, wallet: str, trace: list, cards: list) -> str | 
     except ToolError as e:
         return f"(couldn't run {name}: {e})"
     trace.append({"tool": name, "kind": spec.kind, "args": args})
-    if spec.kind in ("prepare", "write"):
-        cards.append(_card(result.get("type", "proposal"), result))
+    # Any result carrying a card type is rendered in the conversation — read
+    # tools included (search results, comparisons, trade status, offer status).
+    if isinstance(result, dict) and result.get("type"):
+        cards.append(_card(result.get("type"), result))
     return None
 
 
@@ -383,4 +387,13 @@ def run_agent(message: str, wallet: str) -> dict:
         )
         if error:
             reply = (reply + "\n\n" + error).strip()
+    if not trace:
+        # The model answered without running a tool. Fall back to the
+        # deterministic router so discovery/compare/offer/status intents still
+        # execute against real data instead of returning prose only.
+        routed = keyword_route(message, wallet)
+        if routed.get("tool_trace"):
+            if reply:
+                routed["reply"] = f"{reply}\n\n{routed['reply']}"
+            return routed
     return {"reply": reply or "Here's what I found.", "cards": cards, "tool_trace": trace}

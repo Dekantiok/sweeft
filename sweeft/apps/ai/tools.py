@@ -156,7 +156,14 @@ def search_listings(*, query: str = "", max_price: float | None = None, kind: st
         )
     results.sort(key=lambda r: r["rank"], reverse=True)
     results = results[:5]
-    return {"results": results, "count": len(results), "query": query, "max_price": max_price, "kind": kind}
+    return {
+        "type": "search_results",
+        "results": results,
+        "count": len(results),
+        "query": query,
+        "max_price": max_price,
+        "kind": kind,
+    }
 
 
 def compare_listings(*, slugs: list[str]) -> dict:
