@@ -2,6 +2,7 @@
 name = "sweeft"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/Dekantiok/sweeft"
 
 [package.metadata.near.reproducible_build]
 image = "sourcescan/cargo-near:0.22.0-rust-1.99.1"
