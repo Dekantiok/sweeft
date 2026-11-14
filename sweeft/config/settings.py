@@ -74,6 +74,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.wallets.context.wallet_context",
                 "apps.escrow.views.config_context",
+                "apps.market.context.seller_request_count",
             ],
         },
     },

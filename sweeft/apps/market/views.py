@@ -63,9 +63,14 @@ def listing_detail(request, slug: str):
     rep = _reputation(listing.seller_account)
     my_request = None
     my_offer = None
+    owner_requests = []
     if wallet:
         my_request = listing.requests.filter(buyer_account=wallet).exclude(status="declined").first()
-        if wallet != listing.seller_account:
+        if wallet == listing.seller_account:
+            owner_requests = list(
+                listing.requests.filter(status="pending").order_by("-created_at")[:10]
+            )
+        else:
             my_offer = listing.offers.filter(buyer_account=wallet).order_by("-updated_at").first()
     provider_name = ""
     if listing.logistics_provider:
@@ -82,6 +87,7 @@ def listing_detail(request, slug: str):
             "my_offer": my_offer,
             "my_offer_open": bool(my_offer and my_offer.is_open),
             "is_owner": wallet == listing.seller_account,
+            "owner_requests": owner_requests,
             "wallet_account": wallet,
             "fmt": near.format_near_amount,
         },

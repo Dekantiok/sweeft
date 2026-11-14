@@ -117,6 +117,16 @@ def dashboard(request):
         for inv in EscrowInvitation.objects.filter(status="pending", agreement__buyer_account=wallet)
         if inv.agreement.seller_account != wallet
     ]
+
+    # Incoming marketplace purchase requests for this seller's listings — the
+    # seller's main "somebody wants to buy" signal.
+    from apps.market.models import PurchaseRequest
+
+    pending_requests = list(
+        PurchaseRequest.objects.filter(listing__seller_account=wallet, status="pending")
+        .select_related("listing")
+        .order_by("-created_at")[:20]
+    )
     return render(
         request,
         "dashboard.html",
@@ -124,6 +134,7 @@ def dashboard(request):
             "buying": buying,
             "selling": selling,
             "invitations": my_invitations,
+            "pending_requests": pending_requests,
             "wallet_account": wallet,
             "chain_error": chain_error,
         },
