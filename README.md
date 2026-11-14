@@ -10,8 +10,9 @@ signatures in the happy path.
 
 The ecosystem coordinates **three protected paths** for physical commerce:
 
-1. **Protected trade** — marketplace listings, NEP-413 wallet identity, on-chain escrow with fixed
-   beneficiaries, inspection windows, refunds and dispute routes.
+1. **Protected trade** — marketplace listings, NEP-413 wallet identity, and **Trustcrow**
+   escrow (SWEEFT's escrow infrastructure on NEAR): fixed beneficiaries, inspection windows,
+   refunds and dispute routes.
 2. **Verified delivery & settlement** — a signed carrier timeline, OutLayer Intel-TDX verification of
    the delivery report, then contract-gated payouts to logistics, seller and the platform treasury.
 3. **Co-pilot commerce** — NEAR AI Cloud turns natural language into proposals; a native-NEAR budget
@@ -43,7 +44,7 @@ Built at NEAR Hackathon (Nov 2026).
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-eco.testnet`) |
+| Escrow + authorization + settlement | **Real** — **Trustcrow**, the Rust escrow contract on NEAR testnet (`sweeft-eco.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -430,7 +431,7 @@ python3 -m venv .venv && source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 cp .env.example .env            # testnet addresses + DEBUG=1; nothing else needed
 python3 manage.py migrate
-python3 manage.py test          # 126 tests: wallets, escrow, logistics, disputes, relayer, AI
+python3 manage.py test          # 169 tests: wallets, escrow, offers, logistics, disputes, relayer, AI
 python3 manage.py seed_demo     # optional sample listings + Demo Carrier partner
 python3 manage.py runserver 0.0.0.0:8000   # → http://localhost:8000
 
@@ -446,9 +447,13 @@ cargo build --release --target wasm32-unknown-unknown \
   --manifest-path ../stub-outlayer/Cargo.toml
 cargo test --test sandbox       # spins a local chain and runs create → TEE → settle
 
+# --- Co-pilot budget contract: per-owner agent + intent idempotency -------
+cd ../near-budget
+cargo test                      # 19 tests incl. revocation + duplicate-intent guards
+
 # --- TEE verifier (WASI) ---------------------------------------------------
 cd ../../wasi/sweeft-verify
-cargo test                      # 17 tests incl. signature + replay-window checks
+cargo test                      # 24 tests incl. signature, replay window and event timestamps
 ```
 
 What works locally **without any server-side keys**: wallet login (NEP-413 with your own testnet
@@ -473,7 +478,7 @@ keys — a judge should not need (or get) them. Three ways to verify them anyway
      a stub OutLayer runner, then drives TEE verification → logistics payout → buyer confirmation
      through the **real promise callback**, and asserts the terminal escrow leaves the active index.
    - `manage.py test` mocks chain reads and signing for the relayer, AI payments, disputes and
-     logistics guards (126 tests).
+     logistics guards, marketplace offers/negotiation and payment lifecycle (169 tests).
 2. **Read-only live check** — `python3 manage.py verify_live` re-hashes the deployed contract
    against the reproducible build, confirms the contract is keyless, checks governance/carrier
    wiring, and re-reads the lifecycle evidence (TEE verification, payout flags, index pruning,
@@ -489,11 +494,13 @@ keys — a judge should not need (or get) them. Three ways to verify them anyway
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
   asserting exact balances at each settlement step.
-- Django: `python3 manage.py test` — carrier state-machine guards (forward-only, idempotent,
-  failure-terminal), partner API auth + event round-trips, escrow tracking lookup, the
-  verification payload matching the OutLayer invariants, listing↔escrow reconciliation, health
-  probes, and the relayer (chain-conditioned actions, inspection-window gating, high-water
-  reconciliation, failure isolation).
+- Django: `python3 manage.py test` (169 tests) — carrier state-machine guards (forward-only,
+  idempotent, failure-terminal), partner API auth + event round-trips, escrow tracking lookup, the
+  verification payload matching the OutLayer invariants, **marketplace offers/negotiation**
+  (ceilings, party checks, strict transitions, escrow prefill at the agreed price),
+  **payment-intent lifecycle** (expiry, stale-claim recovery, ownership, on-chain intent id),
+  listing↔escrow reconciliation, health probes, and the relayer (chain-conditioned actions,
+  inspection-window gating, high-water reconciliation, failure isolation).
 - Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
@@ -506,6 +513,12 @@ keys — a judge should not need (or get) them. Three ways to verify them anyway
   local chain, deploys a stub OutLayer runner, and drives the whole lifecycle through the real
   promise callback (`request_delivery_verification` → `on_verification_result` → settlement) and
   asserts the terminal escrow leaves the active index.
+- Co-pilot budget contract: `cargo test` in `contracts/near-budget` (19 tests) — per-owner agent
+  authorization and revocation, global-agent fallback, spending caps, duplicate intent-id rejection
+  and failure rollback that releases the id for retries.
+- TEE verifier: `cargo test` in `wasi/sweeft-verify` (24 tests) — mandatory carrier signatures,
+  freshness window, timeline rules, and v2 signed event timestamps (missing/zero/out-of-order/future
+  timestamps rejected).
 
 ## Known limitations / roadmap
 
