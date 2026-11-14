@@ -1,12 +1,21 @@
 # SWEEFT
 
-**Wallet-based escrow, logistics verification, settlement — and a reputation marketplace — for physical commerce on NEAR testnet.**
+**A commerce ecosystem on NEAR testnet that protects three paths — trade, delivery and AI co-pilot payments — with one wallet and one on-chain trust layer.**
 
 Buyers do not send money to an unknown seller before goods ship. Sellers know the buyer funded the
 deal. Logistics gets paid only when carrier pickup is TEE-verified; the seller releases on explicit
 buyer confirmation — or, if the buyer stays silent, when the on-chain inspection window elapses. The
 platform fee is disclosed before funding, and the platform relayer runs this pipeline with no wallet
 signatures in the happy path.
+
+The ecosystem coordinates **three protected paths** for physical commerce:
+
+1. **Protected trade** — marketplace listings, NEP-413 wallet identity, on-chain escrow with fixed
+   beneficiaries, inspection windows, refunds and dispute routes.
+2. **Verified delivery & settlement** — a signed carrier timeline, OutLayer Intel-TDX verification of
+   the delivery report, then contract-gated payouts to logistics, seller and the platform treasury.
+3. **Co-pilot commerce** — NEAR AI Cloud turns natural language into proposals; a native-NEAR budget
+   contract enforces the user's allowance, and the agent's function-call key can invoke only `pay`.
 
 One wallet connects the whole ecosystem: **marketplace listings → on-chain trust profile → escrow →
 verified logistics → settlement → reputation**. Every reputation number is contract-derived and
@@ -17,6 +26,14 @@ CONNECT WALLET → BROWSE / LIST → CHECK TRUST PROFILE → ESCROW
 → ACCEPT → FUND (native NEAR) → SHIP → TEE-VERIFY (AUTOMATIC)
 → SETTLE (seller + logistics + platform) → REPUTATION MOVES
 ```
+
+**Integrated NEAR & partner tools:** NEAR contracts (Rust/near-sdk) for escrow and budgets ·
+NEP-413 + Wallet Selector (Meteor/HERE/Nightly) for signing · OutLayer Intel-TDX for genuine
+delivery attestation · Sputnik DAO/Trezu for the review board and treasury · NEAR AI Cloud for the
+co-pilot · native-NEAR budget + scoped function-call keys for agent payments · NEAR testnet RPC and
+NearBlocks for public verification · near-workspaces and cargo-near for sandbox tests and
+reproducible builds · a key-authenticated **Demo Carrier** partner API for simulated, ed25519-signed
+tracking (not a real carrier integration).
 
 Built at NEAR Hackathon (Nov 2026).
 
