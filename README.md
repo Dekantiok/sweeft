@@ -26,7 +26,7 @@ Built at NEAR Hackathon (Nov 2026).
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-market.testnet`) |
+| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-final2.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -45,30 +45,17 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
-**Current deployment:** escrow contract [`sweeft-market.testnet`](https://testnet.nearblocks.io/address/sweeft-market.testnet),
+**Current deployment:** escrow contract [`sweeft-final2.testnet`](https://testnet.nearblocks.io/address/sweeft-final2.testnet),
 review board `sweeft-board.testnet` (both keyless/immutable — deploy keys deleted), TEE project
 `steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
-six-digit codes: `SWFT-XXXXXX`. **`SWFT-611104`** completed the full lifecycle on this deployment —
-signed-carrier TEE verification, logistics settled **+0.01 NEAR**, seller **+0.1 NEAR**, platform fee
-**+0.005 NEAR** to the board treasury, all payout flags true, and post-settlement reputation for both
-parties:
+six-digit codes: `SWFT-XXXXXX`. **`SWFT-482768`** completed the full lifecycle on this deployment —
+signed-carrier TEE verification, logistics settled **0.001 NEAR**, seller **0.01 NEAR**, platform fee
+**0.0005 NEAR** to the board treasury, all payout flags true, and post-settlement reputation for both
+parties. Earlier regression coverage proves the same on-chain state machine from `SWFT-611104` and
+the creation-time tracking refund path from `SWFT-951559`.
 
-| `SWFT-611104` step | Tx |
-|---|---|
-| `create_escrow` (seller) | `AAYvJ8n67kiHQn8npHYdfpTa25JobebqGDCSfuEJeULr` |
-| `accept_escrow` (buyer) | `HgDZ7D8nPkmYPxgbFzwYBGBsScKJjW3h1A2TvRkRJ8BY` |
-| `fund_escrow` 0.115 NEAR | `2mZvSAk99funVe3gUXDU4wXpVVLoo8pxzBqtNPhJUYC2` |
-| `assign_logistics_provider` | `BDb8wr3wySVrya4xvaY29MpU4wNu9kLQWfnGEMAxRycK` |
-| `register_shipment` | `8VcvAAM1LexgfS7SXatuSgdg1R4mdRwBas6J6kscfvwz` |
-| TEE verification (signed carrier payload) | `BEjCyuthDpMwL53obGY62C751aNQkjGYeZAUda81STxo` |
-| `settle_logistics` | `45ULkRNqd3Ya3LwEyxLTm8BLy95mphPTGGq6Ygwcqa5s` |
-| `confirm_receipt` (buyer) | `CorSpp82LnTaqL1wSKXLXAev3Ff1mAFvjgG1ZzA8texY` |
-
-The marketplace regression **`SWFT-951559`** committed a tracking id at creation while keeping
-`shipment_registered=false`, then refunded the buyer from `ShipmentPending` after the dispatch
-deadline (`B8HT4jcxXTmLghMRig9d1zQWNr4xHyBtMeEuGf15o2vC`). Deploy key deletion:
-`HsuYFphPiJE9wL3Ye8LRTBkpWrCSMgBmLpGFKm7utFNN`; the deployed WASM SHA-256 is
-`063e3b67b486a4ff5c000ab2c0c1f87c3a7cddda1c81604881e93fb0983d1574`.
+Deploy key deletion: `5WSjCE4hLCpuo3rTgR1biSqC5mXVFkyiUbL2HA2W2NnD`; the deployed WASM SHA-256 is
+`054470b8cd87883cbeff9795b84e9fd39399c7420d7f78a1d6989bcfc9142f1a`.
 
 ### Governance (Sputnik DAO review board)
 
@@ -303,7 +290,7 @@ on-chain:
 | Failed dispute seller leg corrupted the split pot | Resolution stores the prior logistics-payment flag and restores it on failure, so retries neither deduct unpaid logistics nor double-count paid logistics. Tracking numbers and dispute reasons are length-capped. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
 | Frozen funds if the board stalls | Buyer **dispute and long-stop refunds**: unresolved disputes default to a buyer refund after 7 days; undelivered shipments have a 30-day long-stop. No-dispatch refunds work with creation-time tracking, verified live on `SWFT-951559`, and with seller-opened disputes in regression tests. |
-| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-market.testnet` (tx `HsuYFphPiJE9wL3Ye8LRTBkpWrCSMgBmLpGFKm7utFNN`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
+| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-final2.testnet` (tx `5WSjCE4hLCpuo3rTgR1biSqC5mXVFkyiUbL2HA2W2NnD`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
 | Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
@@ -338,7 +325,8 @@ Residual (disclosed) risks:
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
 - Rust unit tests: `cargo test` in `contracts/sweeft` — state machine, permissionless
   verification/settlement/release gates, beneficiary immutability, dispute deadlines, payout
-  rollback, dispute-resolution retries, storage caps and post-payout reputation (62 tests).
+  rollback, dispute-resolution retries, deadline/tracking guards, stake safety,
+  storage caps and post-payout reputation (70 tests).
 
 ## Known limitations / roadmap
 

@@ -49,7 +49,7 @@ def chain(**overrides):
     RELAYER_ENABLED=True,
     RELAYER_ACCOUNT="relayer.testnet",
     RELAYER_PRIVATE_KEY="ed25519:dummy",
-    SWEEFT_CONTRACT="sweeft-market.testnet",
+    SWEEFT_CONTRACT="sweeft-final2.testnet",
     RELAYER_VERIFICATION_DEPOSIT_YOCTO=10_000_000_000_000_000_000_000,
 )
 class RelayerTickTests(TestCase):
@@ -70,7 +70,9 @@ class RelayerTickTests(TestCase):
         make_shipment()
         with mock.patch(
             "apps.escrow.relayer.near.get_escrow", return_value=chain(verification_pending=True)
-        ), mock.patch("apps.escrow.relayer.call_function_as", return_value=OK) as send:
+        ), mock.patch("apps.escrow.relayer.near.view_call", return_value=[]), mock.patch(
+            "apps.escrow.relayer.call_function_as", return_value=OK
+        ) as send:
             report = relayer.relayer_tick()
         self.assertEqual(report.requested, [])
         send.assert_not_called()
@@ -79,6 +81,8 @@ class RelayerTickTests(TestCase):
         make_shipment(tracking_number="DEMO-REL-1")
         make_shipment(tracking_number="DEMO-REL-2")
         with mock.patch("apps.escrow.relayer.near.get_escrow", return_value=chain()), mock.patch(
+            "apps.escrow.relayer.near.view_call", return_value=[]
+        ), mock.patch(
             "apps.escrow.relayer.call_function_as", return_value=OK
         ) as send:
             report = relayer.relayer_tick()
@@ -179,6 +183,8 @@ class RelayerTickTests(TestCase):
     def test_reports_chain_failures_without_stopping(self):
         make_shipment()
         with mock.patch("apps.escrow.relayer.near.get_escrow", side_effect=RuntimeError("rpc down")), mock.patch(
+            "apps.escrow.relayer.near.view_call", return_value=[]
+        ), mock.patch(
             "apps.escrow.relayer.call_function_as", return_value=OK
         ) as send:
             report = relayer.relayer_tick()

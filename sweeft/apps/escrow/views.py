@@ -490,6 +490,18 @@ def api_sync_agreement(request, escrow_id: str):
     agreement.chain_snapshot = chain
     agreement.save()
 
+    if chain.get("state") in ("Approved", "Funded", "Completed"):
+        from apps.market.models import Listing
+
+        from apps.market.models import PurchaseRequest
+
+        request = PurchaseRequest.objects.filter(escrow_id=escrow_id, status__in=("pending", "escrowed")).first()
+        listing = request.listing if request else Listing.objects.filter(sold_escrow_id=escrow_id, seller_account=chain["seller"]).first()
+        if listing:
+            listing.status = "sold"
+            listing.sold_escrow_id = escrow_id
+            listing.save(update_fields=["status", "sold_escrow_id", "updated_at"])
+
     _record_settlement(escrow_id, "logistics", chain.get("logistics_provider"), chain.get("logistics_amount"), chain.get("logistics_paid"))
     _record_settlement(escrow_id, "seller", chain.get("seller"), chain.get("seller_amount"), chain.get("seller_paid"))
     if chain.get("platform_paid"):

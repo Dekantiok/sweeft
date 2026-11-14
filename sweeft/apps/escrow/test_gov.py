@@ -33,7 +33,7 @@ def _proposal(pid, escrow_id, pct, status="InProgress"):
         "description": f"Resolve {escrow_id}",
         "kind": {
             "FunctionCall": {
-                "receiver_id": "sweeft-market.testnet",
+                "receiver_id": "sweeft-final2.testnet",
                 "actions": [
                     {"method_name": "resolve_review", "args": payload, "deposit": "0", "gas": "100000000000000"}
                 ],
@@ -57,30 +57,30 @@ class GovHelperTests(TestCase):
         self.assertEqual(info["members"], [])
         self.assertEqual(info["votes_needed"], 0)
 
-    @override_settings(SWEEFT_CONTRACT="sweeft-market.testnet")
+    @override_settings(SWEEFT_CONTRACT="sweeft-final2.testnet")
     def test_proposal_target_decoding(self):
         target = gov.proposal_review_target(_proposal(3, "SWFT-000012", 60))
         self.assertEqual(target, {"escrow_id": "SWFT-000012", "seller_pct": 60})
 
-    @override_settings(SWEEFT_CONTRACT="sweeft-market.testnet")
+    @override_settings(SWEEFT_CONTRACT="sweeft-final2.testnet")
     def test_proposals_for_escrow_filters(self):
         proposals = [_proposal(1, "SWFT-000012", 60), _proposal(2, "SWFT-000013", 10)]
         out = gov.proposals_for_escrow("SWFT-000012", proposals)
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]["review"]["seller_pct"], 60)
 
-    @override_settings(SWEEFT_CONTRACT="sweeft-market.testnet")
+    @override_settings(SWEEFT_CONTRACT="sweeft-final2.testnet")
     def test_ignores_other_receivers(self):
         p = _proposal(4, "SWFT-000012", 50)
         p["kind"]["FunctionCall"]["receiver_id"] = "other.testnet"
         self.assertIsNone(gov.proposal_review_target(p))
 
-    @override_settings(SWEEFT_CONTRACT="sweeft-market.testnet")
+    @override_settings(SWEEFT_CONTRACT="sweeft-final2.testnet")
     def test_review_proposal_args_shape(self):
         args = gov.review_proposal_args("SWFT-000012", 65)
         action = args["proposal"]["kind"]["FunctionCall"]["actions"][0]
         self.assertEqual(action["method_name"], "resolve_review")
-        self.assertEqual(args["proposal"]["kind"]["FunctionCall"]["receiver_id"], "sweeft-market.testnet")
+        self.assertEqual(args["proposal"]["kind"]["FunctionCall"]["receiver_id"], "sweeft-final2.testnet")
         decoded = json.loads(base64.b64decode(action["args"]))
         self.assertEqual(decoded, {"escrow_id": "SWFT-000012", "seller_pct": 65})
 
