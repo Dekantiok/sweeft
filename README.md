@@ -131,15 +131,21 @@ New escrows pass `token: "near"` and fund with the payable `fund_escrow` method.
 ## Setup
 
 ```bash
-# 1. Django app (Python 3.10+, Django 5)
+# 1. Django app (Python 3.10+)
 cd sweeft
-python3 -m pip install django django-environ   # already present on the dev machine
-cp .env.example .env                            # testnet addresses are pre-filled
+python3 -m venv .venv && source .venv/bin/activate   # optional but recommended
+python3 -m pip install -r requirements.txt
+cp .env.example .env                                 # testnet addresses + DEBUG=1, no secrets needed
 python3 manage.py migrate
-python3 manage.py createsuperuser               # for partner approvals at /admin/
+python3 manage.py seed_demo                           # optional: sample listings + Demo Carrier partner
 python3 manage.py runserver 0.0.0.0:8000
 # → http://localhost:8000
 ```
+
+Nothing secret is required to explore the app: wallet login, the marketplace, and **on-chain escrow
+creation/funding/settlement with your own testnet wallet** work without any server-side keys. Carrier
+TEE verification, the relayer loop and AI co-pilot payments light up only when their keys are set
+(each stays clearly marked as unconfigured otherwise).
 
 Environment variables (`.env`, never commit real values):
 
@@ -362,14 +368,62 @@ Residual (disclosed) risks:
 - The pending-invitation index is capped at 10 entries per account; filling a victim's list costs
   ~0.2 NEAR. A production deployment would charge a reclaimable bond instead.
 
-## Tests
+## Run & test locally (judge quickstart)
+
+Everything below runs from a fresh `git clone` — no secrets, no accounts, no testnet funds required
+for the automated suites.
+
+```bash
+git clone https://github.com/Dekantiok/sweeft && cd sweeft
+
+# --- Django app + full test suite -----------------------------------------
+cd sweeft
+python3 -m venv .venv && source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+cp .env.example .env            # testnet addresses + DEBUG=1; nothing else needed
+python3 manage.py migrate
+python3 manage.py test          # 126 tests: wallets, escrow, logistics, disputes, relayer, AI
+python3 manage.py seed_demo     # optional sample listings + Demo Carrier partner
+python3 manage.py runserver 0.0.0.0:8000   # → http://localhost:8000
+
+# --- Escrow contract: unit + invariant (proptest) tests -------------------
+cd ../contracts/sweeft
+cargo test                      # 72 tests, no network
+
+# --- Escrow contract: full sandbox lifecycle (near-workspaces) ------------
+# Needs both wasm artifacts; the test drives the real promise callback path.
+rustup target add wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown \
+  --manifest-path ../stub-outlayer/Cargo.toml
+cargo test --test sandbox       # spins a local chain and runs create → TEE → settle
+
+# --- TEE verifier (WASI) ---------------------------------------------------
+cd ../../wasi/sweeft-verify
+cargo test                      # 17 tests incl. signature + replay-window checks
+```
+
+What works locally **without any server-side keys**: wallet login (NEP-413 with your own testnet
+wallet), marketplace, purchase requests, on-chain escrow create/accept/fund/assign/ship/confirm,
+disputes, review-board pages and all read-only views. The carrier TEE request returns a clear
+`503 carrier signing is not configured` instead of failing, the relayer reports "not configured",
+and AI co-pilot payments need only your own `AI_AGENT_*` keys if you want them.
+
+On-chain testnet walkthrough (uses your wallet + free testnet NEAR from https://near-faucet.io/):
+`/market/` → request a listing → seller creates the escrow → buyer accepts + funds → register a
+tracking number → either run the relayer (`RELAYER_*` in `.env`) or use the escrow page's manual
+TEE request, which needs the Demo Carrier key. The full lifecycle on the live deployment is
+evidenced with transaction hashes in **Verified end-to-end on testnet** above.
+
+## Test suite details
 
 - Contract logic is exercised on testnet by `scripts/e2e_lifecycle.sh` (create → … → settle),
   asserting exact balances at each settlement step.
 - Django: `python3 manage.py test` — carrier state-machine guards (forward-only, idempotent,
   failure-terminal), partner API auth + event round-trips, escrow tracking lookup, the
-  verification payload matching the OutLayer invariants, and the relayer (chain-conditioned
-  actions, inspection-window gating, failure isolation).
+  verification payload matching the OutLayer invariants, listing↔escrow reconciliation, health
+  probes, and the relayer (chain-conditioned actions, inspection-window gating, high-water
+  reconciliation, failure isolation).
 - Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.

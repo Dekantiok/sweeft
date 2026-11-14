@@ -218,6 +218,13 @@ class WalletShipmentApiTests(TestCase):
         self.assertIn("PICKED_UP", statuses)
         self.assertEqual(payload["status"], "DELIVERED")
 
+    @override_settings(DEMO_CARRIER_PRIVATE_KEY="")
+    def test_verification_payload_degrades_cleanly_without_carrier_key(self):
+        make_shipment(escrow_id="SWFT-000005", tracking_number="DEMO-NOKEY-1")
+        res = self._post("/api/v1/verification/payload/", {"escrow_id": "SWFT-000005"})
+        self.assertEqual(res.status_code, 503)
+        self.assertIn("carrier signing is not configured", res.json()["error"])
+
 
 class CarrierPayloadSigningTests(TestCase):
     """Carrier-authenticity: canonical message + ed25519 signature."""

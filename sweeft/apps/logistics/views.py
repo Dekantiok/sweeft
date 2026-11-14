@@ -251,7 +251,22 @@ def api_verification_payload(request):
         payload["shipment_id"] = None
     # Carrier-authenticity: signed by the Demo Carrier service key whose
     # public counterpart is registered on-chain for the TEE to verify.
-    payload = carriers.sign_carrier_payload(payload)
+    try:
+        payload = carriers.sign_carrier_payload(payload)
+    except ValueError:
+        # A fresh clone has no carrier key configured. Fail clearly instead of
+        # 500ing: the contract itself also refuses verification without a key.
+        return JsonResponse(
+            {
+                "ok": False,
+                "error": (
+                    "carrier signing is not configured on this deployment — set "
+                    "DEMO_CARRIER_PRIVATE_KEY (and register its public key on-chain via "
+                    "set_carrier_pubkey) to enable TEE verification"
+                ),
+            },
+            status=503,
+        )
     vr = VerificationRequest.objects.create(
         escrow_id=escrow_id,
         shipment=shipment,

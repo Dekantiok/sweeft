@@ -213,7 +213,10 @@ def _reconcile_chain(report: RelayerReport) -> None:
         seen.add(escrow_id)
         if lowest_active is None and chain.get("state") not in TERMINAL_STATES:
             lowest_active = index
-        _advance_chain_escrow(chain, report)
+        try:
+            _advance_chain_escrow(chain, report)
+        except Exception as e:  # noqa: BLE001 — one bad escrow must not stop the scan
+            report.errors.append(f"{escrow_id}: {e}")
     report.reconciled = len(seen)
 
     # Persist the new mark: the lowest non-terminal index, or one past the end
