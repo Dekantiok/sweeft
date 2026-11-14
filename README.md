@@ -26,7 +26,7 @@ Built at NEAR Hackathon (Nov 2026).
 
 | Component | Status |
 |---|---|
-| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-final2.testnet`) |
+| Escrow + authorization + settlement | **Real** — Rust contract on NEAR testnet (`sweeft-eco.testnet`) |
 | Funding currency | **Native NEAR** — payable `fund_escrow`; no token mint, import, or registration |
 | Wallet identity + authorization | **Real** — NEP-413 signature + on-chain access-key ownership verified server-side; every financial action traces to a signed transaction |
 | Delivery verification | **Real TEE + carrier signatures** — OutLayer (Intel TDX) runs our published verifier; the carrier report must be **ed25519-signed by the Demo Carrier service**, whose public key is registered on-chain (`set_carrier_pubkey`), so callers cannot forge carrier data from public ids. The verifier additionally enforces shipment id, provider id, timeline and pickup-before-delivery. Carrier data itself remains simulated Demo Carrier |
@@ -45,17 +45,44 @@ inspection window — and a reported problem freezes them into the review path.
 
 ## Verified end-to-end on testnet
 
-**Current deployment:** escrow contract [`sweeft-final2.testnet`](https://testnet.nearblocks.io/address/sweeft-final2.testnet),
+**Current deployment:** escrow contract [`sweeft-eco.testnet`](https://testnet.nearblocks.io/address/sweeft-eco.testnet),
 review board `sweeft-board.testnet` (both keyless/immutable — deploy keys deleted), TEE project
 `steepdata3968.testnet/sweeft-verify`, carrier key registered on-chain. Escrow ids are random
-six-digit codes: `SWFT-XXXXXX`. **`SWFT-482768`** completed the full lifecycle on this deployment —
-signed-carrier TEE verification, logistics settled **0.001 NEAR**, seller **0.01 NEAR**, platform fee
-**0.0005 NEAR** to the board treasury, all payout flags true, and post-settlement reputation for both
-parties. Earlier regression coverage proves the same on-chain state machine from `SWFT-611104` and
-the creation-time tracking refund path from `SWFT-951559`.
+six-digit codes: `SWFT-XXXXXX`.
 
-Deploy key deletion: `5WSjCE4hLCpuo3rTgR1biSqC5mXVFkyiUbL2HA2W2NnD`; the deployed WASM SHA-256 is
-`054470b8cd87883cbeff9795b84e9fd39399c7420d7f78a1d6989bcfc9142f1a`.
+**`SWFT-014021`** completed the full lifecycle on this deployment — signed-carrier TEE verification
+(the verifier rejects stale payloads via the signed `issued_at`), logistics settled **0.001 NEAR**,
+seller **0.01 NEAR**, platform fee **0.0005 NEAR** to the board treasury, all payout flags true, and
+the terminal escrow left the active account indexes:
+
+| `SWFT-014021` step | Tx (nearblocks.io/txns) |
+|---|---|
+| `create_escrow` (seller) | `5EVewLbvRWhbPBiTuJdNtSKtSFoghbh21fuJnsZEMmpV` |
+| `accept_escrow` (buyer) | `9xmM7CUsEH7pp7yvYCQDBs5r51Li7QVhEBJqUNrNrSDc` |
+| `fund_escrow` 0.0115 NEAR | `CbNL6UGpFW8UcBfEYCfZCRsJ7hFfB3Y1WVR3BkAtNy2K` |
+| `assign_logistics_provider` | `9CxXQPvg1Vw19QFAFGvdoxyqmDD5KteMyxU8nPxrn3Xx` |
+| `register_shipment` | `B9k3GiU2kgYxNsmma47yxgr1vaMvXBrTUWBRyuX4X4an` |
+| TEE verification (signed carrier payload) | `9EymTBwkDFNaYuLJB5uKSP2vuXKYmd3Hk5UWeZBL6eRK` |
+| `settle_logistics` | `5DBtyR9fWjkmbVdP63k9EaxxoBYYfWss1wXy26qyQAh6` |
+| `confirm_receipt` (buyer) | `A2bYL9x4RUcg67nkNHLtwQJsRbXxo8XDqmJ3z8gFQDvM` |
+
+Terminal-state coverage on the same deployment: `reject_escrow` (`6D7wNr6zGqf3VWbYCua55vyPCw5PnpMm2PaeZ5pSooCz`,
+`SWFT-747532`), `cancel_escrow` (`5VzEoAzUdiDaohS16vCu1sZu1PCNZmyjrY1yHB5jX2kt`, `SWFT-054544`),
+and buyer refund of an undispatched escrow after the dispatch deadline
+(`FVm51D6wCniXpPddTjriLZQ4dR4C8Yx3LVwb1Ju2Ejtd`, `SWFT-984999`) — every terminal transition prunes the
+active seller/buyer index, so the 50-escrow cap applies to **active** deals only.
+
+The Django app-level E2E (`/tmp` harness, 36 checks: wallets → listings → purchase request → escrow →
+TEE → settlement → disputes → AI co-pilot → pages) passes against this deployment, and the
+near-workspaces sandbox test runs the same lifecycle locally with a stub OutLayer runner
+(`cargo test --test sandbox`).
+
+Deploy key deletion: `Er5pEHC8Dx8vgSdTvrXKF685KjXTypS16aZH1qj5Wsso`. The deployed WASM SHA-256 is
+`c4d0b2c4733fc846d69faee2d7b7058a8b612ea14e7212ca2b6d1a39cab3e284` — reproduce it with
+`cargo near build reproducible-wasm` (pinned `sourcescan/cargo-near:0.22.0-rust-1.99.1` image).
+The OutLayer verification program (wasm32-wasip2) SHA-256 is
+`0b0358e0f93d1cc31e916822ab065bb57cbdd88072dc62eb824fe7a96bd0efa1` (upload tx
+`9mBMNUTYxEbnfcNkD9YrohqgUSSYTRpYq948s81PNsWr`).
 
 ### Governance (Sputnik DAO review board)
 
@@ -71,6 +98,7 @@ the board but **cannot resolve disputes** — that power is gone by design.
 
 ```
 contracts/sweeft/     Rust (near-sdk) escrow contract — funds & authorization source of truth
+contracts/stub-outlayer/ Test-only OutLayer runner stub for the near-workspaces sandbox
 contracts/near-budget/ Native-NEAR co-pilot budget (deposit / agent pay / withdraw)
 wasi/sweeft-verify/   TEE verification program → wasm32-wasip2, published on OutLayer
 sweeft/               Django modular monolith (product coordinator + projection)
@@ -256,6 +284,10 @@ Platform policy caps each payment (`AI_AGENT_MAX_PAYMENT`, default 0.1 NEAR).
 Everything is audited as a `PaymentIntent` with its tx hash. Testnet disclosure:
 the demo agent key lives in the server environment for the MVP; on mainnet the
 same design runs with the key inside a TEE/KMS — the on-chain budget stays the boundary.
+The agent key itself is a **function-call access key scoped to `pay` on the budget
+contract only** (allowance-capped, full-access key removed — tx
+`4HPRtHBYHJR7uemWd26e2erL6S6SBd1pWgYubGaTrrWJ`), so a compromised key cannot
+transfer the account balance, deploy code, or touch any other contract.
 
 Verified live: deposited 0.05 NEAR → co-pilot paid native invoices; `available` decreased exactly.
 Over-cap and no-budget paths refused correctly.
@@ -290,7 +322,7 @@ on-chain:
 | Failed dispute seller leg corrupted the split pot | Resolution stores the prior logistics-payment flag and restores it on failure, so retries neither deduct unpaid logistics nor double-count paid logistics. Tracking numbers and dispute reasons are length-capped. |
 | Zero/very-short inspection window | `create_escrow` enforces a **1-hour minimum inspection period** (UI defaults to 72h and the escrow page shows the auto-release time); the timeout release can never skip a real buyer review window. |
 | Frozen funds if the board stalls | Buyer **dispute and long-stop refunds**: unresolved disputes default to a buyer refund after 7 days; undelivered shipments have a 30-day long-stop. No-dispatch refunds work with creation-time tracking, verified live on `SWFT-951559`, and with seller-opened disputes in regression tests. |
-| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-final2.testnet` (tx `5WSjCE4hLCpuo3rTgR1biSqC5mXVFkyiUbL2HA2W2NnD`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
+| Upgrade key could redeploy the contract | Deploy keys were deleted on **both** `sweeft-eco.testnet` (tx `Er5pEHC8Dx8vgSdTvrXKF685KjXTypS16aZH1qj5Wsso`) and `sweeft-board.testnet` (tx `BYxu9F3G…`); `view_access_key_list` returns **empty** for both — no key can deploy new code, ever. Owner/board actions remain signature-gated by their member accounts. |
 | Carrier key churn | Carrier key/provider-id changes are **board-only** (owner cannot set them), and rotation is visible on-chain. |
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
@@ -323,10 +355,15 @@ Residual (disclosed) risks:
 - Carrier simulator: `cd tools/demo-carrier && python3 -m unittest test_simulator -v`.
 - Django smoke: `python3 manage.py check`; pages `/`, `/dashboard/`, `/escrow/<id>/`,
   `/logistics/`, `/partners/portal/`, plus the JSON API under `/api/v1/`.
-- Rust unit tests: `cargo test` in `contracts/sweeft` — state machine, permissionless
+- Rust unit tests: `cargo test` in `contracts/sweeft` — state machine (proptest invariants: total
+  payouts never exceed deposits, terminal states never change), permissionless
   verification/settlement/release gates, beneficiary immutability, dispute deadlines, payout
-  rollback, dispute-resolution retries, deadline/tracking guards, stake safety,
-  storage caps and post-payout reputation (70 tests).
+  rollback, dispute-resolution retries, deadline/tracking guards, stake safety, storage caps and
+  post-payout reputation (72 tests).
+- Sandbox lifecycle: `cargo test --test sandbox` in `contracts/sweeft` — near-workspaces spins a
+  local chain, deploys a stub OutLayer runner, and drives the whole lifecycle through the real
+  promise callback (`request_delivery_verification` → `on_verification_result` → settlement) and
+  asserts the terminal escrow leaves the active index.
 
 ## Known limitations / roadmap
 

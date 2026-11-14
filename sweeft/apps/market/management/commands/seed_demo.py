@@ -10,7 +10,7 @@ from django.core.management.base import BaseCommand
 
 from apps.escrow.near import parse_near_amount
 from apps.logistics.models import LogisticsPartner, PartnerApiCredential
-from apps.market.models import Listing
+from apps.market.models import Listing, PurchaseRequest
 
 
 class Command(BaseCommand):
@@ -23,6 +23,8 @@ class Command(BaseCommand):
                             help="On-chain wallet that receives logistics payouts")
         parser.add_argument("--seller", default="seller.steepdata3968.testnet",
                             help="Wallet that owns the sample listings")
+        parser.add_argument("--buyer", default="e2e-buyer.steepdata3968.testnet",
+                            help="Wallet that files the seeded purchase request (marketplace request flow)")
         parser.add_argument("--issue-carrier-key", action="store_true",
                             help="Issue a new Demo Carrier partner API key (printed once) for the simulator")
 
@@ -92,4 +94,18 @@ class Command(BaseCommand):
                 listing.save(update_fields=["logistics_provider", "price_amount", "description", "updated_at"])
             state = "created" if was_created else "exists"
             self.stdout.write(f"listing {state}: /market/{listing.slug}/ (provider {settlement})")
+
+        # Seed one marketplace purchase request so the request → prefill → escrow
+        # demo flow has content on a fresh deployment.
+        buyer = options["buyer"]
+        first = Listing.objects.filter(seller_account=seller).order_by("created_at").first()
+        if first and buyer:
+            request_row, was_created = PurchaseRequest.objects.get_or_create(
+                listing=first,
+                buyer_account=buyer,
+                status="pending",
+                defaults={"message": "Demo buyer: please issue the escrow — I'll fund it right away."},
+            )
+            state = "created" if was_created else "exists"
+            self.stdout.write(f"purchase request {state}: #{request_row.pk} ({buyer} → /market/{first.slug}/)")
         self.stdout.write(self.style.SUCCESS("demo data ready"))

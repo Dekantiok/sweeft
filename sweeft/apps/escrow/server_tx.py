@@ -16,6 +16,7 @@ import base64
 import hashlib
 import json
 import struct
+import time
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -127,6 +128,29 @@ def _failure_reason(status: dict) -> str:
         return "transaction failed"
 
 
+def _wait_for_final_tx(tx_hash: str, signer: str, attempts: int = 24, delay: float = 5.0):
+    """Poll for a broadcast transaction the RPC stopped waiting on.
+
+    `broadcast_tx_commit` gives up after its HTTP timeout on long promise
+    chains (e.g. the OutLayer TEE call), even though the transaction was
+    accepted. The hash is deterministic, so the outcome can always be
+    recovered by polling until it finalizes.
+    """
+    for _ in range(attempts):
+        try:
+            resp = _rpc(
+                "tx",
+                {"tx_hash": tx_hash, "sender_account_id": signer, "wait_until": "FINAL"},
+                timeout=20,
+            )
+        except Exception:  # noqa: BLE001 - keep polling until the deadline
+            resp = None
+        if resp and "result" in resp:
+            return resp["result"]
+        time.sleep(delay)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -186,18 +210,39 @@ def send_transaction(
     digest = hashlib.sha256(tx).digest()
     signature = key.sign(digest)
     signed = tx + b"\x00" + signature
+    # The transaction hash is deterministic; keep it so a broadcast timeout on
+    # a long promise chain can still be recovered by polling.
+    tx_hash = b58encode(digest)
 
-    result = _rpc("broadcast_tx_commit", [base64.b64encode(signed).decode()], timeout=40)
-    if "error" in result:
-        detail = result["error"]
-        message = detail.get("message") if isinstance(detail, dict) else str(detail)
-        data = detail.get("data") if isinstance(detail, dict) else None
-        if data:
-            message = f"{message}: {json.dumps(data)[:500]}"
-        raise RuntimeError(f"RPC rejected transaction: {message}")
-    payload = result["result"]
+    broadcast_error = None
+    payload = None
+    try:
+        result = _rpc("broadcast_tx_commit", [base64.b64encode(signed).decode()], timeout=40)
+    except Exception as exc:  # noqa: BLE001 - transport timeout, not a rejection
+        broadcast_error = f"broadcast transport timeout: {exc}"
+        result = None
+    if result is not None:
+        if "error" in result:
+            detail = result["error"]
+            message = detail.get("message") if isinstance(detail, dict) else str(detail)
+            data = detail.get("data") if isinstance(detail, dict) else None
+            if data:
+                message = f"{message}: {json.dumps(data)[:500]}"
+            if "timeout" in str(message).lower():
+                broadcast_error = message
+            else:
+                raise RuntimeError(f"RPC rejected transaction: {message}")
+        else:
+            payload = result["result"]
+    if payload is None:
+        # The RPC stopped waiting on the commit (long promise chains, e.g. the
+        # OutLayer TEE call) — recover the final outcome by hash.
+        payload = _wait_for_final_tx(tx_hash, signer)
+        if payload is None:
+            raise RuntimeError(f"RPC rejected transaction: {broadcast_error or 'timeout'}")
+
     status = payload.get("status") or {}
-    tx_hash = (payload.get("transaction") or {}).get("hash", "")
+    tx_hash = (payload.get("transaction") or {}).get("hash", tx_hash)
     receipt_error = _receipt_outcome_error(payload)
     success = ("SuccessValue" in status or "SuccessReceiptId" in status) and receipt_error is None
     return {

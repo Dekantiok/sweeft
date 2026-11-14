@@ -8,7 +8,7 @@
 set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
-SWEEFT="${SWEEFT:-sweeft-final2.testnet}"
+SWEEFT="${SWEEFT:-sweeft-eco.testnet}"
 SELLER="${SELLER:-seller.steepdata3968.testnet}"
 BUYER="${BUYER:-steepdata3968.testnet}"
 PROVIDER="${PROVIDER:-logistics.steepdata3968.testnet}"

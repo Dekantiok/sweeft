@@ -35,7 +35,7 @@ services:
       - key: NEAR_RPC_URL
         value: "https://test.rpc.fastnear.com"
       - key: SWEEFT_CONTRACT
-        value: "sweeft-final2.testnet"
+        value: "sweeft-eco.testnet"
       - key: OUTLAYER_CONTRACT
         value: "outlayer.testnet"
       - key: OUTLAYER_PROJECT
