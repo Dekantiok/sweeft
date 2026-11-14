@@ -5,7 +5,7 @@
 //!   "escrow_id": "SWFT-611104",
 //!   "expected": { "tracking_number": "...", "provider_wallet": "log.testnet", "shipment_id": "SHIP-..." },
 //!   "carrier":  { "provider_id": "LOG-001", "tracking_number": "...", "status": "DELIVERED",
-//!                 "events": [ { "status": "PICKED_UP", "timestamp": "..." }, ... ] }
+//!                 "events": [ { "status": "PICKED_UP", "ts": 1730000000000 }, ... ] }
 //! }
 //!
 //! Output (stdout, exactly one JSON value):
@@ -48,25 +48,27 @@ struct Expected {
     carrier_pubkey: Option<String>,
 }
 
-/// Canonical carrier message (v1). Must match the signer byte-for-byte:
-/// `v1|provider_id|tracking_number|shipment_id|status|issued_at|<event statuses, comma-joined>`
-/// Statuses are the RAW strings from the payload, before normalization.
+/// Canonical carrier message (v2). Must match the signer byte-for-byte:
+/// `v2|provider_id|tracking_number|shipment_id|status|issued_at|<status@ts, comma-joined>`
+/// `ts` is the event timestamp in epoch milliseconds, signed as part of the
+/// message so event times are authenticated. Statuses are the RAW strings from
+/// the payload, before normalization.
 fn canonical_carrier_message(
     provider_id: &str,
     tracking: &str,
     shipment_id: &str,
     status_raw: &str,
     issued_at: u64,
-    event_statuses: &[String],
+    events: &[(String, u64)],
 ) -> String {
+    let rendered = events
+        .iter()
+        .map(|(status, ts)| format!("{status}@{ts}"))
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "v1|{}|{}|{}|{}|{}|{}",
-        provider_id,
-        tracking,
-        shipment_id,
-        status_raw,
-        issued_at,
-        event_statuses.join(",")
+        "v2|{}|{}|{}|{}|{}|{}",
+        provider_id, tracking, shipment_id, status_raw, issued_at, rendered
     )
 }
 
@@ -247,26 +249,34 @@ fn run(raw: &str) -> Output {
     let Some(issued_at) = carrier.get("issued_at").and_then(|v| v.as_u64()) else {
         return fail("carrier issued_at required".into());
     };
-    let raw_events: Vec<String> = carrier
+    // Signed events: statuses are the raw payload strings; `ts` (integer epoch
+    // milliseconds) is MANDATORY because it is part of the canonical message —
+    // a missing/invalid ts fails closed instead of leaving event times
+    // unauthenticated.
+    let raw_events = carrier
         .get("events")
         .and_then(|v| v.as_array())
         .cloned()
-        .unwrap_or_default()
-        .iter()
-        .map(|e| {
-            e.get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        })
-        .collect();
+        .unwrap_or_default();
+    let mut signed_events: Vec<(String, u64)> = Vec::with_capacity(raw_events.len());
+    for (idx, event) in raw_events.iter().enumerate() {
+        let status = event
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(ts) = event.get("ts").and_then(|v| v.as_u64()) else {
+            return fail(format!("carrier event {idx} missing/invalid ts"));
+        };
+        signed_events.push((status, ts));
+    }
     let message = canonical_carrier_message(
         &provider_id,
         &tracking,
         carrier_shipment,
         raw_status,
         issued_at,
-        &raw_events,
+        &signed_events,
     );
     if verifying.verify(message.as_bytes(), &signature).is_err() {
         return fail("carrier signature invalid".into());
@@ -285,6 +295,27 @@ fn run(raw: &str) -> Output {
         return fail("carrier payload is stale".into());
     }
 
+    // 2d. Signed event timestamps: non-zero, non-decreasing, and never ahead
+    //     of issued_at beyond the shared 5-minute clock skew. (The payload
+    //     freshness rule above already bounds how far in the past they may be.)
+    let mut prev_ts: Option<u64> = None;
+    for (idx, (_status, ts)) in signed_events.iter().enumerate() {
+        if *ts == 0 {
+            return fail(format!("carrier event {idx} has a zero ts"));
+        }
+        if *ts > issued_at.saturating_add(CARRIER_PAYLOAD_FUTURE_SKEW_MS) {
+            return fail(format!("carrier event {idx} ts is in the future: {ts}"));
+        }
+        if let Some(prev) = prev_ts {
+            if *ts < prev {
+                return fail(format!(
+                    "carrier event {idx} ts goes backwards: {ts} after {prev}"
+                ));
+            }
+        }
+        prev_ts = Some(*ts);
+    }
+
     // 3. Status must normalize into the supported set.
     let Some(status) = normalize_status(raw_status) else {
         return fail(format!("unsupported carrier status: {raw_status:?}"));
@@ -292,20 +323,14 @@ fn run(raw: &str) -> Output {
 
     // 4. Event timeline consistency (when events are supplied): happy-chain
     //    statuses must be non-decreasing; a failure status may only be last.
-    let events = carrier
-        .get("events")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
     let mut last_rank: Option<usize> = None;
     let mut seen_pickup = false;
-    for (idx, event) in events.iter().enumerate() {
-        let ev_status_raw = event.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    for (idx, (ev_status_raw, _ts)) in signed_events.iter().enumerate() {
         let Some(ev_status) = normalize_status(ev_status_raw) else {
             return fail(format!("event {idx}: unsupported status {ev_status_raw:?}"));
         };
         if FAILURE_STATUSES.contains(&ev_status.as_str()) {
-            if idx + 1 != events.len() {
+            if idx + 1 != signed_events.len() {
                 return fail(format!(
                     "event {idx}: failure status {ev_status} is not the last event"
                 ));
@@ -396,6 +421,10 @@ mod tests {
         signed_input(status, events, provider_id, shipment_id, now_ms())
     }
 
+    /// Builds and signs a v2 payload. Events may carry an explicit integer
+    /// `ts` (epoch ms); otherwise deterministic ts values are injected
+    /// (1000 for the first event, 2000 for the second, ...) so every payload
+    /// always carries authenticated timestamps consistent with `issued_at`.
     fn signed_input(
         status: &str,
         events: serde_json::Value,
@@ -405,21 +434,37 @@ mod tests {
     ) -> String {
         use ed25519_dalek::Signer;
         let (sk, pubkey_hex) = signer();
-        let event_statuses: Vec<String> = events
+        let mut signed_events: Vec<(String, u64)> = Vec::new();
+        let mut events_with_ts: Vec<serde_json::Value> = Vec::new();
+        for (idx, mut event) in events
             .as_array()
-            .map(|a| {
-                a.iter()
-                    .map(|e| e["status"].as_str().unwrap_or("").to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .enumerate()
+        {
+            let ts = event
+                .get("ts")
+                .and_then(|v| v.as_u64())
+                .unwrap_or((idx as u64 + 1) * 1_000);
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("ts".to_string(), serde_json::json!(ts));
+            }
+            let ev_status = event
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            signed_events.push((ev_status, ts));
+            events_with_ts.push(event);
+        }
         let message = canonical_carrier_message(
             provider_id,
             "DEMO-1",
             shipment_id,
             status,
             issued_at,
-            &event_statuses,
+            &signed_events,
         );
         let signature = sk.sign(message.as_bytes());
         serde_json::json!({
@@ -437,7 +482,7 @@ mod tests {
                 "shipment_id": shipment_id,
                 "status": status,
                 "issued_at": issued_at,
-                "events": events,
+                "events": events_with_ts,
                 "signature": hex(&signature.to_bytes())
             }
         })
@@ -502,6 +547,108 @@ mod tests {
     fn tampered_payload_after_signing_rejected() {
         let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
         v["carrier"]["status"] = serde_json::json!("DELIVERY_FAILED");
+        let out = run(&v.to_string());
+        assert!(!out.verified);
+        assert!(out.reason.contains("signature"), "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn event_ts_values_are_signed_and_verified() {
+        // Explicit (non-default) ts values flow into the signed v2 message and
+        // verify when they are internally consistent.
+        let out = run(&input(
+            "IN_TRANSIT",
+            serde_json::json!([{"status":"PICKED_UP","ts":5_000_000},
+                               {"status":"IN_TRANSIT","ts":6_000_000}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
+        assert!(out.verified, "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn missing_event_ts_rejected() {
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
+        v["carrier"]["events"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("ts");
+        let out = run(&v.to_string());
+        assert!(!out.verified);
+        assert!(
+            out.reason.contains("event 0 missing/invalid ts"),
+            "reason: {}",
+            out.reason
+        );
+    }
+
+    #[test]
+    fn invalid_event_ts_rejected() {
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
+        v["carrier"]["events"][1]["ts"] = serde_json::json!("not-a-number");
+        let out = run(&v.to_string());
+        assert!(!out.verified);
+        assert!(
+            out.reason.contains("event 1 missing/invalid ts"),
+            "reason: {}",
+            out.reason
+        );
+    }
+
+    #[test]
+    fn out_of_order_event_ts_rejected() {
+        let out = run(&input(
+            "PICKED_UP",
+            serde_json::json!([{"status":"PICKED_UP","ts":5_000},{"status":"IN_TRANSIT","ts":4_000}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
+        assert!(!out.verified);
+        assert!(
+            out.reason.contains("goes backwards"),
+            "reason: {}",
+            out.reason
+        );
+    }
+
+    #[test]
+    fn future_event_ts_rejected() {
+        let issued_at = now_ms();
+        let future = issued_at + CARRIER_PAYLOAD_FUTURE_SKEW_MS + 1;
+        let out = run(&signed_input(
+            "PICKED_UP",
+            serde_json::json!([{"status":"PICKED_UP","ts":future}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+            issued_at,
+        ));
+        assert!(!out.verified);
+        assert!(
+            out.reason.contains("ts is in the future"),
+            "reason: {}",
+            out.reason
+        );
+    }
+
+    #[test]
+    fn zero_event_ts_rejected() {
+        let out = run(&input(
+            "PICKED_UP",
+            serde_json::json!([{"status":"PICKED_UP","ts":0}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
+        assert!(!out.verified);
+        assert!(out.reason.contains("zero ts"), "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn tampered_event_ts_after_signing_rejected() {
+        // Bump one event ts after signing: the canonical message changes, so
+        // the signature must fail even though the timeline still looks sane.
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
+        let ts = v["carrier"]["events"][3]["ts"].as_u64().unwrap();
+        v["carrier"]["events"][3]["ts"] = serde_json::json!(ts + 1);
         let out = run(&v.to_string());
         assert!(!out.verified);
         assert!(out.reason.contains("signature"), "reason: {}", out.reason);

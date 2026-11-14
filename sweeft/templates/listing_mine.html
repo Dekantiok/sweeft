@@ -31,12 +31,57 @@
           <a href="/u/{{ item.req.buyer_account }}/" target="_blank" rel="noreferrer" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Buyer profile</a>
           <button onclick="declineRequest({{ item.req.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Decline</button>
         </div>
+        {% if item.offers %}
+          <div class="border-t border-slate-100 pt-2 mt-1 space-y-2">
+            {% for o in item.offers %}
+              <div class="flex items-center gap-2 flex-wrap text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                <span class="font-semibold text-slate-800">{{ o.amount_display }} NEAR</span>
+                <span class="rounded-full px-2 py-0.5 border {% if o.status == 'accepted' %}bg-emerald-50 text-emerald-800 border-emerald-200{% elif o.status == 'proposed' %}bg-sky-50 text-sky-800 border-sky-200{% elif o.status == 'countered' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-slate-100 text-slate-600 border-slate-200{% endif %}">{{ o.get_status_display }}</span>
+                <span class="text-slate-500">offer #{{ o.id }} by <a class="text-emerald-700" href="/u/{{ o.buyer_account }}/" target="_blank" rel="noreferrer"><code>{{ o.buyer_account }}</code></a></span>
+                <span class="text-slate-400" title="Negotiation events">· {{ o.history|length }} event{{ o.history|length|pluralize }}</span>
+                <div class="flex-1"></div>
+                {% if o.status == 'proposed' or o.status == 'countered' %}
+                  <input id="counter-{{ o.id }}" type="number" step="any" min="0" value="{{ o.listing.price_display|cut:',' }}" title="Counter amount (NEAR)" class="w-24 border border-slate-300 rounded-lg px-2 py-1 text-xs">
+                  <button onclick="counterOffer({{ o.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-2 py-1">Counter</button>
+                  <button onclick="acceptOffer({{ o.id }})" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-2 py-1 font-medium">Accept</button>
+                  <button onclick="rejectOffer({{ o.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-2 py-1">Reject</button>
+                {% elif o.status == 'accepted' %}
+                  <a href="/market/{{ o.listing.slug }}/escrow/?buyer={{ o.buyer_account }}&amp;offer={{ o.id }}" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 font-medium">Create escrow (agreed price)</a>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
       </div>
     {% endif %}
   {% empty %}
     <p class="text-sm text-slate-500 mt-2 text-center">No purchase requests yet.</p>
   {% endfor %}
 </section>
+
+{% if open_offers %}
+<section class="mt-6">
+  <h2 class="font-semibold">Open offers in negotiation</h2>
+  {% for o in open_offers %}
+    <div class="flex items-center gap-2 flex-wrap text-sm bg-white border border-sky-200 rounded-xl p-4 mt-2">
+      <div class="text-sm">
+        <a class="font-medium text-emerald-700" href="/market/{{ o.listing.slug }}/">{{ o.listing.title }}</a>
+        <div class="text-xs text-slate-500">
+          offer #{{ o.id }} by <a class="text-emerald-700" href="/u/{{ o.buyer_account }}/" target="_blank" rel="noreferrer"><code>{{ o.buyer_account }}</code></a>
+          · {{ o.updated_at }} · {{ o.history|length }} event{{ o.history|length|pluralize }}
+        </div>
+      </div>
+      <div class="flex-1"></div>
+      <span class="font-semibold text-slate-800 text-sm">{{ o.amount_display }} NEAR</span>
+      <span class="rounded-full px-2 py-0.5 text-xs border {% if o.status == 'countered' %}bg-amber-50 text-amber-800 border-amber-200{% else %}bg-sky-50 text-sky-800 border-sky-200{% endif %}">{{ o.get_status_display }}</span>
+      <input id="counter-{{ o.id }}" type="number" step="any" min="0" value="{{ o.listing.price_display|cut:',' }}" title="Counter amount (NEAR)" class="w-24 border border-slate-300 rounded-lg px-2 py-1 text-xs">
+      <button onclick="counterOffer({{ o.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Counter</button>
+      <button onclick="acceptOffer({{ o.id }})" class="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 text-xs font-medium">Accept</button>
+      <button onclick="rejectOffer({{ o.id }})" class="border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs">Reject</button>
+    </div>
+  {% endfor %}
+</section>
+{% endif %}
 
 <section class="mt-6">
   <h2 class="font-semibold">My inventory</h2>
@@ -77,6 +122,26 @@
     const res = await SweftApp.jsonPost(`/api/v1/market/requests/${id}/decline/`, {});
     if (!res.ok) { alert(res.error || 'failed'); return; }
     window.location.reload();
+  }
+  // NEAR decimal text → yoctoNEAR string (the API stores yocto strings).
+  function toYocto(text) {
+    const clean = String(text || '').replace(/,/g, '').trim();
+    if (!clean) return '0';
+    const [whole = '0', frac = ''] = clean.split('.');
+    try {
+      return (BigInt(whole || '0') * 10n ** 24n + BigInt((frac + '0'.repeat(24)).slice(0, 24) || '0')).toString();
+    } catch (e) { return '0'; }
+  }
+  async function offerAction(id, action, body) {
+    const res = await SweftApp.jsonPost(`/api/v1/market/offers/${id}/${action}/`, body || {});
+    if (!res.ok) { alert(res.error || 'failed'); return; }
+    window.location.reload();
+  }
+  function acceptOffer(id) { offerAction(id, 'accept'); }
+  function rejectOffer(id) { offerAction(id, 'reject'); }
+  function counterOffer(id) {
+    const input = document.getElementById(`counter-${id}`);
+    offerAction(id, 'counter', { amount: toYocto(input ? input.value : '') });
   }
 </script>
 {% endblock %}

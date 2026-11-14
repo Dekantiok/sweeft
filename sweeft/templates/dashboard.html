@@ -48,6 +48,11 @@
       <button onclick="revokeCopilotBudget()" class="border border-rose-400 text-rose-300 rounded-lg px-3 py-2 text-sm">Revoke (set 0)</button>
       <span id="copilot-status" class="text-xs text-slate-500"></span>
     </div>
+    <div id="copilot-agent-row" class="mt-3 flex items-center gap-2 flex-wrap" style="display:none">
+      <button id="copilot-agent-btn" style="display:none" onclick="authorizeCopilotAgent()" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-2 text-sm">Authorize co-pilot agent on-chain</button>
+      <span id="copilot-agent-line" class="text-xs text-slate-500"></span>
+      <span id="copilot-agent-status" class="text-xs text-slate-500"></span>
+    </div>
   </div>
 
   <div class="grid lg:grid-cols-2 gap-4 mt-6">
@@ -116,6 +121,13 @@
     try {
       const r = await fetch('/api/v1/ai/agent/');
       const d = await r.json();
+      // Owner-scoped agent row: tolerate servers that don't send these fields.
+      const agentRow = document.getElementById('copilot-agent-row');
+      const agentBtn = document.getElementById('copilot-agent-btn');
+      const agentLine = document.getElementById('copilot-agent-line');
+      if (agentRow) agentRow.style.display = (d && (d.owner_agent || d.agent_account)) ? '' : 'none';
+      if (agentBtn) agentBtn.style.display = (d && d.agent_account) ? '' : 'none';
+      if (agentLine) agentLine.textContent = (d && d.owner_agent) ? 'Owner-scoped agent: ' + d.owner_agent : '';
       const el = document.getElementById('copilot-budget');
       if (!el) return;
       if (d.ok && d.configured) {
@@ -125,6 +137,25 @@
         el.textContent = 'not configured';
       }
     } catch (e) { /* leave the placeholder */ }
+  }
+
+  async function authorizeCopilotAgent() {
+    const st = document.getElementById('copilot-agent-status');
+    const btn = document.getElementById('copilot-agent-btn');
+    try {
+      if (btn) btn.disabled = true;
+      if (st) { st.style.color = ''; st.textContent = 'Confirm in your wallet…'; }
+      const r = await fetch('/api/v1/ai/agent/');
+      const d = await r.json();
+      if (!d.ok || !d.budget_contract) throw new Error('co-pilot budget not configured');
+      if (!d.agent_account) throw new Error('co-pilot agent not configured');
+      await SweftApp.callContractOn(d.budget_contract, 'set_my_agent', { agent: d.agent_account }, '0', '100000000000000');
+      if (st) { st.style.color = '#6ee7b7'; st.textContent = 'Agent authorized on-chain ✓'; }
+    } catch (e) {
+      if (st) { st.style.color = '#fda4af'; st.textContent = 'Failed: ' + (e && e.message ? e.message : e); }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function setCopilotAllowance(units, label) {

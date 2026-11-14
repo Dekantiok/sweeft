@@ -84,3 +84,93 @@ class PurchaseRequest(models.Model):
 
     def __str__(self):
         return f"{self.buyer_account} → {self.listing.title} [{self.status}]"
+
+
+class Offer(models.Model):
+    """An off-chain price negotiation between a buyer and a listing's seller.
+
+    The offer records intent only — no funds move here. Status is strict:
+    proposed → countered (either side may counter) → accepted | rejected |
+    withdrawn. On acceptance the record opens a pending PurchaseRequest so the
+    existing seller-created escrow flow picks the deal up at the agreed price.
+    """
+
+    STATUS_CHOICES = [
+        ("proposed", "Proposed"),
+        ("countered", "Countered"),
+        ("accepted", "Accepted"),
+        ("rejected", "Rejected"),
+        ("withdrawn", "Withdrawn"),
+    ]
+    OPEN_STATUSES = ("proposed", "countered")
+
+    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name="offers")
+    buyer_account = models.CharField(max_length=64, db_index=True)
+    seller_account = models.CharField(max_length=64, db_index=True)
+    amount = models.CharField(max_length=40, help_text="current native NEAR amount in yoctoNEAR, string")
+    max_amount = models.CharField(max_length=40, help_text="buyer's ceiling in yoctoNEAR, string")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="proposed")
+    message = models.TextField(blank=True)
+    history = models.JSONField(default=list, blank=True, help_text="negotiation events: {side, amount, message, action, at}")
+    escrow_id = models.CharField(max_length=32, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Offer #{self.pk} on {self.listing_id} by {self.buyer_account} [{self.status}]"
+
+    @property
+    def amount_display(self) -> str:
+        from apps.escrow.near import format_near_amount
+
+        return format_near_amount(self.amount)
+
+    @property
+    def max_display(self) -> str:
+        from apps.escrow.near import format_near_amount
+
+        return format_near_amount(self.max_amount)
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in self.OPEN_STATUSES
+
+    def append_history(self, side: str, action: str, *, amount: str | None = None, message: str = "") -> None:
+        """Append one negotiated event; the history list is the audit trail."""
+        from django.utils import timezone
+
+        self.history = list(self.history or []) + [
+            {
+                "side": side,
+                "amount": str(amount if amount is not None else self.amount),
+                "message": (message or "")[:1000],
+                "action": action,
+                "at": timezone.now().isoformat(),
+            }
+        ]
+
+    def accept(self, side: str) -> PurchaseRequest:
+        """Mark accepted and make sure the seller's escrow flow has a request.
+
+        ``side`` is who accepted: "seller" (of a proposed/countered offer) or
+        "buyer" (of a seller counteroffer).
+        """
+        self.status = "accepted"
+        self.append_history(side=side, action="accepted")
+        agreed = f"Offer #{self.pk} accepted at {self.amount_display} NEAR"
+        if self.message:
+            agreed = f"{agreed} — {self.message}"
+        req, created = PurchaseRequest.objects.get_or_create(
+            listing=self.listing,
+            buyer_account=self.buyer_account,
+            status="pending",
+            defaults={"message": agreed[:1000]},
+        )
+        if not created and f"Offer #{self.pk}" not in (req.message or ""):
+            req.message = (((req.message + " · ") if req.message else "") + agreed)[:1000]
+            req.save(update_fields=["message"])
+        self.save(update_fields=["status", "history", "updated_at"])
+        return req

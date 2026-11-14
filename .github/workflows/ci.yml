@@ -33,6 +33,11 @@ jobs:
         run: |
           cargo clippy --all-targets --manifest-path contracts/sweeft/Cargo.toml
           cargo clippy --target wasm32-unknown-unknown --manifest-path contracts/stub-outlayer/Cargo.toml
+          cargo clippy --target wasm32-unknown-unknown --manifest-path contracts/near-budget/Cargo.toml
+      - name: Budget contract tests + wasm build
+        run: |
+          cargo test --manifest-path contracts/near-budget/Cargo.toml
+          cargo build --release --target wasm32-unknown-unknown --manifest-path contracts/near-budget/Cargo.toml
       - name: Build contract wasm (sandbox artifact)
         run: cargo build --release --target wasm32-unknown-unknown
         working-directory: contracts/sweeft

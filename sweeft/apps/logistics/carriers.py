@@ -14,30 +14,81 @@ from __future__ import annotations
 
 import hashlib
 import time
+from datetime import datetime, timezone
 
 from django.conf import settings
 
 from .models import Shipment, ShipmentEvent
 
 
+def _event_ts_ms(event: dict, issued_at: int) -> int:
+    """Best-effort epoch-milliseconds timestamp for one carrier event.
+
+    Signing must never crash on display data. An int-coercible ``ts`` wins,
+    then an ISO-8601 ``timestamp`` (naive datetimes are assumed UTC), then
+    ``issued_at`` as the final fallback (in practice the latest scan).
+    """
+    ts = (event or {}).get("ts")
+    if ts is not None:
+        try:
+            return int(ts)
+        except (TypeError, ValueError):
+            pass
+    raw = (event or {}).get("timestamp")
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None:
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            try:
+                return int(parsed.timestamp() * 1000)
+            except (OverflowError, OSError, ValueError):
+                pass
+    return int(issued_at)
+
+
+def _canonical_ts(value) -> str:
+    """Render one event ``ts`` for the canonical message ("" when absent)."""
+    if value is None:
+        return ""
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return ""
+
+
 def canonical_carrier_message(payload: dict) -> str:
     """Canonical signing message — MUST match the TEE verifier byte-for-byte.
 
-    `v1|provider_id|tracking_number|shipment_id|status|issued_at|<event statuses, joined>`
-    Statuses are raw payload strings, in payload order.
+    `v2|provider_id|tracking_number|shipment_id|status|issued_at|<events, joined>`
+
+    where each event is rendered as `<status>@<ts>`; ``ts`` is the event
+    timestamp in integer epoch-milliseconds and is signed, so event times
+    cannot be tampered with after the fact. Statuses are raw payload strings,
+    in payload order.
     """
-    statuses = ",".join(
-        str((event or {}).get("status", "")) for event in (payload.get("events") or [])
+    events = ",".join(
+        f"{str((event or {}).get('status', ''))}@{_canonical_ts((event or {}).get('ts'))}"
+        for event in (payload.get("events") or [])
     )
     issued_at = payload.get("issued_at", 0)
     return (
-        f"v1|{payload.get('provider_id', '')}|{payload.get('tracking_number', '')}"
-        f"|{payload.get('shipment_id', '')}|{payload.get('status', '')}|{issued_at}|{statuses}"
+        f"v2|{payload.get('provider_id', '')}|{payload.get('tracking_number', '')}"
+        f"|{payload.get('shipment_id', '')}|{payload.get('status', '')}|{issued_at}|{events}"
     )
 
 
 def sign_carrier_payload(payload: dict) -> dict:
     """Attach the Demo Carrier service's ed25519 signature when configured.
+
+    Every event is given a signed ``ts`` (integer epoch-milliseconds) before
+    signing: an explicit ``ts`` is kept, otherwise it is derived from the
+    event's ISO-8601 ``timestamp`` (``datetime.fromisoformat``, naive values
+    assumed UTC), falling back to ``issued_at`` when unparsable — display data
+    never crashes signing.
 
     The matching public key is registered on-chain (`set_carrier_pubkey`), so
     the TEE verifier only accepts carrier data signed by this key — a caller
@@ -48,7 +99,13 @@ def sign_carrier_payload(payload: dict) -> dict:
         raise ValueError("Demo Carrier signing key is not configured — refusing to create an unsigned payload")
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    payload["issued_at"] = int(time.time() * 1000)
+    issued_at = int(time.time() * 1000)
+    payload["issued_at"] = issued_at
+    events = payload.get("events")
+    if isinstance(events, list):
+        for event in events:
+            if isinstance(event, dict):
+                event["ts"] = _event_ts_ms(event, issued_at)
     key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))
     payload["signature"] = key.sign(canonical_carrier_message(payload).encode()).hex()
     return payload

@@ -66,11 +66,66 @@
       {% endif %}
       <p id="req-status" class="text-xs text-slate-500 mt-2"></p>
     </div>
+
+    {% if wallet_account and not is_owner %}
+      <div class="bg-white border border-slate-200 rounded-xl p-4">
+        <h2 class="font-semibold text-sm">Make an offer <span class="text-xs text-slate-400">(negotiate the price)</span></h2>
+        {% if my_offer %}
+          <div class="mt-2 text-xs rounded-lg border px-3 py-2 {% if my_offer.status == 'accepted' %}bg-emerald-50 border-emerald-200 text-emerald-800{% elif my_offer.status == 'rejected' or my_offer.status == 'withdrawn' %}bg-slate-50 border-slate-200 text-slate-600{% else %}bg-sky-50 border-sky-200 text-sky-800{% endif %}">
+            Your offer #{{ my_offer.id }}: <b>{{ my_offer.amount_display }} NEAR</b>
+            (max {{ my_offer.max_display }} NEAR) · {{ my_offer.get_status_display }}
+            {% if my_offer.status == 'countered' %} — the seller countered at {{ my_offer.amount_display }} NEAR. Accept it in the co-pilot or send a new offer below.{% endif %}
+            {% if my_offer.status == 'accepted' %} — the seller will create the escrow at the agreed price.{% endif %}
+          </div>
+        {% endif %}
+        {% if listing.status == 'active' and not my_offer_open %}
+          <div class="space-y-2 mt-2 text-sm">
+            <input id="offer-amount" type="number" step="any" min="0" placeholder="Your price (NEAR)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <input id="offer-max" type="number" step="any" min="0" placeholder="Max budget (NEAR)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+            <textarea id="offer-message" rows="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" placeholder="Message to the seller (optional)"></textarea>
+            <button onclick="makeOffer()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-medium">Send offer</button>
+          </div>
+        {% elif listing.status != 'active' %}
+          <p class="text-xs text-slate-500 mt-2">This listing is {{ listing.get_status_display|lower }} — offers are closed.</p>
+        {% else %}
+          <p class="text-xs text-slate-500 mt-2">You have an open offer on this listing — wait for the seller, or withdraw it before sending a new one.</p>
+        {% endif %}
+        <p id="offer-status" class="text-xs text-slate-500 mt-2"></p>
+        <p class="text-xs text-slate-500 mt-2">Offers are off-chain records; funds move only through the escrow the seller creates at the agreed price.</p>
+      </div>
+    {% endif %}
   </aside>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
+  // NEAR decimal text → yoctoNEAR string (the API stores yocto strings).
+  function toYocto(text) {
+    const clean = String(text || '').replace(/,/g, '').trim();
+    if (!clean) return '0';
+    const [whole = '0', frac = ''] = clean.split('.');
+    try {
+      return (BigInt(whole || '0') * 10n ** 24n + BigInt((frac + '0'.repeat(24)).slice(0, 24) || '0')).toString();
+    } catch (e) { return '0'; }
+  }
+  async function makeOffer() {
+    const status = document.getElementById('offer-status');
+    const amount = toYocto(document.getElementById('offer-amount').value);
+    const maxAmount = toYocto(document.getElementById('offer-max').value);
+    if (amount === '0' || maxAmount === '0') { status.textContent = 'Enter your price and max budget in NEAR.'; return; }
+    try {
+      status.textContent = 'Sending offer…';
+      const res = await SweftApp.jsonPost('/api/v1/market/offers/', {
+        listing_slug: '{{ listing.slug }}',
+        amount,
+        max_amount: maxAmount,
+        message: document.getElementById('offer-message').value,
+      });
+      if (!res.ok) throw new Error(res.error || 'offer failed');
+      status.textContent = 'Offer sent to the seller.';
+      setTimeout(() => window.location.reload(), 800);
+    } catch (e) { status.textContent = ''; alert('Failed: ' + e.message); }
+  }
   async function requestPurchase() {
     const status = document.getElementById('req-status');
     try {

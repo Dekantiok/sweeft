@@ -206,6 +206,28 @@ class Command(BaseCommand):
         except Exception as exc:  # noqa: BLE001 — report, do not crash the run
             check("AI co-pilot key/budget wiring reachable", False, str(exc)[:160])
 
+        # 9. Payment hardening: on-chain intent id support + per-owner agent scope.
+        try:
+            owner_agent = self._view(budget, "get_owner_agent", {"owner": getattr(settings, "PLATFORM_OWNER", "") or agent})
+            check(
+                "budget exposes per-owner agent authorization",
+                True,  # reaching this line proves the upgraded interface exists
+                f"owner_agent={owner_agent}",
+            )
+        except Exception as exc:  # noqa: BLE001
+            check("budget exposes per-owner agent authorization", False, str(exc)[:160])
+        try:
+            owner = getattr(settings, "PLATFORM_OWNER", "") or ""
+            if owner:
+                scoped = self._view(budget, "get_owner_agent", {"owner": owner})
+                check(
+                    f"{owner} has authorized the co-pilot agent on-chain",
+                    scoped == agent,
+                    f"owner_agent={scoped}",
+                )
+        except Exception as exc:  # noqa: BLE001
+            check(f"{agent} owner-scoped authorization reachable", False, str(exc)[:160])
+
         count = self._view(contract, "escrow_count", {}) or 0
         self.stdout.write(f"  book: {count} escrows created on this deployment\n")
 
