@@ -313,29 +313,51 @@ end `DELIVERY_FAILED` at +60s or `LOST` at +30s). Server-side transitions are id
 forward-only, so retries and restarts cannot corrupt the timeline OutLayer validates. If the
 simulator is down, shipments wait at `CREATED` and the UI says so — nothing else breaks.
 
-### AI co-pilot payments (native NEAR budget, user-set limit)
+### AI co-pilot commerce (discovery, negotiation, payments)
 
-Open the floating 💬 panel and talk to the co-pilot, e.g.
-“pay 0.025 NEAR to seller.steepdata3968.testnet for invoice 12”.
+The co-pilot is a first-class part of the product (floating 💬 panel on every page, plus a
+homepage section). It operates on **real marketplace data** through a strict tool registry — read
+tools never write, and every state-changing tool enforces session authorization and records its
+result:
 
-1. The co-pilot prepares a payment card (recipient, amount, your available budget).
-2. **You set the limit** — type the exact NEAR amount on the card (or the dashboard “Co-pilot budget”
-   card) and deposit it with **one wallet signature**. “Pay now” settles instantly once a budget exists.
-3. The agent then calls `pay(owner, receiver, amount)` on `budget.steepdata3968.testnet` — only the
-   agent can call it, and only within `allowance - spent`. Raise the limit with another deposit;
-   revoke by withdrawing the unspent remainder.
+- **Discovery** — “find me a laptop with 16 GB RAM under 5 NEAR” → requirements + budget are
+  extracted, `search_listings` ranks **actual active listings** by match and seller reputation, and
+  the reply renders selectable product cards with reasons.
+- **Comparison** — “which of these is better value?” → `compare_listings` returns price/spec/seller
+  rows with pros, from real listing data only.
+- **Offers & negotiation** — “offer 4.2 NEAR for this laptop, I can go to 4.8” → the co-pilot creates
+  a real marketplace **Offer** (`proposed → countered → accepted/rejected/withdrawn`) with the
+  buyer's ceiling recorded. Sellers accept/reject/counter on `/market/mine/`; buyers instruct the
+  co-pilot to counter (“counter with 4.5”) and **the ceiling is enforced server-side** — the agent
+  cannot exceed it, and asks for new authorization when the seller pushes past it. Accepted offers
+  prefill the escrow at the agreed price (“Create escrow (agreed price)”).
+- **Payment preparation & execution** — “pay the seller for this accepted offer” → a payment card
+  shows recipient, amount and available budget; nothing moves until **you** click Pay/authorize.
+  The agent then calls `pay(owner, receiver, amount, intent_id)` on
+  `budget.steepdata3968.testnet`; every execution is audited as a `PaymentIntent`.
+- **Escrow & monitoring** — “where is my order / is the escrow still active / when can funds
+  release?” → `get_my_trade_status` reads actual chain + shipment + verification state and renders
+  order cards (pending / shipped / verified / awaiting confirmation / settled).
+- **Execution feedback** — tool activity is shown as concise named steps (“Searching marketplace”,
+  “Preparing offer”, “Checking budget”, “Preparing payment”) with 🔎 read / ⚙ prepare / ⚡ action
+  badges; results appear as cards (products, comparisons, offers, payments, escrows) inside the
+  conversation.
 
-Platform policy caps each payment (`AI_AGENT_MAX_PAYMENT`, default 0.1 NEAR).
-Everything is audited as a `PaymentIntent` with its tx hash. Testnet disclosure:
-the demo agent key lives in the server environment for the MVP; on mainnet the
-same design runs with the key inside a TEE/KMS — the on-chain budget stays the boundary.
-The agent key itself is a **function-call access key scoped to `pay` on the budget
-contract only** (allowance-capped, full-access key removed — tx
-`4HPRtHBYHJR7uemWd26e2erL6S6SBd1pWgYubGaTrrWJ`), so a compromised key cannot
-transfer the account balance, deploy code, or touch any other contract.
+Payment safety: proposals now **expire** (`AI_PAYMENT_INTENT_TTL_SECONDS`, default 15 min) and a
+crashed execution is reclaimable after `AI_PAYMENT_PROCESSING_TIMEOUT_SECONDS`; amounts and
+recipients are immutable per intent, one session can only execute its own intents, and the
+**on-chain intent id** makes duplicate execution impossible even across retries.
 
-Verified live: deposited 0.05 NEAR → co-pilot paid native invoices; `available` decreased exactly.
-Over-cap and no-budget paths refused correctly.
+The agent key is a **function-call access key scoped to `pay` on the budget contract only**
+(allowance-capped, full-access key removed — tx `4HPRtHBYHJR7uemWd26e2erL6S6SBd1pWgYubGaTrrWJ`).
+Since the 2026-11 hardening upgrade (tx `2UteeXb3ci15ZEf4XbwVzNVywYRcPCKQgCvMDXg3jx5B`) the contract
+also supports **per-owner agent authorization** (`set_my_agent`/`get_owner_agent`/`is_revoked`) and
+rejects duplicate `intent_id`s on-chain. Existing budgets were preserved across the upgrade; the
+dashboard’s co-pilot budget card authorizes the agent per wallet with one signature.
+
+Verified live: agent `pay` executed with `"intent_id": "14"` in the transaction args (tx
+`DfJCDKu85garMiSSBBYxAen43dYx4wSonZ5w6PC6G18R`); replay of the same intent returns the cached
+receipt; over-cap and no-budget paths refused correctly.
 
 ### Governance console
 
@@ -372,6 +394,10 @@ on-chain:
 | Pool reachable before a board exists | The review board is a **required init argument** (`new(..., arbiter, ...)`); a fresh deployment never exposes the pool, and the deploy script additionally requires the carrier key. |
 | Login accepted scoped function-call keys | Sessions require a **FullAccess** on-chain key (verified against the access-key list), plus CSRF-protected POSTs, session fixation rotation, cache-backed rate limits, and a secret-key fail-hard when `DEBUG=0`. |
 | AI budget cap lived only in server settings | Enforced **on-chain** in the budget contract (`get_max_payment`/`set_max_payment`, default 0.1 NEAR per payment). |
+| Shared agent key could spend any budget | Fixed 2026-11: the budget contract now supports **per-owner agent authorization** (`set_my_agent`, `get_owner_agent`, `is_revoked`), so an agent authorized by one wallet cannot spend another wallet's budget; revocation blocks both the per-owner and the global agent. Deployed by state-preserving upgrade (tx `2UteeXb3ci15ZEf4XbwVzNVywYRcPCKQgCvMDXg3jx5B`). |
+| Duplicate logical payments | Fixed 2026-11: `pay(owner, receiver, amount, intent_id)` rejects a reused intent id on-chain (rollback releases the id on transfer failure so retries with the same id succeed). Django passes the `PaymentIntent` id (live proof tx `DfJCDKu85garMiSSBBYxAen43dYx4wSonZ5w6PC6G18R`). |
+| Stale payment approvals / stranded executions | PaymentProposals **expire** (default 15 min, `AI_PAYMENT_INTENT_TTL_SECONDS`) and a crashed `processing` claim is reclaimable after `AI_PAYMENT_PROCESSING_TIMEOUT_SECONDS`; amount/recipient are immutable per intent and execution is session-scoped. |
+| Event timestamps were not authenticated | The verifier v2 canonical message signs each event as `status@ts` (epoch ms) and rejects missing, zero, out-of-order or future-dated timestamps; the Python carrier signer emits the same v2 format. Deployed to OutLayer (wasm sha256 `1f42106080777f03546599891b531de1f8420decdc94931ed578231aeb0d59f2`). |
 
 Residual (disclosed) risks:
 
