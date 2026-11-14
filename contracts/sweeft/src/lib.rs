@@ -27,8 +27,9 @@ use near_sdk::json_types::U128;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::serde_json::json;
 use near_sdk::store::{LookupMap, Vector};
-use near_sdk::{env, log, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise};
-
+use near_sdk::{
+    env, log, near, require, AccountId, BorshStorageKey, Gas, NearToken, PanicOnDefault, Promise,
+};
 
 const MIN_VERIFICATION_DEPOSIT_YOCTO: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
 const OUTLAYER_GAS_TGAS: u64 = 100;
@@ -227,7 +228,10 @@ pub struct Sweeft {
 }
 
 fn sha256_hex(input: &[u8]) -> String {
-    env::sha256(input).iter().map(|b| format!("{:02x}", b)).collect()
+    env::sha256(input)
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 fn push_index(map: &mut LookupMap<AccountId, Vec<String>>, key: &AccountId, id: &str) {
@@ -333,9 +337,15 @@ impl Sweeft {
             env::attached_deposit().as_yoctonear() >= MIN_CREATE_DEPOSIT_YOCTO,
             "attach at least 0.02 NEAR storage deposit"
         );
-        require!((self.escrow_ids.len() as u64) < MAX_ESCROWS, "escrow capacity reached");
+        require!(
+            (self.escrow_ids.len() as u64) < MAX_ESCROWS,
+            "escrow capacity reached"
+        );
         require!(product_name.len() <= MAX_NAME_LEN, "product_name too long");
-        require!(product_desc_hash.len() <= MAX_HASH_LEN, "product_desc_hash too long");
+        require!(
+            product_desc_hash.len() <= MAX_HASH_LEN,
+            "product_desc_hash too long"
+        );
         require!(terms_hash.len() <= MAX_TERMS_LEN, "terms_hash too long");
         if let Some(t) = &tracking_number {
             require!(t.len() <= MAX_TRACKING_LEN, "tracking_number too long");
@@ -353,15 +363,24 @@ impl Sweeft {
         if let Some(b) = &buyer {
             require!(b != &seller, "buyer must differ from seller");
         } else {
-            require!(invite_hash.is_some(), "invite_hash required when buyer is not preassigned");
+            require!(
+                invite_hash.is_some(),
+                "invite_hash required when buyer is not preassigned"
+            );
         }
         if let Some(p) = &logistics_provider {
             require!(p != &seller, "provider must differ from seller");
             require!(Some(p) != buyer.as_ref(), "provider must differ from buyer");
-            require!(p.as_str() != env::current_account_id(), "provider cannot be this contract");
+            require!(
+                p.as_str() != env::current_account_id(),
+                "provider cannot be this contract"
+            );
         }
         let now_ms = env::block_timestamp() / 1_000_000;
-        require!(dispatch_deadline_ms > now_ms, "dispatch deadline in the past");
+        require!(
+            dispatch_deadline_ms > now_ms,
+            "dispatch deadline in the past"
+        );
         require!(
             dispatch_deadline_ms <= now_ms.saturating_add(MAX_DISPATCH_DELAY_MS),
             "dispatch deadline below the 30 day cap"
@@ -375,10 +394,16 @@ impl Sweeft {
             "inspection period above the 14 day cap"
         );
         let seller_ids = self.seller_index.get(&seller).cloned().unwrap_or_default();
-        require!(seller_ids.len() < MAX_IDS_PER_ACCOUNT, "seller escrow index full");
+        require!(
+            seller_ids.len() < MAX_IDS_PER_ACCOUNT,
+            "seller escrow index full"
+        );
         if let Some(b) = &buyer {
             let pending = self.pending_index.get(b).cloned().unwrap_or_default();
-            require!(pending.len() < MAX_PENDING_PER_ACCOUNT, "counterparty pending index full");
+            require!(
+                pending.len() < MAX_PENDING_PER_ACCOUNT,
+                "counterparty pending index full"
+            );
         }
 
         let platform_fee = seller_amount.0 * self.platform_fee_bps as u128 / 10_000;
@@ -443,20 +468,29 @@ impl Sweeft {
     /// transaction is).
     pub fn accept_escrow(&mut self, escrow_id: String, invite_secret: Option<String>) {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::PendingAcceptance, "wrong state");
+        require!(
+            escrow.state == EscrowState::PendingAcceptance,
+            "wrong state"
+        );
         let caller = env::predecessor_account_id();
         match &escrow.buyer {
             Some(b) => require!(&caller == b, "only the preassigned buyer can accept"),
             None => {
                 let secret = invite_secret.expect("invite secret required");
                 let hash = sha256_hex(secret.as_bytes());
-                require!(Some(&hash) == escrow.invite_hash.as_ref(), "invalid invite secret");
+                require!(
+                    Some(&hash) == escrow.invite_hash.as_ref(),
+                    "invalid invite secret"
+                );
                 require!(caller != escrow.seller, "seller cannot be the buyer");
                 escrow.buyer = Some(caller.clone());
             }
         }
         let buyer_ids = self.buyer_index.get(&caller).cloned().unwrap_or_default();
-        require!(buyer_ids.len() < MAX_IDS_PER_ACCOUNT, "buyer escrow index full");
+        require!(
+            buyer_ids.len() < MAX_IDS_PER_ACCOUNT,
+            "buyer escrow index full"
+        );
         escrow.state = EscrowState::Approved;
         self.escrows.insert(escrow_id.clone(), escrow);
         push_index(&mut self.buyer_index, &caller, &escrow_id);
@@ -468,12 +502,18 @@ impl Sweeft {
     /// Buyer declines the agreement.
     pub fn reject_escrow(&mut self, escrow_id: String) {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::PendingAcceptance, "wrong state");
+        require!(
+            escrow.state == EscrowState::PendingAcceptance,
+            "wrong state"
+        );
         let caller = env::predecessor_account_id();
-        require!(Some(&caller) == escrow.buyer.as_ref(), "only the buyer can reject");
+        require!(
+            Some(&caller) == escrow.buyer.as_ref(),
+            "only the buyer can reject"
+        );
         escrow.state = EscrowState::Rejected;
         self.escrows.insert(escrow_id.clone(), escrow);
-        pop_index(&mut self.pending_index, &caller, &escrow_id);
+        self.prune_terminal_index(&self.internal_get(&escrow_id));
         bump_reputation(&caller, |r| r.requests_rejected += 1);
     }
 
@@ -482,11 +522,13 @@ impl Sweeft {
     pub fn cancel_escrow(&mut self, escrow_id: String) {
         let mut escrow = self.internal_get(&escrow_id);
         require!(
-            escrow.state == EscrowState::PendingAcceptance
-                || escrow.state == EscrowState::Approved,
+            escrow.state == EscrowState::PendingAcceptance || escrow.state == EscrowState::Approved,
             "wrong state"
         );
-        require!(env::predecessor_account_id() == escrow.seller, "only the seller can cancel");
+        require!(
+            env::predecessor_account_id() == escrow.seller,
+            "only the seller can cancel"
+        );
         if escrow.state == EscrowState::Approved {
             require!(
                 env::block_timestamp() / 1_000_000 >= escrow.dispatch_deadline_ms,
@@ -494,12 +536,8 @@ impl Sweeft {
             );
         }
         escrow.state = EscrowState::Cancelled;
-        let buyer = escrow.buyer.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
-        if let Some(b) = buyer {
-            pop_index(&mut self.pending_index, &b, &escrow_id);
-            pop_index(&mut self.buyer_index, &b, &escrow_id);
-        }
+        self.prune_terminal_index(&self.internal_get(&escrow_id));
     }
 
     // ------------------------------------------------------------------
@@ -523,12 +561,20 @@ impl Sweeft {
             || Some(&sender_id) != escrow.buyer.as_ref()
             || amount.0 != escrow.total_amount.0
         {
-            log!("ft_on_transfer rejected: token/state/buyer/amount mismatch for {}", escrow_id);
+            log!(
+                "ft_on_transfer rejected: token/state/buyer/amount mismatch for {}",
+                escrow_id
+            );
             return amount.0.to_string();
         }
         escrow.state = EscrowState::Funded;
         self.escrows.insert(escrow_id.clone(), escrow);
-        log!("escrow {} funded with {} by {}", escrow_id, amount.0, sender_id);
+        log!(
+            "escrow {} funded with {} by {}",
+            escrow_id,
+            amount.0,
+            sender_id
+        );
         "0".to_string()
     }
 
@@ -538,9 +584,15 @@ impl Sweeft {
     #[payable]
     pub fn fund_escrow(&mut self, escrow_id: String) {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(escrow.token.as_str() == NATIVE_NEAR_TOKEN, "not a native NEAR escrow");
+        require!(
+            escrow.token.as_str() == NATIVE_NEAR_TOKEN,
+            "not a native NEAR escrow"
+        );
         require!(escrow.state == EscrowState::Approved, "wrong state");
-        require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer funds");
+        require!(
+            Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(),
+            "only the buyer funds"
+        );
         require!(
             env::attached_deposit().as_yoctonear() == escrow.total_amount.0,
             "attach the exact total in yoctoNEAR"
@@ -565,13 +617,28 @@ impl Sweeft {
     /// the first post-funding assignment fixes it for the rest of the escrow.
     pub fn assign_logistics_provider(&mut self, escrow_id: String, provider: AccountId) {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(env::predecessor_account_id() == escrow.seller, "only the seller assigns the provider");
+        require!(
+            env::predecessor_account_id() == escrow.seller,
+            "only the seller assigns the provider"
+        );
         require!(escrow.state == EscrowState::Funded, "escrow not funded");
-        require!(provider != escrow.seller, "provider must differ from seller");
-        require!(escrow.buyer.as_ref() != Some(&provider), "provider must differ from buyer");
-        require!(provider.as_str() != env::current_account_id(), "provider cannot be this contract");
+        require!(
+            provider != escrow.seller,
+            "provider must differ from seller"
+        );
+        require!(
+            escrow.buyer.as_ref() != Some(&provider),
+            "provider must differ from buyer"
+        );
+        require!(
+            provider.as_str() != env::current_account_id(),
+            "provider cannot be this contract"
+        );
         match &escrow.logistics_provider {
-            Some(current) => require!(current == &provider, "logistics provider is fixed before funding"),
+            Some(current) => require!(
+                current == &provider,
+                "logistics provider is fixed before funding"
+            ),
             None => escrow.logistics_provider = Some(provider),
         }
         escrow.state = EscrowState::ShipmentPending;
@@ -593,7 +660,10 @@ impl Sweeft {
                 || (escrow.state == EscrowState::Shipped && !escrow.pickup_verified),
             "wrong state"
         );
-        require!(tracking_number.len() <= MAX_TRACKING_LEN, "tracking_number too long");
+        require!(
+            tracking_number.len() <= MAX_TRACKING_LEN,
+            "tracking_number too long"
+        );
         if !escrow.shipment_registered {
             require!(
                 env::block_timestamp() / 1_000_000 <= escrow.dispatch_deadline_ms,
@@ -619,7 +689,10 @@ impl Sweeft {
         if let Some(old) = escrow.tracking_number.as_ref() {
             if old != &tracking {
                 let mut map = tracking_to_escrow_map();
-                if map.get(old).is_some_and(|owner| owner.as_str() == escrow_id.as_str()) {
+                if map
+                    .get(old)
+                    .is_some_and(|owner| owner.as_str() == escrow_id.as_str())
+                {
                     map.remove(old);
                 }
             }
@@ -641,14 +714,20 @@ impl Sweeft {
     /// only thing that can set the verification flags. Attach the OutLayer
     /// compute deposit; unused funds are refunded to this contract.
     #[payable]
-    pub fn request_delivery_verification(&mut self, escrow_id: String, carrier_payload: String) -> Promise {
+    pub fn request_delivery_verification(
+        &mut self,
+        escrow_id: String,
+        carrier_payload: String,
+    ) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
         require!(escrow.state == EscrowState::Shipped, "escrow not shipped");
         let now_ms = env::block_timestamp() / 1_000_000;
         if escrow.verification_pending {
             let stale = verification_times_map()
                 .get(&escrow_id)
-                .is_some_and(|requested_ms| now_ms >= requested_ms.saturating_add(VERIFICATION_STALE_MS));
+                .is_some_and(|requested_ms| {
+                    now_ms >= requested_ms.saturating_add(VERIFICATION_STALE_MS)
+                });
             if stale {
                 // A lost OutLayer callback must not permanently brick the
                 // escrow; allow a fresh signed request after one hour.
@@ -660,7 +739,10 @@ impl Sweeft {
         // Carrier authenticity is mandatory end-to-end: the contract refuses
         // to request verification until a carrier signing key is configured,
         // independent of verifier version behaviour.
-        require!(self.get_carrier_pubkey().is_some(), "carrier key not configured");
+        require!(
+            self.get_carrier_pubkey().is_some(),
+            "carrier key not configured"
+        );
         require!(
             env::attached_deposit() >= NearToken::from_yoctonear(MIN_VERIFICATION_DEPOSIT_YOCTO),
             "attach at least 0.001 NEAR for OutLayer compute"
@@ -721,13 +803,19 @@ impl Sweeft {
         escrow_id: String,
         #[callback_result] result: Result<Option<VerificationOutcome>, near_sdk::PromiseError>,
     ) -> Option<VerificationOutcome> {
-        let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return None };
+        let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else {
+            return None;
+        };
         escrow.verification_pending = false;
         verification_times_map().remove(&escrow_id);
         match result {
             Ok(Some(mut outcome)) => {
                 if outcome.escrow_id != escrow.id {
-                    log!("verification escrow mismatch: {} != {}", outcome.escrow_id, escrow.id);
+                    log!(
+                        "verification escrow mismatch: {} != {}",
+                        outcome.escrow_id,
+                        escrow.id
+                    );
                     self.escrows.insert(escrow_id, escrow);
                     return None;
                 }
@@ -760,14 +848,21 @@ impl Sweeft {
                         }
                         _ => {}
                     }
-                    if outcome.reported_status == "DELIVERED" && escrow.state == EscrowState::Shipped {
+                    if outcome.reported_status == "DELIVERED"
+                        && escrow.state == EscrowState::Shipped
+                    {
                         escrow.delivered_verified = true;
                         escrow.state = EscrowState::AwaitingBuyerConfirmation;
                         // Start the inspection-window clock (the permissionless
                         // timeout release reads this timestamp).
                         self.note_delivery_time(&escrow_id);
                     }
-                    log!("verified {} status {} for {}", outcome.escrow_id, outcome.reported_status, escrow.id);
+                    log!(
+                        "verified {} status {} for {}",
+                        outcome.escrow_id,
+                        outcome.reported_status,
+                        escrow.id
+                    );
                 } else {
                     log!("verification failed for {}: {}", escrow.id, outcome.reason);
                 }
@@ -805,10 +900,14 @@ impl Sweeft {
         // paths fold an unpaid logistics allocation into the split and mark
         // this flag, so a later call here would double-pay from pooled funds.
         require!(
-            escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+            escrow.state == EscrowState::Shipped
+                || escrow.state == EscrowState::AwaitingBuyerConfirmation,
             "escrow not in a settleable state"
         );
-        let provider = escrow.logistics_provider.clone().expect("provider not assigned");
+        let provider = escrow
+            .logistics_provider
+            .clone()
+            .expect("provider not assigned");
         escrow.logistics_paid = true;
         let amount = escrow.logistics_amount;
         let token = escrow.token.clone();
@@ -834,11 +933,15 @@ impl Sweeft {
     /// the platform relayer) can release the allocations.
     pub fn release_after_inspection(&mut self, escrow_id: String) -> Promise {
         let escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::AwaitingBuyerConfirmation, "wrong state");
+        require!(
+            escrow.state == EscrowState::AwaitingBuyerConfirmation,
+            "wrong state"
+        );
         let times = delivery_times_map();
         let delivered_ms = *times.get(&escrow_id).expect("delivery time not recorded");
         require!(
-            env::block_timestamp() / 1_000_000 >= delivered_ms.saturating_add(escrow.inspection_period_ms),
+            env::block_timestamp() / 1_000_000
+                >= delivered_ms.saturating_add(escrow.inspection_period_ms),
             "inspection window not elapsed"
         );
         self.start_completion(&escrow_id)
@@ -853,14 +956,23 @@ impl Sweeft {
         let mut escrow = self.internal_get(escrow_id);
         // Idempotency first: a retry after settlement must report clearly.
         require!(!escrow.seller_paid, "already settled");
-        require!(escrow.state == EscrowState::AwaitingBuyerConfirmation, "wrong state");
+        require!(
+            escrow.state == EscrowState::AwaitingBuyerConfirmation,
+            "wrong state"
+        );
         require!(escrow.delivered_verified, "delivery not verified");
-        require!(!escrow.problem_reported, "problem reported; resolve review first");
+        require!(
+            !escrow.problem_reported,
+            "problem reported; resolve review first"
+        );
 
         let logistics_due_now = !escrow.logistics_paid;
         if logistics_due_now {
             require!(escrow.pickup_verified, "pickup not verified");
-            require!(escrow.logistics_provider.is_some(), "assign a logistics provider before completion");
+            require!(
+                escrow.logistics_provider.is_some(),
+                "assign a logistics provider before completion"
+            );
             escrow.logistics_paid = true;
         }
         escrow.state = EscrowState::Completed;
@@ -872,6 +984,7 @@ impl Sweeft {
         let provider = escrow.logistics_provider.clone();
         let logistics_amount = escrow.logistics_amount;
         self.escrows.insert(escrow_id.to_string(), escrow);
+        self.prune_terminal_index(&self.internal_get(escrow_id));
 
         if logistics_due_now {
             payout(token, provider.expect("provider checked"), logistics_amount).then(
@@ -899,7 +1012,8 @@ impl Sweeft {
             escrow.seller_paid = false;
             escrow.platform_paid = false;
             escrow.state = EscrowState::AwaitingBuyerConfirmation;
-            self.escrows.insert(escrow_id, escrow);
+            self.escrows.insert(escrow_id.clone(), escrow);
+            self.restore_active_index(&self.internal_get(&escrow_id));
             log!("completion logistics payout failed — rolled back");
             return;
         }
@@ -930,12 +1044,18 @@ impl Sweeft {
             escrow.seller_paid = false;
             escrow.platform_paid = false;
             escrow.state = EscrowState::AwaitingBuyerConfirmation;
-            self.escrows.insert(escrow_id, escrow);
+            self.escrows.insert(escrow_id.clone(), escrow);
+            self.restore_active_index(&self.internal_get(&escrow_id));
             return;
         }
         let escrow = self.internal_get(&escrow_id);
         self.record_completion(&escrow);
-        let promise = payout(escrow.token.clone(), self.platform_fee_recipient(), escrow.platform_fee);
+        self.prune_terminal_index(&escrow);
+        let promise = payout(
+            escrow.token.clone(),
+            self.platform_fee_recipient(),
+            escrow.platform_fee,
+        );
         let _ = promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -944,7 +1064,9 @@ impl Sweeft {
     }
 
     fn record_completion(&mut self, escrow: &Escrow) {
-        if counted(&escrow.id, COUNTED_COMPLETION) || escrow.seller_amount.0 < MIN_COUNTED_AMOUNT_YOCTO {
+        if counted(&escrow.id, COUNTED_COMPLETION)
+            || escrow.seller_amount.0 < MIN_COUNTED_AMOUNT_YOCTO
+        {
             return;
         }
         mark_counted(&escrow.id, COUNTED_COMPLETION);
@@ -1004,6 +1126,7 @@ impl Sweeft {
                     // otherwise voter stakes would remain locked forever.
                     close_arbitration_case(&escrow_id, 0);
                     if let Some(escrow) = self.escrows.get(&escrow_id).cloned() {
+                        self.prune_terminal_index(&escrow);
                         if !counted(&escrow_id, COUNTED_REFUND) {
                             mark_counted(&escrow_id, COUNTED_REFUND);
                             let buyer = escrow.buyer.clone().expect("buyer set");
@@ -1015,7 +1138,9 @@ impl Sweeft {
             }
             return;
         }
-        let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else { return };
+        let Some(mut escrow) = self.escrows.get(&escrow_id).cloned() else {
+            return;
+        };
         match party.as_str() {
             "logistics" => escrow.logistics_paid = false,
             "platform" => escrow.platform_paid = false,
@@ -1038,17 +1163,28 @@ impl Sweeft {
             }
             _ => {}
         }
-        log!("payout {} failed for {} — flag rolled back", party, escrow_id);
-        self.escrows.insert(escrow_id, escrow);
+        log!(
+            "payout {} failed for {} — flag rolled back",
+            party,
+            escrow_id
+        );
+        self.escrows.insert(escrow_id.clone(), escrow);
+        if matches!(party.as_str(), "refund" | "due_buyer") {
+            self.restore_active_index(&self.internal_get(&escrow_id));
+        }
     }
 
     /// Buyer reports a problem: funds stay locked, escrow moves to review.
     pub fn report_problem(&mut self, escrow_id: String, reason_hash: String) {
         let mut escrow = self.internal_get(&escrow_id);
         require!(reason_hash.len() <= MAX_HASH_LEN, "reason_hash too long");
-        require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer reports a problem");
         require!(
-            escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+            Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(),
+            "only the buyer reports a problem"
+        );
+        require!(
+            escrow.state == EscrowState::Shipped
+                || escrow.state == EscrowState::AwaitingBuyerConfirmation,
             "wrong state"
         );
         escrow.problem_reported = true;
@@ -1070,11 +1206,18 @@ impl Sweeft {
         let caller = env::predecessor_account_id();
         let is_buyer = Some(&caller) == escrow.buyer.as_ref();
         let is_seller = caller == escrow.seller;
-        require!(is_buyer || is_seller, "only buyer or seller can open a dispute");
-        require!(escrow.state != EscrowState::ReviewRequired, "already disputed");
+        require!(
+            is_buyer || is_seller,
+            "only buyer or seller can open a dispute"
+        );
+        require!(
+            escrow.state != EscrowState::ReviewRequired,
+            "already disputed"
+        );
         if is_buyer {
             require!(
-                escrow.state == EscrowState::Shipped || escrow.state == EscrowState::AwaitingBuyerConfirmation,
+                escrow.state == EscrowState::Shipped
+                    || escrow.state == EscrowState::AwaitingBuyerConfirmation,
                 "buyer cannot dispute in this state"
             );
         } else {
@@ -1112,13 +1255,25 @@ impl Sweeft {
     /// resolution path once `set_arbiter` has been called.
     #[payable]
     pub fn vote_dispute(&mut self, escrow_id: String, seller_pct: u8) {
-        require!(self.get_arbiter().is_none(), "arbitration pool is disabled while a review board is set");
+        require!(
+            self.get_arbiter().is_none(),
+            "arbitration pool is disabled while a review board is set"
+        );
         require!(seller_pct <= 100, "pct must be 0..=100");
         let escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
+        require!(
+            escrow.state == EscrowState::ReviewRequired,
+            "no open dispute for this escrow"
+        );
         let voter = env::predecessor_account_id();
-        require!(voter != escrow.seller, "parties cannot arbitrate their own dispute");
-        require!(Some(&voter) != escrow.buyer.as_ref(), "parties cannot arbitrate their own dispute");
+        require!(
+            voter != escrow.seller,
+            "parties cannot arbitrate their own dispute"
+        );
+        require!(
+            Some(&voter) != escrow.buyer.as_ref(),
+            "parties cannot arbitrate their own dispute"
+        );
         let attached = env::attached_deposit();
         require!(
             attached >= NearToken::from_yoctonear(MIN_VOTE_STAKE_YOCTO),
@@ -1143,7 +1298,10 @@ impl Sweeft {
             !case.votes.iter().any(|v| v.voter == voter),
             "already voted — stake is locked until the case resolves"
         );
-        require!(case.votes.len() < MAX_ARBITRATION_VOTES, "vote limit reached");
+        require!(
+            case.votes.len() < MAX_ARBITRATION_VOTES,
+            "vote limit reached"
+        );
         case.votes.push(ArbitrationVote {
             voter,
             seller_pct,
@@ -1159,16 +1317,28 @@ impl Sweeft {
     /// while a review board is set (see `vote_dispute`). Ties choose the
     /// buyer-favourable (lower) seller share.
     pub fn finalize_arbitration(&mut self, escrow_id: String) -> Promise {
-        require!(self.get_arbiter().is_none(), "arbitration pool is disabled while a review board is set");
+        require!(
+            self.get_arbiter().is_none(),
+            "arbitration pool is disabled while a review board is set"
+        );
         let mut escrow = self.internal_get(&escrow_id);
-        require!(escrow.state == EscrowState::ReviewRequired, "no open dispute for this escrow");
+        require!(
+            escrow.state == EscrowState::ReviewRequired,
+            "no open dispute for this escrow"
+        );
         require!(!escrow.seller_paid, "already settled");
         require!(review_due(&escrow_id) == 0, "buyer payout pending retry");
 
         let mut map = arbitration_map();
-        let mut case = map.get(&escrow_id).cloned().expect("no arbitration votes for this dispute");
+        let mut case = map
+            .get(&escrow_id)
+            .cloned()
+            .expect("no arbitration votes for this dispute");
         require!(!case.finalized, "arbitration already finalized");
-        require!(case.total_stake.0 >= MIN_ARBITRATION_STAKE_YOCTO, "arbitration quorum not reached");
+        require!(
+            case.total_stake.0 >= MIN_ARBITRATION_STAKE_YOCTO,
+            "arbitration quorum not reached"
+        );
         require!(!case.votes.is_empty(), "no votes yet");
 
         let mut tally: std::collections::BTreeMap<u8, u128> = std::collections::BTreeMap::new();
@@ -1192,7 +1362,11 @@ impl Sweeft {
         // Same ordering rule as `resolve_review`: compute the pot from the
         // pre-flip logistics state so an unpaid allocation is folded into the
         // split rather than stranded.
-        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let logistics_deduction = if escrow.logistics_paid {
+            escrow.logistics_amount.0
+        } else {
+            0
+        };
         let remaining = escrow.total_amount.0 - logistics_deduction;
         resolution_logistics_map().insert(escrow_id.clone(), escrow.logistics_paid);
         escrow.logistics_paid = true;
@@ -1200,12 +1374,21 @@ impl Sweeft {
         let buyer_part = remaining - seller_part;
         escrow.seller_paid = true;
         escrow.platform_paid = true;
-        escrow.state = if buyer_part == 0 { EscrowState::Completed } else { EscrowState::Refunded };
+        escrow.state = if buyer_part == 0 {
+            EscrowState::Completed
+        } else {
+            EscrowState::Refunded
+        };
         let seller = escrow.seller.clone();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        self.prune_terminal_index(&self.internal_get(&escrow_id));
         review_due_map().insert(escrow_id.clone(), U128(buyer_part));
-        log!("arbitration finalized for {} with {}% to seller", escrow_id, winning_pct);
+        log!(
+            "arbitration finalized for {} with {}% to seller",
+            escrow_id,
+            winning_pct
+        );
         payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -1229,6 +1412,7 @@ impl Sweeft {
                 .unwrap_or(true);
             escrow.state = EscrowState::ReviewRequired;
             self.escrows.insert(escrow_id.clone(), escrow);
+            self.restore_active_index(&self.internal_get(&escrow_id));
             // The disabled legacy pool remains internally consistent if ever
             // used without a board: a failed seller leg can be finalized again.
             let mut map = arbitration_map();
@@ -1236,7 +1420,10 @@ impl Sweeft {
                 case.finalized = false;
                 map.insert(escrow_id.clone(), case);
             }
-            log!("{} seller payout failed — returned to ReviewRequired", label);
+            log!(
+                "{} seller payout failed — returned to ReviewRequired",
+                label
+            );
             return;
         }
         resolution_logistics_map().remove(&escrow_id);
@@ -1244,6 +1431,7 @@ impl Sweeft {
         if escrow.state == EscrowState::Completed {
             self.record_completion(&escrow);
         }
+        self.prune_terminal_index(&escrow);
         self.pay_review_due(&escrow_id);
     }
 
@@ -1255,7 +1443,10 @@ impl Sweeft {
             "resolution payout pending"
         );
         let mut map = arbitration_map();
-        let mut case = map.get(&escrow_id).cloned().expect("no arbitration case for this dispute");
+        let mut case = map
+            .get(&escrow_id)
+            .cloned()
+            .expect("no arbitration case for this dispute");
         require!(case.finalized, "arbitration not finalized yet");
         let voter = env::predecessor_account_id();
         let vote = case
@@ -1294,7 +1485,10 @@ impl Sweeft {
                 caller == current,
                 "board already set — only the current board can change it"
             ),
-            None => require!(caller == self.owner, "only the owner can bootstrap the board"),
+            None => require!(
+                caller == self.owner,
+                "only the owner can bootstrap the board"
+            ),
         }
         gov_config_map().insert("arbiter".to_string(), account_id);
     }
@@ -1354,7 +1548,10 @@ impl Sweeft {
             "only the board can set the carrier key"
         );
         if let Some(p) = &pubkey {
-            require!(p.len() == 64 && p.chars().all(|c| c.is_ascii_hexdigit()), "pubkey must be 64 hex chars");
+            require!(
+                p.len() == 64 && p.chars().all(|c| c.is_ascii_hexdigit()),
+                "pubkey must be 64 hex chars"
+            );
         }
         let mut map = str_config_map();
         match pubkey {
@@ -1383,7 +1580,10 @@ impl Sweeft {
                 caller == current || Some(caller) == self.get_arbiter(),
                 "treasury already set — only the treasury or board can change it"
             ),
-            None => require!(caller == self.owner, "only the owner can bootstrap the treasury"),
+            None => require!(
+                caller == self.owner,
+                "only the owner can bootstrap the treasury"
+            ),
         }
         gov_config_map().insert("treasury".to_string(), account_id);
     }
@@ -1426,7 +1626,11 @@ impl Sweeft {
         // logistics allocation is folded into the split (it goes to the
         // parties), so it must NOT be subtracted from `remaining`. Subtracting
         // it after marking it paid would strand that share in the contract.
-        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        let logistics_deduction = if escrow.logistics_paid {
+            escrow.logistics_amount.0
+        } else {
+            0
+        };
         let remaining = escrow.total_amount.0 - logistics_deduction;
         // Record that no separate logistics payout will happen (folded above);
         // `settle_logistics` is also state-gated, so this can never double-pay.
@@ -1438,10 +1642,15 @@ impl Sweeft {
         let buyer_part = remaining - seller_part;
         escrow.seller_paid = true;
         escrow.platform_paid = true;
-        escrow.state = if buyer_part == 0 { EscrowState::Completed } else { EscrowState::Refunded };
+        escrow.state = if buyer_part == 0 {
+            EscrowState::Completed
+        } else {
+            EscrowState::Refunded
+        };
         let seller = escrow.seller.clone();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        self.prune_terminal_index(&self.internal_get(&escrow_id));
         review_due_map().insert(escrow_id.clone(), U128(buyer_part));
         payout(token, seller, U128(seller_part)).then(
             Self::ext(env::current_account_id())
@@ -1464,7 +1673,10 @@ impl Sweeft {
     pub fn retry_review_buyer_payout(&mut self, escrow_id: String) {
         let escrow = self.internal_get(&escrow_id);
         require!(escrow.seller_paid, "seller leg not settled");
-        require!(review_due_inflight(&escrow_id) == 0, "buyer payout already in flight");
+        require!(
+            review_due_inflight(&escrow_id) == 0,
+            "buyer payout already in flight"
+        );
         require!(review_due(&escrow_id) > 0, "no buyer payout due");
         self.pay_review_due(&escrow_id);
     }
@@ -1477,7 +1689,10 @@ impl Sweeft {
             review_due_map().insert(escrow_id.to_string(), U128(0));
             return;
         }
-        require!(review_due_inflight(escrow_id) == 0, "buyer payout already in flight");
+        require!(
+            review_due_inflight(escrow_id) == 0,
+            "buyer payout already in flight"
+        );
         review_due_map().insert(escrow_id.to_string(), U128(0));
         review_due_inflight_map().insert(escrow_id.to_string(), U128(due));
         let escrow = self.internal_get(escrow_id);
@@ -1501,10 +1716,19 @@ impl Sweeft {
     /// second time. Logistics is deducted only if that transfer already paid.
     pub fn refund_buyer(&mut self, escrow_id: String) -> Promise {
         let mut escrow = self.internal_get(&escrow_id);
-        require!(Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(), "only the buyer can claim this refund");
+        require!(
+            Some(&env::predecessor_account_id()) == escrow.buyer.as_ref(),
+            "only the buyer can claim this refund"
+        );
         require!(!escrow.seller_paid, "seller payout already settled");
-        require!(review_due(&escrow_id) == 0, "resolved buyer payout pending retry");
-        require!(review_due_inflight(&escrow_id) == 0, "buyer payout already in flight");
+        require!(
+            review_due(&escrow_id) == 0,
+            "resolved buyer payout pending retry"
+        );
+        require!(
+            review_due_inflight(&escrow_id) == 0,
+            "buyer payout already in flight"
+        );
         let now = env::block_timestamp() / 1_000_000;
         let in_review = escrow.state == EscrowState::ReviewRequired;
         let no_dispatch = (escrow.state == EscrowState::Funded
@@ -1519,14 +1743,22 @@ impl Sweeft {
             && dispute_times_map()
                 .get(&escrow_id)
                 .is_some_and(|opened_ms| now >= opened_ms.saturating_add(DISPUTE_TIMEOUT_MS));
-        require!(no_dispatch || long_stop || dispute_timeout, "refund not available yet");
-        let logistics_deduction = if escrow.logistics_paid { escrow.logistics_amount.0 } else { 0 };
+        require!(
+            no_dispatch || long_stop || dispute_timeout,
+            "refund not available yet"
+        );
+        let logistics_deduction = if escrow.logistics_paid {
+            escrow.logistics_amount.0
+        } else {
+            0
+        };
         let amount = U128(escrow.total_amount.0 - logistics_deduction);
         refund_return_state_map().insert(escrow_id.clone(), escrow.state.clone());
         escrow.state = EscrowState::Refunded;
         let buyer = escrow.buyer.clone().unwrap();
         let token = escrow.token.clone();
         self.escrows.insert(escrow_id.clone(), escrow);
+        self.prune_terminal_index(&self.internal_get(&escrow_id));
         payout(token, buyer, amount).then(
             Self::ext(env::current_account_id())
                 .with_static_gas(Gas::from_tgas(CALLBACK_GAS_TGAS))
@@ -1571,11 +1803,25 @@ impl Sweeft {
         dispute_times_map().get(&escrow_id).copied()
     }
 
-    pub fn escrows_for(&self, account_id: AccountId) -> Vec<Escrow> {
-        let mut ids: Vec<String> = self.buyer_index.get(&account_id).cloned().unwrap_or_default();
-        ids.extend(self.seller_index.get(&account_id).cloned().unwrap_or_default());
+    pub fn escrows_for(&self, account_id: AccountId, from_index: u64, limit: u64) -> Vec<Escrow> {
+        let mut ids: Vec<String> = self
+            .buyer_index
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default();
+        ids.extend(
+            self.seller_index
+                .get(&account_id)
+                .cloned()
+                .unwrap_or_default(),
+        );
         ids.sort();
-        ids.iter().filter_map(|id| self.escrows.get(id).cloned()).collect()
+        let start = (from_index as usize).min(ids.len());
+        let end = start.saturating_add(limit.min(50) as usize).min(ids.len());
+        ids[start..end]
+            .iter()
+            .filter_map(|id| self.escrows.get(id).cloned())
+            .collect()
     }
 
     pub fn pending_for(&self, account_id: AccountId) -> Vec<Escrow> {
@@ -1594,12 +1840,18 @@ impl Sweeft {
 
     /// On-chain trust record for a wallet (zeros when never seen).
     pub fn reputation_of(&self, account_id: AccountId) -> Reputation {
-        reputation_map().get(&account_id).cloned().unwrap_or_default()
+        reputation_map()
+            .get(&account_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Batch variant for list pages.
     pub fn reputations(&self, account_ids: Vec<AccountId>) -> Vec<Reputation> {
-        account_ids.iter().map(|a| self.reputation_of(a.clone())).collect()
+        account_ids
+            .iter()
+            .map(|a| self.reputation_of(a.clone()))
+            .collect()
     }
 
     /// Page through every escrow ever created (oldest first), so any indexer
@@ -1638,8 +1890,36 @@ impl Sweeft {
     // Internal
     // ------------------------------------------------------------------
 
+    fn prune_terminal_index(&mut self, escrow: &Escrow) {
+        if matches!(
+            escrow.state,
+            EscrowState::Completed
+                | EscrowState::Rejected
+                | EscrowState::Cancelled
+                | EscrowState::Refunded
+        ) {
+            pop_index(&mut self.seller_index, &escrow.seller, &escrow.id);
+            if let Some(buyer) = &escrow.buyer {
+                pop_index(&mut self.buyer_index, buyer, &escrow.id);
+                pop_index(&mut self.pending_index, buyer, &escrow.id);
+            }
+        }
+    }
+
+    fn restore_active_index(&mut self, escrow: &Escrow) {
+        // Payout rollbacks can move an escrow out of a terminal state. Restore
+        // the active indexes so the seller/buyer cap never loses a live escrow.
+        push_index(&mut self.seller_index, &escrow.seller, &escrow.id);
+        if let Some(buyer) = &escrow.buyer {
+            push_index(&mut self.buyer_index, buyer, &escrow.id);
+        }
+    }
+
     fn internal_get(&self, escrow_id: &str) -> Escrow {
-        self.escrows.get(&escrow_id.to_string()).cloned().expect("unknown escrow")
+        self.escrows
+            .get(&escrow_id.to_string())
+            .cloned()
+            .expect("unknown escrow")
     }
 
     /// Starts the inspection-window clock exactly once — the first time
@@ -1697,7 +1977,10 @@ fn payout(token: AccountId, receiver_id: AccountId, amount: U128) -> Promise {
 
 /// True when the promise at `index` (a chained callback's input) succeeded.
 fn payout_ok(index: u64) -> bool {
-    matches!(env::promise_result(index), near_sdk::PromiseResult::Successful(_))
+    matches!(
+        env::promise_result(index),
+        near_sdk::PromiseResult::Successful(_)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1786,7 +2069,11 @@ fn resolution_logistics_map() -> LookupMap<String, bool> {
 }
 
 fn review_due(escrow_id: &str) -> u128 {
-    review_due_map().get(&escrow_id.to_string()).copied().unwrap_or(U128(0)).0
+    review_due_map()
+        .get(&escrow_id.to_string())
+        .copied()
+        .unwrap_or(U128(0))
+        .0
 }
 
 /// Marks any open arbitration case as finalized so voter stakes become
@@ -1914,7 +2201,9 @@ mod tests {
     #[should_panic(expected = "arbitration pool is disabled while a review board is set")]
     fn pool_is_disabled_once_board_is_set() {
         let mut c = setup();
-        testing_env!(as_account(accounts(5)).attached_deposit(NearToken::from_millinear(10)).build());
+        testing_env!(as_account(accounts(5))
+            .attached_deposit(NearToken::from_millinear(10))
+            .build());
         c.vote_dispute("SWFT-000001".to_string(), 100);
     }
 
@@ -2023,7 +2312,9 @@ mod tests {
         let id = create_native(&mut c);
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
-        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(total)).build());
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(total))
+            .build());
         c.fund_escrow(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Funded);
     }
@@ -2035,7 +2326,9 @@ mod tests {
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2))
-            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .attached_deposit(NearToken::from_yoctonear(
+                115_000_000_000_000_000_000_000_000
+            ))
             .build());
         c.fund_escrow(id.clone());
         testing_env!(as_account(accounts(1)).build());
@@ -2053,11 +2346,74 @@ mod tests {
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2))
-            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .attached_deposit(NearToken::from_yoctonear(
+                115_000_000_000_000_000_000_000_000
+            ))
             .build());
         c.fund_escrow(id.clone());
         testing_env!(as_account(accounts(1)).build());
         c.assign_logistics_provider(id, accounts(3));
+    }
+
+    #[test]
+    fn state_machine_payout_totals_never_exceed_deposits_and_terminal_is_fixed() {
+        use proptest::prelude::*;
+        static NEXT_CASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        proptest!(|(
+            seller_amount in 1u128..=100_000u128,
+            logistics_amount in 0u128..=100_000u128,
+        )| {
+            let case_no = NEXT_CASE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let tracking = format!("PROP-{seller_amount}-{logistics_amount}-{case_no}");
+            let mut c = setup();
+            testing_env!(as_account(accounts(1))
+                .block_timestamp(1)
+                .attached_deposit(NearToken::from_near(1))
+                .build());
+            let id = c.create_escrow(
+                "Property test escrow".to_string(),
+                "hash".to_string(),
+                U128(seller_amount),
+                U128(logistics_amount),
+                Some(accounts(2)),
+                None,
+                "near".parse().unwrap(),
+                1_000,
+                MIN_INSPECTION_PERIOD_MS,
+                "terms".to_string(),
+                Some(accounts(4)),
+                Some(tracking.clone()),
+            );
+            let escrow_before = c.get_escrow(id.clone()).unwrap();
+            assert_eq!(escrow_before.total_amount.0, escrow_before.seller_amount.0 + escrow_before.logistics_amount.0 + escrow_before.platform_fee.0);
+            testing_env!(as_account(accounts(2)).block_timestamp(10).build());
+            c.accept_escrow(id.clone(), None);
+            testing_env!(as_account(accounts(2))
+                .block_timestamp(10)
+                .attached_deposit(NearToken::from_yoctonear(escrow_before.total_amount.0))
+                .build());
+            c.fund_escrow(id.clone());
+            testing_env!(as_account(accounts(1)).block_timestamp(20).build());
+            c.assign_logistics_provider(id.clone(), accounts(4));
+            testing_env!(as_account(accounts(1)).block_timestamp(30).build());
+            c.register_shipment(id.clone(), tracking);
+            let mut escrow = c.get_escrow(id.clone()).unwrap();
+            escrow.state = EscrowState::AwaitingBuyerConfirmation;
+            escrow.pickup_verified = true;
+            escrow.delivered_verified = true;
+            c.escrows.insert(id.clone(), escrow);
+            c.note_delivery_time(&id);
+            testing_env!(as_account(accounts(2)).block_timestamp(40).build());
+            c.confirm_receipt(id.clone());
+            c.handle_seller_payout(id.clone(), true);
+            let terminal = c.get_escrow(id.clone()).unwrap();
+            let payout_total = terminal.seller_amount.0 + terminal.logistics_amount.0 + terminal.platform_fee.0;
+            prop_assert!(payout_total <= terminal.total_amount.0);
+            prop_assert_eq!(terminal.state, EscrowState::Completed);
+            prop_assert!(terminal.seller_paid && terminal.logistics_paid && terminal.platform_paid);
+            prop_assert_eq!(&c.escrows_range(1, 1)[0].id, &id);
+            prop_assert!(c.escrows_for(accounts(1), 0, 50).iter().all(|e| e.id != id));
+        });
     }
 
     #[test]
@@ -2072,7 +2428,9 @@ mod tests {
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2))
-            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .attached_deposit(NearToken::from_yoctonear(
+                115_000_000_000_000_000_000_000_000
+            ))
             .build());
         c.fund_escrow(id.clone());
         testing_env!(as_account(accounts(1)).build());
@@ -2080,7 +2438,9 @@ mod tests {
         let escrow = c.get_escrow(id.clone()).unwrap();
         assert_eq!(escrow.state, EscrowState::ShipmentPending);
         assert!(!escrow.shipment_registered);
-        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_000_000_000)
+            .build());
         c.refund_buyer(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
     }
@@ -2094,10 +2454,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         c.create_escrow(
-            "Deadline cap".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(),
-            1 + MAX_DISPATCH_DELAY_MS + 1, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "Deadline cap".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1 + MAX_DISPATCH_DELAY_MS + 1,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
     }
 
@@ -2134,10 +2502,14 @@ mod tests {
     fn tracking_cannot_be_reused_across_escrows() {
         let mut c = setup();
         let _first = create_native_with_provider_and_tracking(
-            &mut c, Some(accounts(4)), Some("DEMO-REUSED-1".to_string())
+            &mut c,
+            Some(accounts(4)),
+            Some("DEMO-REUSED-1".to_string()),
         );
         create_native_with_provider_and_tracking(
-            &mut c, Some(accounts(4)), Some("DEMO-REUSED-1".to_string())
+            &mut c,
+            Some(accounts(4)),
+            Some("DEMO-REUSED-1".to_string()),
         );
     }
 
@@ -2202,6 +2574,29 @@ mod tests {
     }
 
     #[test]
+    fn terminal_escrows_do_not_count_against_active_index_cap() {
+        let mut c = setup();
+        for _ in 0..50 {
+            let id = create_native(&mut c);
+            let mut escrow = c.get_escrow(id.clone()).unwrap();
+            escrow.state = EscrowState::Completed;
+            c.escrows.insert(id.clone(), escrow.clone());
+            c.prune_terminal_index(&escrow);
+        }
+        let seller_ids = c
+            .seller_index
+            .get(&accounts(1))
+            .cloned()
+            .unwrap_or_default();
+        assert!(seller_ids.is_empty());
+        // The 51st escrow must be creatable because only active escrows count.
+        let fifty_first = create_native(&mut c);
+        assert_eq!(c.escrow_count(), 51);
+        assert_eq!(c.escrows_range(1, 50).len(), 50);
+        assert_eq!(c.escrows_range(51, 1)[0].id, fifty_first);
+    }
+
+    #[test]
     #[should_panic(expected = "attach the exact total in yoctoNEAR")]
     fn native_fund_requires_exact_total() {
         let mut c = setup();
@@ -2209,7 +2604,9 @@ mod tests {
         let id = create_native(&mut c);
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
-        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(total - 1)).build());
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(total - 1))
+            .build());
         c.fund_escrow(id);
     }
 
@@ -2222,9 +2619,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         let id = c.create_escrow(
-            "Known counterparty".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "Known counterparty".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
         // A different wallet tries to accept — the contract refuses.
         testing_env!(as_account(accounts(3)).build());
@@ -2241,9 +2647,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         let id = c.create_escrow(
-            "Invite link".to_string(), "hash".to_string(), U128(100), U128(10),
-            None, Some(hash), "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "Invite link".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            None,
+            Some(hash),
+            "near".parse().unwrap(),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
         testing_env!(as_account(accounts(3)).build());
         let wrong = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2267,12 +2682,24 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         let id = c.create_escrow(
-            "Legacy FT".to_string(), "hash".to_string(), U128(100), U128(10), Some(accounts(2)), None,
-            accounts(3), 1_000, MIN_INSPECTION_PERIOD_MS, "terms".to_string(), None, None,
+            "Legacy FT".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            accounts(3),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
         testing_env!(as_account(accounts(2)).build());
         c.accept_escrow(id.clone(), None);
-        testing_env!(as_account(accounts(2)).attached_deposit(NearToken::from_yoctonear(115)).build());
+        testing_env!(as_account(accounts(2))
+            .attached_deposit(NearToken::from_yoctonear(115))
+            .build());
         c.fund_escrow(id);
     }
 
@@ -2334,8 +2761,13 @@ mod tests {
         // Fresh deployments must never run unsigned verification: with no
         // carrier key on-chain, requests revert.
         let mut c = Sweeft::new(
-            accounts(0), accounts(5), "test-project".to_string(), 500,
-            accounts(1), None, None,
+            accounts(0),
+            accounts(5),
+            "test-project".to_string(),
+            500,
+            accounts(1),
+            None,
+            None,
         );
         let id = shipped_native(&mut c);
         testing_env!(as_account(accounts(5))
@@ -2410,7 +2842,10 @@ mod tests {
         assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 0);
         assert_eq!(c.reputation_of(accounts(2)).completed_as_buyer, 0);
         c.handle_seller_payout(id.clone(), false);
-        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::AwaitingBuyerConfirmation);
+        assert_eq!(
+            c.get_escrow(id.clone()).unwrap().state,
+            EscrowState::AwaitingBuyerConfirmation
+        );
         assert_eq!(c.reputation_of(accounts(1)).completed_as_seller, 0);
         c.confirm_receipt(id.clone());
         c.handle_seller_payout(id, true);
@@ -2431,7 +2866,9 @@ mod tests {
     fn timeout_release_settles_after_the_window() {
         let mut c = setup();
         let id = delivered_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build()); // 2000 ms
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(4_000_000_000_000)
+            .build()); // 2000 ms
         c.release_after_inspection(id.clone());
         let escrow = c.get_escrow(id.clone()).unwrap();
         assert!(escrow.seller_paid);
@@ -2453,7 +2890,9 @@ mod tests {
         let mut escrow = c.get_escrow(id.clone()).unwrap();
         escrow.problem_reported = true;
         c.escrows.insert(id.clone(), escrow);
-        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(4_000_000_000_000)
+            .build());
         c.release_after_inspection(id);
     }
 
@@ -2462,9 +2901,13 @@ mod tests {
     fn confirmation_and_timeout_release_are_mutually_exclusive() {
         let mut c = setup();
         let id = delivered_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(4_000_000_000_000)
+            .build());
         c.release_after_inspection(id.clone());
-        testing_env!(as_account(accounts(2)).block_timestamp(4_100_000_000_000).build());
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(4_100_000_000_000)
+            .build());
         c.confirm_receipt(id);
     }
 
@@ -2478,9 +2921,18 @@ mod tests {
         let mut c = setup();
         testing_env!(as_account(accounts(1)).block_timestamp(1).build());
         c.create_escrow(
-            "No deposit".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "No deposit".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
     }
 
@@ -2493,9 +2945,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         c.create_escrow(
-            "x".repeat(MAX_NAME_LEN + 1), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "x".repeat(MAX_NAME_LEN + 1),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
     }
 
@@ -2508,9 +2969,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         c.create_escrow(
-            "Arbitrary token".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, accounts(3), 1_000, MIN_INSPECTION_PERIOD_MS,
-            "terms".to_string(), None, None,
+            "Arbitrary token".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            accounts(3),
+            1_000,
+            MIN_INSPECTION_PERIOD_MS,
+            "terms".to_string(),
+            None,
+            None,
         );
     }
 
@@ -2590,7 +3060,11 @@ mod tests {
         let seller_part = total * 60 / 100;
         let buyer_part = review_due(&id);
         // Every unit of the escrow is allocated: seller + buyer == total.
-        assert_eq!(seller_part + buyer_part, total, "all balances must sum to total_amount");
+        assert_eq!(
+            seller_part + buyer_part,
+            total,
+            "all balances must sum to total_amount"
+        );
         assert_eq!(buyer_part, total - seller_part);
     }
 
@@ -2700,12 +3174,18 @@ mod tests {
             .current_account_id(accounts(0))
             .block_timestamp(40_000_000)
             .build());
-        let out = c.on_verification_result(id.clone(), Ok(Some(outcome(&id, "WRONG-TRACK", "LOG-DEMO-001"))));
+        let out = c.on_verification_result(
+            id.clone(),
+            Ok(Some(outcome(&id, "WRONG-TRACK", "LOG-DEMO-001"))),
+        );
         // The rejection is recorded as evidence (verified=false), never applied.
         assert!(out.is_some());
         assert!(!out.unwrap().verified);
         let escrow = c.get_escrow(id).unwrap();
-        assert!(!escrow.delivered_verified, "mismatched tracking must not verify");
+        assert!(
+            !escrow.delivered_verified,
+            "mismatched tracking must not verify"
+        );
         assert_eq!(escrow.state, EscrowState::Shipped);
     }
 
@@ -2720,7 +3200,8 @@ mod tests {
             .build());
         let escrow = c.get_escrow(id.clone()).unwrap();
         let track = escrow.tracking_number.clone().unwrap();
-        let out = c.on_verification_result(id.clone(), Ok(Some(outcome(&id, &track, "LOG-EVIL-999"))));
+        let out =
+            c.on_verification_result(id.clone(), Ok(Some(outcome(&id, &track, "LOG-EVIL-999"))));
         // Outcome is returned but invalidated: verified false, no state advance.
         assert!(out.is_some());
         assert!(!out.unwrap().verified);
@@ -2737,7 +3218,10 @@ mod tests {
         c.confirm_receipt(id.clone());
         let escrow = c.get_escrow(id).unwrap();
         // Regression: completion must pay (or fold) logistics — never strand it.
-        assert!(escrow.logistics_paid, "completion must not strand logistics");
+        assert!(
+            escrow.logistics_paid,
+            "completion must not strand logistics"
+        );
         assert!(escrow.seller_paid);
         assert!(escrow.platform_paid);
         assert_eq!(escrow.state, EscrowState::Completed);
@@ -2747,10 +3231,15 @@ mod tests {
     fn timeout_release_also_pays_logistics_when_unpaid() {
         let mut c = setup();
         let id = delivered_native(&mut c);
-        testing_env!(as_account(accounts(5)).block_timestamp(4_000_000_000_000).build());
+        testing_env!(as_account(accounts(5))
+            .block_timestamp(4_000_000_000_000)
+            .build());
         c.release_after_inspection(id.clone());
         let escrow = c.get_escrow(id).unwrap();
-        assert!(escrow.logistics_paid, "timeout release must not strand logistics");
+        assert!(
+            escrow.logistics_paid,
+            "timeout release must not strand logistics"
+        );
         assert!(escrow.seller_paid);
         assert!(escrow.platform_paid);
     }
@@ -2808,7 +3297,9 @@ mod tests {
     fn long_stop_blocked_before_grace() {
         let mut c = setup();
         let id = shipped_native(&mut c);
-        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_000_000_000)
+            .build());
         c.refund_buyer(id);
     }
 
@@ -2820,10 +3311,14 @@ mod tests {
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2))
             .block_timestamp(10_000_000)
-            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .attached_deposit(NearToken::from_yoctonear(
+                115_000_000_000_000_000_000_000_000
+            ))
             .build());
         c.fund_escrow(id.clone());
-        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_000_000_000)
+            .build());
         c.refund_buyer(id.clone());
         assert_eq!(c.get_escrow(id).unwrap().state, EscrowState::Refunded);
     }
@@ -2836,17 +3331,27 @@ mod tests {
         c.accept_escrow(id.clone(), None);
         testing_env!(as_account(accounts(2))
             .block_timestamp(10_000_000)
-            .attached_deposit(NearToken::from_yoctonear(115_000_000_000_000_000_000_000_000))
+            .attached_deposit(NearToken::from_yoctonear(
+                115_000_000_000_000_000_000_000_000
+            ))
             .build());
         c.fund_escrow(id.clone());
         testing_env!(as_account(accounts(1)).block_timestamp(20_000_000).build());
         c.open_dispute(id.clone(), "not shipping".to_string());
         assert_eq!(c.dispute_time_ms(id.clone()), Some(20));
-        testing_env!(as_account(accounts(2)).block_timestamp(2_000_000_000).build());
+        testing_env!(as_account(accounts(2))
+            .block_timestamp(2_000_000_000)
+            .build());
         c.refund_buyer(id.clone());
-        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::Refunded);
+        assert_eq!(
+            c.get_escrow(id.clone()).unwrap().state,
+            EscrowState::Refunded
+        );
         c.handle_payout_result(id.clone(), "refund".to_string(), false);
-        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::ReviewRequired);
+        assert_eq!(
+            c.get_escrow(id.clone()).unwrap().state,
+            EscrowState::ReviewRequired
+        );
         assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 0);
         c.refund_buyer(id.clone());
         c.handle_payout_result(id, "refund".to_string(), true);
@@ -2884,7 +3389,10 @@ mod tests {
             .build());
         c.refund_buyer(id.clone());
         c.handle_payout_result(id.clone(), "refund".to_string(), false);
-        assert_eq!(c.get_escrow(id.clone()).unwrap().state, EscrowState::Shipped);
+        assert_eq!(
+            c.get_escrow(id.clone()).unwrap().state,
+            EscrowState::Shipped
+        );
         assert_eq!(c.reputation_of(accounts(2)).refunds_claimed, 0);
         c.refund_buyer(id.clone());
         c.handle_payout_result(id, "refund".to_string(), true);
@@ -2900,9 +3408,18 @@ mod tests {
             .attached_deposit(NearToken::from_near(1))
             .build());
         c.create_escrow(
-            "Floor".to_string(), "hash".to_string(), U128(100), U128(10),
-            Some(accounts(2)), None, "near".parse().unwrap(), 1_000, 1_000,
-            "terms".to_string(), None, None,
+            "Floor".to_string(),
+            "hash".to_string(),
+            U128(100),
+            U128(10),
+            Some(accounts(2)),
+            None,
+            "near".parse().unwrap(),
+            1_000,
+            1_000,
+            "terms".to_string(),
+            None,
+            None,
         );
     }
 

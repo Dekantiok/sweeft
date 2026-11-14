@@ -49,21 +49,23 @@ struct Expected {
 }
 
 /// Canonical carrier message (v1). Must match the signer byte-for-byte:
-/// `v1|provider_id|tracking_number|shipment_id|status|<event statuses, comma-joined>`
+/// `v1|provider_id|tracking_number|shipment_id|status|issued_at|<event statuses, comma-joined>`
 /// Statuses are the RAW strings from the payload, before normalization.
 fn canonical_carrier_message(
     provider_id: &str,
     tracking: &str,
     shipment_id: &str,
     status_raw: &str,
+    issued_at: u64,
     event_statuses: &[String],
 ) -> String {
     format!(
-        "v1|{}|{}|{}|{}|{}",
+        "v1|{}|{}|{}|{}|{}|{}",
         provider_id,
         tracking,
         shipment_id,
         status_raw,
+        issued_at,
         event_statuses.join(",")
     )
 }
@@ -113,10 +115,15 @@ const ALL_STATUSES: [&str; 10] = [
     "LOST",
     "CANCELLED",
 ];
+const CARRIER_PAYLOAD_MAX_AGE_MS: u64 = 60 * 60 * 1_000; // 1 hour
+const CARRIER_PAYLOAD_FUTURE_SKEW_MS: u64 = 5 * 60 * 1_000; // 5 minutes
 
 fn normalize_status(raw: &str) -> Option<String> {
     let key = raw.trim().to_ascii_uppercase().replace([' ', '-'], "_");
-    ALL_STATUSES.iter().find(|s| **s == key).map(|s| s.to_string())
+    ALL_STATUSES
+        .iter()
+        .find(|s| **s == key)
+        .map(|s| s.to_string())
 }
 
 fn rank(status: &str) -> Option<usize> {
@@ -193,7 +200,10 @@ fn run(raw: &str) -> Output {
     }
 
     // 2b. Shipment identity must match the on-chain shipment id.
-    let carrier_shipment = carrier.get("shipment_id").and_then(|v| v.as_str()).unwrap_or_default();
+    let carrier_shipment = carrier
+        .get("shipment_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     match &input.expected.shipment_id {
         Some(expected_shipment) if carrier_shipment == expected_shipment => {}
         Some(expected_shipment) => {
@@ -211,7 +221,10 @@ fn run(raw: &str) -> Output {
     let Some(pubkey_hex) = &input.expected.carrier_pubkey else {
         return fail("carrier pubkey not configured on-chain".into());
     };
-    let sig_hex = carrier.get("signature").and_then(|v| v.as_str()).unwrap_or_default();
+    let sig_hex = carrier
+        .get("signature")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     if sig_hex.is_empty() {
         return fail("carrier signature required but missing".into());
     }
@@ -231,17 +244,45 @@ fn run(raw: &str) -> Output {
         return fail("carrier signature must be 64 bytes".into());
     };
     let signature = Signature::from_bytes(&sig_arr);
+    let Some(issued_at) = carrier.get("issued_at").and_then(|v| v.as_u64()) else {
+        return fail("carrier issued_at required".into());
+    };
     let raw_events: Vec<String> = carrier
         .get("events")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default()
         .iter()
-        .map(|e| e.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        .map(|e| {
+            e.get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
         .collect();
-    let message = canonical_carrier_message(&provider_id, &tracking, carrier_shipment, raw_status, &raw_events);
+    let message = canonical_carrier_message(
+        &provider_id,
+        &tracking,
+        carrier_shipment,
+        raw_status,
+        issued_at,
+        &raw_events,
+    );
     if verifying.verify(message.as_bytes(), &signature).is_err() {
         return fail("carrier signature invalid".into());
+    }
+
+    // Replay protection: a correctly signed carrier report may only be used
+    // for a short window after the carrier issued it.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    if issued_at > now_ms + CARRIER_PAYLOAD_FUTURE_SKEW_MS {
+        return fail("carrier payload issued in the future".into());
+    }
+    if now_ms > issued_at + CARRIER_PAYLOAD_MAX_AGE_MS {
+        return fail("carrier payload is stale".into());
     }
 
     // 3. Status must normalize into the supported set.
@@ -265,7 +306,9 @@ fn run(raw: &str) -> Output {
         };
         if FAILURE_STATUSES.contains(&ev_status.as_str()) {
             if idx + 1 != events.len() {
-                return fail(format!("event {idx}: failure status {ev_status} is not the last event"));
+                return fail(format!(
+                    "event {idx}: failure status {ev_status} is not the last event"
+                ));
             }
             continue;
         }
@@ -285,7 +328,9 @@ fn run(raw: &str) -> Output {
     if let Some(last) = last_rank {
         let status_rank = rank(&status).unwrap_or(last);
         if status_rank < last {
-            return fail(format!("reported status {status} is behind the recorded timeline"));
+            return fail(format!(
+                "reported status {status} is behind the recorded timeline"
+            ));
         }
     }
 
@@ -321,7 +366,12 @@ mod tests {
 
     fn signer() -> (ed25519_dalek::SigningKey, String) {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
-        let pubkey_hex: String = sk.verifying_key().to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let pubkey_hex: String = sk
+            .verifying_key()
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         (sk, pubkey_hex)
     }
 
@@ -329,15 +379,48 @@ mod tests {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
     /// Fully signed carrier payload (the signature is MANDATORY).
-    fn input(status: &str, events: serde_json::Value, provider_id: &str, shipment_id: &str) -> String {
+    fn input(
+        status: &str,
+        events: serde_json::Value,
+        provider_id: &str,
+        shipment_id: &str,
+    ) -> String {
+        signed_input(status, events, provider_id, shipment_id, now_ms())
+    }
+
+    fn signed_input(
+        status: &str,
+        events: serde_json::Value,
+        provider_id: &str,
+        shipment_id: &str,
+        issued_at: u64,
+    ) -> String {
         use ed25519_dalek::Signer;
         let (sk, pubkey_hex) = signer();
         let event_statuses: Vec<String> = events
             .as_array()
-            .map(|a| a.iter().map(|e| e["status"].as_str().unwrap_or("").to_string()).collect())
+            .map(|a| {
+                a.iter()
+                    .map(|e| e["status"].as_str().unwrap_or("").to_string())
+                    .collect()
+            })
             .unwrap_or_default();
-        let message = canonical_carrier_message(provider_id, "DEMO-1", shipment_id, status, &event_statuses);
+        let message = canonical_carrier_message(
+            provider_id,
+            "DEMO-1",
+            shipment_id,
+            status,
+            issued_at,
+            &event_statuses,
+        );
         let signature = sk.sign(message.as_bytes());
         serde_json::json!({
             "escrow_id": "SWFT-611104",
@@ -353,6 +436,7 @@ mod tests {
                 "tracking_number": "DEMO-1",
                 "shipment_id": shipment_id,
                 "status": status,
+                "issued_at": issued_at,
                 "events": events,
                 "signature": hex(&signature.to_bytes())
             }
@@ -374,6 +458,33 @@ mod tests {
     fn carrier_signature_valid_verifies() {
         let out = run(&happy_input());
         assert!(out.verified, "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn stale_signed_payload_rejected() {
+        let stale = signed_input(
+            "DELIVERED",
+            serde_json::json!([{"status":"PICKED_UP"},{"status":"DELIVERED"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+            now_ms() - CARRIER_PAYLOAD_MAX_AGE_MS - 1,
+        );
+        let out = run(&stale);
+        assert!(!out.verified);
+        assert!(out.reason.contains("stale"), "reason: {}", out.reason);
+    }
+
+    #[test]
+    fn missing_issued_at_rejected() {
+        let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
+        v["carrier"].as_object_mut().unwrap().remove("issued_at");
+        let out = run(&v.to_string());
+        assert!(!out.verified);
+        assert!(
+            out.reason.contains("issued_at required"),
+            "reason: {}",
+            out.reason
+        );
     }
 
     #[test]
@@ -402,7 +513,11 @@ mod tests {
         v["carrier"].as_object_mut().unwrap().remove("signature");
         let out = run(&v.to_string());
         assert!(!out.verified);
-        assert!(out.reason.contains("signature required"), "reason: {}", out.reason);
+        assert!(
+            out.reason.contains("signature required"),
+            "reason: {}",
+            out.reason
+        );
     }
 
     #[test]
@@ -410,15 +525,27 @@ mod tests {
         // Mandatory config: a fresh deployment without a carrier key never
         // verifies unsigned payloads.
         let mut v: serde_json::Value = serde_json::from_str(&happy_input()).unwrap();
-        v["expected"].as_object_mut().unwrap().remove("carrier_pubkey");
+        v["expected"]
+            .as_object_mut()
+            .unwrap()
+            .remove("carrier_pubkey");
         let out = run(&v.to_string());
         assert!(!out.verified);
-        assert!(out.reason.contains("carrier pubkey not configured"), "reason: {}", out.reason);
+        assert!(
+            out.reason.contains("carrier pubkey not configured"),
+            "reason: {}",
+            out.reason
+        );
     }
 
     #[test]
     fn delivered_with_empty_events_rejected() {
-        let out = run(&input("DELIVERED", serde_json::json!([]), "LOG-DEMO-001", "SHIP-1"));
+        let out = run(&input(
+            "DELIVERED",
+            serde_json::json!([]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
         assert!(!out.verified);
         assert!(out.reason.contains("no PICKED_UP"));
     }
@@ -496,7 +623,12 @@ mod tests {
 
     #[test]
     fn unknown_status_rejected() {
-        let out = run(&input("SOMEWHERE", serde_json::json!([{"status":"PICKED_UP"}]), "LOG-DEMO-001", "SHIP-1"));
+        let out = run(&input(
+            "SOMEWHERE",
+            serde_json::json!([{"status":"PICKED_UP"}]),
+            "LOG-DEMO-001",
+            "SHIP-1",
+        ));
         assert!(!out.verified);
     }
 

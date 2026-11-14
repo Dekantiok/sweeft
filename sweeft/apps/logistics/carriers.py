@@ -13,6 +13,7 @@ timeline OutLayer validates stays monotonic even if a client retries.
 from __future__ import annotations
 
 import hashlib
+import time
 
 from django.conf import settings
 
@@ -22,15 +23,16 @@ from .models import Shipment, ShipmentEvent
 def canonical_carrier_message(payload: dict) -> str:
     """Canonical signing message — MUST match the TEE verifier byte-for-byte.
 
-    `v1|provider_id|tracking_number|shipment_id|status|<event statuses, joined>`
+    `v1|provider_id|tracking_number|shipment_id|status|issued_at|<event statuses, joined>`
     Statuses are raw payload strings, in payload order.
     """
     statuses = ",".join(
         str((event or {}).get("status", "")) for event in (payload.get("events") or [])
     )
+    issued_at = payload.get("issued_at", 0)
     return (
         f"v1|{payload.get('provider_id', '')}|{payload.get('tracking_number', '')}"
-        f"|{payload.get('shipment_id', '')}|{payload.get('status', '')}|{statuses}"
+        f"|{payload.get('shipment_id', '')}|{payload.get('status', '')}|{issued_at}|{statuses}"
     )
 
 
@@ -46,6 +48,7 @@ def sign_carrier_payload(payload: dict) -> dict:
         raise ValueError("Demo Carrier signing key is not configured — refusing to create an unsigned payload")
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+    payload["issued_at"] = int(time.time() * 1000)
     key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(seed_hex))
     payload["signature"] = key.sign(canonical_carrier_message(payload).encode()).hex()
     return payload

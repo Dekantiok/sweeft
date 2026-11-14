@@ -72,8 +72,15 @@ def get_escrow_cached(escrow_id: str, ttl_seconds: int = 8):
     return value
 
 
-def escrows_for(account_id: str):
-    return view_call(settings.SWEEFT_CONTRACT, "escrows_for", {"account_id": account_id}) or []
+def escrows_for(account_id: str, from_index: int = 0, limit: int = 50):
+    return (
+        view_call(
+            settings.SWEEFT_CONTRACT,
+            "escrows_for",
+            {"account_id": account_id, "from_index": from_index, "limit": limit},
+        )
+        or []
+    )
 
 
 def native_balance(account_id: str) -> str:

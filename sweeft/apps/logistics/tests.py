@@ -235,7 +235,7 @@ class CarrierPayloadSigningTests(TestCase):
     def test_canonical_message_matches_verifier_format(self):
         self.assertEqual(
             carriers.canonical_carrier_message(self._payload()),
-            "v1|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|PICKED_UP,DELIVERED",
+            "v1|LOG-DEMO-001|DEMO-1|SHIP-SWFT-100001|DELIVERED|0|PICKED_UP,DELIVERED",
         )
 
     @override_settings(DEMO_CARRIER_PRIVATE_KEY=SEED_HEX)
